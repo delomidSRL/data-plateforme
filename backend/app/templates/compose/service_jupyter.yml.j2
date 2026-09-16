@@ -1,0 +1,12 @@
+  jupyter:
+    image: {{ jupyter.image }}
+    restart: unless-stopped
+    environment:
+      JUPYTER_TOKEN: {{ jupyter.token }}
+    ports:
+      - "{{ jupyter.port }}:8888"
+    volumes:
+      - {{ jupyter.proj_dir }}/notebooks:/home/jovyan/work
+{%- if jupyter.mount_dbt %}
+      - {{ jupyter.proj_dir }}/dbt:/home/jovyan/dbt:ro
+{%- endif %}

@@ -1,0 +1,30 @@
+{% if services.airflow %}
+{% include "compose/airflow_common.yml.j2" %}
+{% endif %}
+services:
+{% if services.postgres %}
+{% include "compose/service_postgres.yml.j2" %}
+{% endif %}
+{% if services.minio %}
+{% include "compose/service_minio.yml.j2" %}
+{% endif %}
+{% if services.superset %}
+{% include "compose/service_superset.yml.j2" %}
+{% endif %}
+{% if services.airflow %}
+{% include "compose/service_airflow.yml.j2" %}
+{% endif %}
+{% if services.jupyter %}
+{% include "compose/service_jupyter.yml.j2" %}
+{% endif %}
+
+volumes:
+{% if services.postgres %}  postgres-standalone-data:
+{% endif %}
+{%- if services.minio %}  minio-data:
+{% endif %}
+{%- if services.superset %}  superset-db-data:
+  superset-home:
+{% endif %}
+{%- if services.airflow %}  airflow-postgres-db-volume:
+{% endif %}

@@ -1,0 +1,16 @@
+  postgres-standalone:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: {{ postgres.user }}
+      POSTGRES_PASSWORD: {{ postgres.password }}
+      POSTGRES_DB: {{ postgres.db_name }}
+    ports:
+      - "{{ postgres.port }}:5432"
+    volumes:
+      - postgres-standalone-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ postgres.user }}"]
+      interval: 10s
+      retries: 5
+      start_period: 5s

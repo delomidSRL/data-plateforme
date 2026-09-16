@@ -1,0 +1,31 @@
+# Explicit project name, pinned to the directory-derived default this file always had
+# ("dataplatformev2") so the existing dataplatformev2_dataplateforme-postgres-dev volume
+# keeps resolving — only docker-compose.prod.yml gets a different explicit name. Without
+# this pin, two compose files in the same directory sharing an implicit project AND a
+# service key ("postgres") make Compose treat them as the same service slot: `up` on one
+# recreates/replaces the other's container. This bit us once already (verifying the prod
+# stack tore down the dev postgres container — the named volume survived, the container
+# didn't).
+name: dataplatformev2
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: dataplateforme-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dataplateforme
+      POSTGRES_PASSWORD: dataplateforme
+      POSTGRES_DB: dataplateforme
+    ports:
+      - "5432:5432"
+    volumes:
+      - dataplateforme-postgres-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dataplateforme"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  dataplateforme-postgres-dev:

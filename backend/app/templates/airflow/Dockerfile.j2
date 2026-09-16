@@ -1,0 +1,37 @@
+FROM apache/airflow:3.0.6
+
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential python3-venv \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+USER airflow
+
+# dbt lives in its own virtualenv, isolated from Airflow's own dependency set
+# (dbt-core/dbt-postgres can conflict with Airflow's providers). astronomer-cosmos
+# targets this venv via ExecutionMode.VIRTUALENV; BashOperator can also call it directly.
+RUN python3 -m venv /home/airflow/dbt_venv \
+    && /home/airflow/dbt_venv/bin/pip install --no-cache-dir dbt-core=={{ dbt_core_version | default('1.8.8') }} dbt-postgres=={{ dbt_postgres_version | default('1.8.2') }}
+
+RUN pip install --no-cache-dir "astronomer-cosmos{{ ('==' ~ cosmos_version) if cosmos_version else '>=1.9' }}"
+
+# Runtime deps for the bronze ingestion operator (plugins/dataplateforme_ingest.py):
+# reads sources via SQLAlchemy, writes partitioned Parquet to the object store.
+# apache-airflow-providers-oracle registers the "oracle" connection type properly in
+# the Airflow UI/API (icon, form fields, native connection test) — the ingestion
+# operator itself talks to Oracle through its own SQLAlchemy engine (oracledb in thin
+# mode via the cx_Oracle compat shim), not through this provider's hook, but without
+# it Airflow treats "oracle" connections as an unrecognized generic type.
+RUN pip install --no-cache-dir \
+    pandas==2.2.3 \
+    pyarrow==18.1.0 \
+    minio==7.2.12 \
+    psycopg2-binary==2.9.10 \
+    PyMySQL==1.1.1 \
+    oracledb==2.5.1 \
+    apache-airflow-providers-oracle==3.11.0 \
+    scikit-learn==1.5.2 \
+    recordlinkage==0.16 \
+    networkx==3.4.2 \
+    jellyfish==1.1.0

@@ -1,0 +1,95 @@
+# Control-plane deployment (backend + frontend + control-plane Postgres).
+# Does NOT include Superset/Airflow — those are deployed per-tenant by the platform
+# itself onto managed servers, see backend/app/templates/.
+#
+# Usage on the VM:
+#   cp .env.prod.example .env
+#   # fill in .env, then:
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Explicit project name so this never collides with docker-compose.dev.yml's "postgres"
+# service if both ever run on the same host/directory (see docker-compose.dev.yml for why
+# that matters — it's a real incident, not theoretical).
+name: dataplateforme-prod
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: dataplateforme-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dataplateforme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-dataplateforme}
+    volumes:
+      - dataplateforme-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dataplateforme}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - dataplateforme
+
+  backend:
+    image: ${DOCKERHUB_NAMESPACE:?set DOCKERHUB_NAMESPACE in .env}/dataplateforme-backend:${BACKEND_IMAGE_TAG:-latest}
+    container_name: dataplateforme-backend
+    restart: unless-stopped
+    environment:
+      ENV: prod
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-dataplateforme}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dataplateforme}
+      # generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?set APP_SECRET_KEY in .env}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      RESET_TOKEN_EXPIRE_MINUTES: ${RESET_TOKEN_EXPIRE_MINUTES:-30}
+      # the public http(s)://host:port the frontend is reachable at
+      FRONTEND_URL: ${FRONTEND_URL:?set FRONTEND_URL in .env}
+      CORS_ORIGINS: ${FRONTEND_URL}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@delomid.io}
+      SMTP_TLS: ${SMTP_TLS:-true}
+      ADMIN_NAME: ${ADMIN_NAME:-Admin}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?set ADMIN_EMAIL in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      # Self-hosted Mistral (OpenAI-compatible), on a VM external to this deployment —
+      # optional, the platform runs fine with these left blank (AI features just report
+      # unreachable). MISTRAL_BASE_URL is the API root, WITHOUT the /v1 suffix.
+      MISTRAL_BASE_URL: ${MISTRAL_BASE_URL:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      MISTRAL_MODEL: ${MISTRAL_MODEL:-}
+      MISTRAL_VERIFY_TLS: ${MISTRAL_VERIFY_TLS:-false}
+      MISTRAL_TIMEOUT: ${MISTRAL_TIMEOUT:-30}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - dataplateforme
+
+  frontend:
+    image: ${DOCKERHUB_NAMESPACE:?set DOCKERHUB_NAMESPACE in .env}/dataplateforme-frontend:${FRONTEND_IMAGE_TAG:-latest}
+    container_name: dataplateforme-frontend
+    restart: unless-stopped
+    environment:
+      # Public URL the *browser* uses to reach the backend — not the internal service name,
+      # e.g. http://vm-host:8000
+      API_BASE_URL: ${BACKEND_PUBLIC_URL:?set BACKEND_PUBLIC_URL in .env}
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      - backend
+    networks:
+      - dataplateforme
+
+networks:
+  dataplateforme:
+
+volumes:
+  dataplateforme-postgres-data:

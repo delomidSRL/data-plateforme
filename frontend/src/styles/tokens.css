@@ -1,0 +1,36 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* dark theme (auth screen + sidebar) */
+  --ink-900: #151B21;
+  --ink-850: #1D252D;
+  --ink-800: #212B34;
+  --ink-700: #2B3742;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.13);
+  --dim: rgba(255, 255, 255, 0.60);
+  --dim-2: rgba(255, 255, 255, 0.40);
+
+  /* light theme (main content) */
+  --bg: #F5F7F9;
+  --surface: #FFFFFF;
+  --border: #E6EAEF;
+  --text: #1D252D;
+  --text-muted: #5B6774;
+
+  /* shared accent */
+  --ember: #E57200;
+  --ember-600: #C96200;
+  --ember-soft: rgba(229, 114, 0, 0.14);
+  --ember-glow: rgba(229, 114, 0, 0.40);
+
+  --danger: #C53D3D;
+  --danger-soft: rgba(197, 61, 61, 0.12);
+
+  --font-d: 'Space Grotesk', system-ui, sans-serif;
+  --font-b: 'Inter', system-ui, sans-serif;
+  --font-m: 'JetBrains Mono', ui-monospace, monospace;
+
+  --radius: 14px;
+  --radius-lg: 22px;
+}

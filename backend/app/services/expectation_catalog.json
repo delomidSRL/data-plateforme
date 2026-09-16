@@ -1,0 +1,53 @@
+{
+  "_meta": {
+    "dbt_expectations_version": "0.10.3",
+    "dbt_utils_version": "1.3.0",
+    "validated_on": { "dbt_core": "1.8.8", "dbt_postgres": "1.8.2", "dialect": "postgres" },
+    "not_materializable": {
+      "referential_integrity": "Tier B (test natif `relationships`) — déjà rendu inconditionnellement depuis source_relationships (M14) par dbt_project.py, sans ligne DataQualityCheck : rien à opt-in.",
+      "grain_uniqueness": "Tier B (test natif `unique` / `dbt_utils.unique_combination_of_columns`) — déjà rendu inconditionnellement depuis le grain déclaré (M14), sans ligne DataQualityCheck.",
+      "null_rate": "Tier B (test natif `not_null`) — déjà rendu inconditionnellement pour les colonnes structurelles (M14), sans ligne DataQualityCheck.",
+      "ingestion_completeness": "⟨baseline⟩ — vit dans DataQualityBaseline (M16 §6), hors périmètre : cette extension §7 laisse data_quality_baselines inchangé.",
+      "aggregate_reconciliation": "⟨baseline⟩ — idem.",
+      "end_to_end_conservation": "⟨baseline⟩ — idem.",
+      "dimensional_completeness": "⟨baseline⟩ — idem."
+    }
+  },
+  "entries": [
+    {
+      "check_type": "type_conformity",
+      "tier": "A",
+      "dbt_macro": "dbt_expectations.expect_column_values_to_match_regex",
+      "dialects": ["postgres"],
+      "note": "Réutilise TYPE_CONFORMITY_PATTERNS (quality_intrinsic.py) — le même regex que le chemin d'observation, jamais une seconde source de vérité. Match insensible à la casse ((?i)), comme lower(col) côté observation."
+    },
+    {
+      "check_type": "format_validity",
+      "tier": "A",
+      "dbt_macro": "dbt_expectations.expect_column_values_to_match_regex",
+      "dialects": ["postgres"],
+      "note": "parameters.pattern, déjà validé (re.compile) à l'écriture du check — le renderer ne revalide rien."
+    },
+    {
+      "check_type": "plausibility",
+      "tier": "A",
+      "dbt_macro": "dbt_expectations.expect_column_values_to_be_between",
+      "dialects": ["postgres"],
+      "note": "min/max — au moins une borne (validé à l'écriture)."
+    },
+    {
+      "check_type": "intra_row_consistency",
+      "tier": "C",
+      "dbt_form": "singular_test",
+      "dialects": ["postgres"],
+      "note": "parameters.predicate, déjà validé par sql_validator.validate_predicate_sql à l'écriture du check. Squelette : SELECT * FROM <ref/source> WHERE NOT (predicate)."
+    },
+    {
+      "check_type": "conditional_completeness",
+      "tier": "C",
+      "dbt_form": "singular_test",
+      "dialects": ["postgres"],
+      "note": "parameters.condition + parameters.target, condition déjà validée par sql_validator à l'écriture du check. Squelette : SELECT * FROM <ref/source> WHERE (condition) AND (target IS NULL)."
+    }
+  ]
+}

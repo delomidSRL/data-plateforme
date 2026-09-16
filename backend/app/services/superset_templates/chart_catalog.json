@@ -1,0 +1,525 @@
+{
+  "_meta": {
+    "purpose": "Catalogue de capacités des viz_type Superset pour la suggestion d'indicateurs (Module 12). L'IA reçoit UNIQUEMENT `intent` + `data_slots` de chaque entrée. Elle ne remplit QUE les slots de données. Tout le reste du params Superset (couleur, police, légende, labels, format...) est figé dans le template capturé (§3.2), jamais généré par l'IA.",
+    "captured_from": "apache/superset master (MainPreset.ts + VizType.ts + controlPanels)",
+    "IMPORTANT_version": "Les clés (_v2, ag_grid, heatmap_v2, bubble_v2, sankey_v2, sunburst_v2, treemap_v2...) et la structure params varient selon la version. REVALIDER contre SUPERSET_MIN_VERSION avant de figer les templates.",
+    "aggregation_whitelist": ["SUM", "AVG", "COUNT", "COUNT_DISTINCT", "MIN", "MAX"],
+    "slot_roles": {
+      "measure": "colonne numérique agrégée (aggregation obligatoire)",
+      "dimension": "colonne catégorielle (groupby)",
+      "temporal": "colonne date/timestamp",
+      "raw_column": "colonne brute non agrégée (détail tabulaire)",
+      "geo_point": "couple latitude/longitude",
+      "geo_region_code": "code pays/région ISO",
+      "geo_polygon": "colonne polygone / GeoJSON",
+      "node": "identifiant de noeud (graphe/flux)",
+      "hierarchy_id": "identifiant d'un noeud d'arbre",
+      "hierarchy_parent": "identifiant du parent d'un noeud d'arbre"
+    },
+    "preconditions_vocab": {
+      "has_measure": ">=1 colonne numerique dans le profil",
+      "has_dimension": ">=1 colonne categorielle",
+      "has_temporal": ">=1 colonne date/timestamp",
+      "measures_gte_2": ">=2 colonnes numeriques",
+      "measures_gte_3": ">=3 colonnes numeriques",
+      "has_geo_point": "latitude + longitude detectees",
+      "has_geo_region_code": "colonne de code pays/region ISO detectee",
+      "has_geo_polygon": "colonne polygone/GeoJSON detectee",
+      "has_graph_edges": "au moins 2 colonnes id-like formant des relations",
+      "has_hierarchy": "colonne id + colonne parent detectees"
+    },
+    "suggestion_rule": "Un viz_type n'est proposable a l'IA (et un indicateur n'est accepte a la validation) QUE si TOUTES ses `requires` sont satisfaites par le profil de la table gold. Sinon il est retire du menu / rejete. status='excluded' => jamais propose.",
+    "ranking_rule": "Un viz_type avec `supports_ranking: true` accepte un champ optionnel `ranking: {limit, direction}` sur l'indicateur (hors `slots`) pour exprimer un classement Top N (direction=top, valeurs les plus hautes) ou Bottom N (direction=bottom, valeurs les plus basses) sur son premier metric. limit entre 1 et 100. Absent des types sans supports_ranking."
+  },
+
+  "charts": [
+
+    { "viz_type": "big_number_total", "tier": 1, "status": "active",
+      "intent": "KPI unique : une seule mesure agregee, sans dimension.",
+      "requires": ["has_measure"],
+      "data_slots": {
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "big_number", "tier": 1, "status": "active",
+      "intent": "KPI unique avec courbe de tendance dans le temps.",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 }
+      } },
+
+    { "viz_type": "pop_kpi", "tier": 1, "status": "active",
+      "intent": "KPI avec comparaison periode-sur-periode (variation vs periode precedente).",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 }
+      } },
+
+    { "viz_type": "pie", "tier": 1, "status": "active",
+      "intent": "Repartition d'une mesure sur une dimension a faible cardinalite.",
+      "requires": ["has_measure", "has_dimension"],
+      "data_slots": {
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "groupby": { "role": "dimension", "required": true, "min": 1, "max": 1, "max_distinct": 25 }
+      } },
+
+    { "viz_type": "funnel", "tier": 1, "status": "active",
+      "intent": "Entonnoir : une mesure sur des etapes ordonnees d'une dimension.",
+      "requires": ["has_measure", "has_dimension"],
+      "data_slots": {
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "groupby": { "role": "dimension", "required": true, "min": 1, "max": 1, "max_distinct": 12 }
+      } },
+
+    { "viz_type": "gauge_chart", "tier": 1, "status": "active",
+      "intent": "Jauge : une mesure agregee, eventuellement declinee par une dimension.",
+      "requires": ["has_measure"],
+      "data_slots": {
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 1, "max_distinct": 12 }
+      } },
+
+    { "viz_type": "treemap_v2", "tier": 1, "status": "active",
+      "intent": "Treemap : une mesure repartie sur une hierarchie de dimensions.",
+      "requires": ["has_measure", "has_dimension"],
+      "data_slots": {
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "groupby": { "role": "dimension", "required": true, "min": 1, "max": 3 }
+      } },
+
+    { "viz_type": "table", "tier": 1, "status": "active",
+      "intent": "Detail tabulaire : dimensions + mesures agregees, ou colonnes brutes.",
+      "requires": ["has_dimension"],
+      "supports_ranking": true,
+      "data_slots": {
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 8 },
+        "metrics": { "role": "measure", "required": false, "min": 0, "max": 8, "aggregation": true },
+        "all_columns": { "role": "raw_column", "required": false, "min": 0, "max": 20, "note": "mode brut, exclusif avec groupby/metrics" }
+      } },
+
+    { "viz_type": "ag_grid", "tier": 1, "status": "active",
+      "intent": "Tableau interactif (tri/filtre/pivot cote client) - variante du table.",
+      "requires": ["has_dimension"],
+      "supports_ranking": true,
+      "data_slots": {
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 8 },
+        "metrics": { "role": "measure", "required": false, "min": 0, "max": 8, "aggregation": true },
+        "all_columns": { "role": "raw_column", "required": false, "min": 0, "max": 20 }
+      } },
+
+    { "viz_type": "pivot_table_v2", "tier": 1, "status": "active",
+      "intent": "Tableau croise : mesures ventilees en lignes et colonnes.",
+      "requires": ["has_measure", "has_dimension"],
+      "data_slots": {
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 5, "aggregation": true },
+        "groupbyRows": { "role": "dimension", "required": true, "min": 1, "max": 4 },
+        "groupbyColumns": { "role": "dimension", "required": false, "min": 0, "max": 3 }
+      } },
+
+    { "viz_type": "echarts_timeseries_line", "tier": 1, "status": "active",
+      "intent": "Tendance dans le temps (courbe). Mesure(s) sur un axe temporel, series optionnelles.",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 },
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 5, "aggregation": true },
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 1, "note": "eclate en series" }
+      } },
+
+    { "viz_type": "echarts_timeseries_bar", "tier": 1, "status": "active",
+      "intent": "Comparaison dans le temps (barres). Mesure(s) sur axe temporel, series optionnelles.",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 },
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 5, "aggregation": true },
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 1 }
+      } },
+
+    { "viz_type": "echarts_area", "tier": 1, "status": "active",
+      "intent": "Evolution cumulee dans le temps (aires empilees).",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 },
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 5, "aggregation": true },
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 1 }
+      } },
+
+    { "viz_type": "echarts_timeseries_smooth", "tier": 1, "status": "active",
+      "intent": "Tendance dans le temps (courbe lissee).",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 },
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 5, "aggregation": true },
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 1 }
+      } },
+
+    { "viz_type": "echarts_timeseries_step", "tier": 1, "status": "active",
+      "intent": "Evolution en paliers dans le temps (step line).",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 },
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 5, "aggregation": true },
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 1 }
+      } },
+
+    { "viz_type": "echarts_timeseries", "tier": 1, "status": "active",
+      "intent": "Serie temporelle generique (fallback temporel).",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 },
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 5, "aggregation": true },
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 1 }
+      } },
+
+    { "viz_type": "sunburst_v2", "tier": 1, "status": "active",
+      "intent": "Repartition hierarchique (anneaux imbriques) d'une mesure.",
+      "requires": ["has_measure", "has_dimension"],
+      "data_slots": {
+        "columns": { "role": "dimension", "required": true, "min": 1, "max": 4, "note": "ordre = hierarchie" },
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "partition", "tier": 1, "status": "active",
+      "intent": "Diagramme de partition hierarchique (mesures par niveaux de dimensions).",
+      "requires": ["has_measure", "has_dimension"],
+      "data_slots": {
+        "groupby": { "role": "dimension", "required": true, "min": 1, "max": 4 },
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 3, "aggregation": true }
+      } },
+
+    { "viz_type": "word_cloud", "tier": 1, "status": "active",
+      "intent": "Nuage de mots : poids d'une mesure par valeur d'une dimension texte.",
+      "requires": ["has_measure", "has_dimension"],
+      "data_slots": {
+        "series": { "role": "dimension", "required": true, "min": 1, "max": 1 },
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "cal_heatmap", "tier": 1, "status": "active",
+      "intent": "Heatmap calendaire : intensite d'une mesure par jour.",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 }
+      } },
+
+    { "viz_type": "time_pivot", "tier": 1, "status": "active",
+      "intent": "Pivot temporel d'une mesure (comparaison de periodes superposees).",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 }
+      } },
+
+    { "viz_type": "time_table", "tier": 1, "status": "active",
+      "intent": "Tableau temporel avec sparklines par mesure.",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 5, "aggregation": true },
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 }
+      } },
+
+    { "viz_type": "echarts_timeseries_scatter", "tier": 2, "status": "active",
+      "intent": "Nuage de points dans le temps (dispersion d'une mesure).",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 },
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 3, "aggregation": true },
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 1 }
+      } },
+
+    { "viz_type": "bubble_v2", "tier": 2, "status": "active",
+      "intent": "Bulles : correlation de 3 mesures (x, y, taille) sur une dimension.",
+      "requires": ["measures_gte_3", "has_dimension"],
+      "data_slots": {
+        "entity": { "role": "dimension", "required": true, "min": 1, "max": 1 },
+        "x": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "y": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "size": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "series": { "role": "dimension", "required": false, "min": 0, "max": 1 }
+      } },
+
+    { "viz_type": "radar", "tier": 2, "status": "active",
+      "intent": "Radar : profil multi-mesures (>=3) sur une dimension.",
+      "requires": ["measures_gte_3", "has_dimension"],
+      "data_slots": {
+        "groupby": { "role": "dimension", "required": true, "min": 1, "max": 1 },
+        "metrics": { "role": "measure", "required": true, "min": 3, "max": 8, "aggregation": true }
+      } },
+
+    { "viz_type": "box_plot", "tier": 2, "status": "active",
+      "intent": "Boite a moustaches : distribution d'une mesure par categorie.",
+      "requires": ["has_measure", "has_dimension"],
+      "data_slots": {
+        "groupby": { "role": "dimension", "required": true, "min": 1, "max": 2 },
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 3, "aggregation": false, "note": "distribution, pas d'agregation simple" }
+      } },
+
+    { "viz_type": "histogram_v2", "tier": 2, "status": "active",
+      "intent": "Histogramme : distribution des valeurs d'une colonne numerique.",
+      "requires": ["has_measure"],
+      "data_slots": {
+        "column": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": false, "note": "colonne numerique brute a binner" },
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 1 }
+      } },
+
+    { "viz_type": "waterfall", "tier": 2, "status": "active",
+      "intent": "Cascade : contributions positives/negatives a un total.",
+      "requires": ["has_measure", "has_dimension"],
+      "data_slots": {
+        "x_axis": { "role": "dimension", "required": true, "min": 1, "max": 1, "note": "categorie ou periode" },
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 1, "note": "decomposition" }
+      } },
+
+    { "viz_type": "mixed_timeseries", "tier": 2, "status": "active",
+      "intent": "Deux jeux de mesures superposes sur le meme axe temporel (ex. barres + courbe).",
+      "requires": ["measures_gte_2", "has_temporal"],
+      "data_slots": {
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 },
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 3, "aggregation": true, "note": "jeu A" },
+        "metrics_b": { "role": "measure", "required": true, "min": 1, "max": 3, "aggregation": true, "note": "jeu B" }
+      } },
+
+    { "viz_type": "rose", "tier": 2, "status": "active",
+      "intent": "Diagramme polaire (nightingale) d'une mesure dans le temps.",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 1 },
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 3, "aggregation": true },
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 }
+      } },
+
+    { "viz_type": "para", "tier": 2, "status": "active",
+      "intent": "Coordonnees paralleles : comparaison multi-mesures sur une dimension.",
+      "requires": ["measures_gte_2", "has_dimension"],
+      "data_slots": {
+        "series": { "role": "dimension", "required": true, "min": 1, "max": 1 },
+        "metrics": { "role": "measure", "required": true, "min": 2, "max": 8, "aggregation": true }
+      } },
+
+    { "viz_type": "paired_ttest", "tier": 2, "status": "active",
+      "intent": "Test t apparie : comparaison statistique de mesures entre groupes.",
+      "requires": ["has_measure", "has_dimension"],
+      "data_slots": {
+        "groupby": { "role": "dimension", "required": true, "min": 1, "max": 2 },
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 3, "aggregation": true }
+      } },
+
+    { "viz_type": "horizon", "tier": 2, "status": "active",
+      "intent": "Horizon chart : nombreuses series temporelles compactees.",
+      "requires": ["has_measure", "has_temporal", "has_dimension"],
+      "data_slots": {
+        "series": { "role": "dimension", "required": true, "min": 1, "max": 1 },
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1 }
+      } },
+
+    { "viz_type": "gantt_chart", "tier": 2, "status": "active",
+      "intent": "Gantt : taches sur un axe temporel (debut/fin par serie).",
+      "requires": ["has_temporal", "has_dimension"],
+      "data_slots": {
+        "x_axis": { "role": "temporal", "required": true, "min": 1, "max": 1, "note": "debut" },
+        "end_time": { "role": "temporal", "required": true, "min": 1, "max": 1, "note": "fin" },
+        "series": { "role": "dimension", "required": true, "min": 1, "max": 1, "note": "tache/ligne" }
+      } },
+
+    { "viz_type": "bullet", "tier": 2, "status": "active",
+      "intent": "Bullet chart : mesure vs cible (KPI avec objectif).",
+      "requires": ["has_measure"],
+      "data_slots": {
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 1 }
+      },
+      "note": "La cible/marqueur est un parametre de style (constante), fige au template ou saisi a la main - pas deductible du profil." },
+
+    { "viz_type": "compare", "tier": 2, "status": "legacy",
+      "intent": "Comparaison temporelle multi-series (viz legacy). Preferer echarts_timeseries_line.",
+      "requires": ["has_measure", "has_temporal"],
+      "data_slots": {
+        "metrics": { "role": "measure", "required": true, "min": 1, "max": 5, "aggregation": true },
+        "groupby": { "role": "dimension", "required": false, "min": 0, "max": 2 }
+      } },
+
+    { "viz_type": "graph_chart", "tier": 3, "status": "active",
+      "intent": "Graphe de reseau : relations entre noeuds.",
+      "requires": ["has_graph_edges"],
+      "data_slots": {
+        "source": { "role": "node", "required": true, "min": 1, "max": 1 },
+        "target": { "role": "node", "required": true, "min": 1, "max": 1 },
+        "metric": { "role": "measure", "required": false, "min": 0, "max": 1, "aggregation": true, "note": "poids de l'arete" }
+      } },
+
+    { "viz_type": "sankey_v2", "tier": 3, "status": "active",
+      "intent": "Diagramme de Sankey : flux entre noeuds source et cible.",
+      "requires": ["has_graph_edges"],
+      "data_slots": {
+        "source": { "role": "node", "required": true, "min": 1, "max": 1 },
+        "target": { "role": "node", "required": true, "min": 1, "max": 1 },
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "chord", "tier": 3, "status": "active",
+      "intent": "Diagramme en accords : matrice de relations entre entites.",
+      "requires": ["has_graph_edges"],
+      "data_slots": {
+        "groupby": { "role": "node", "required": true, "min": 1, "max": 1, "note": "source" },
+        "columns": { "role": "node", "required": true, "min": 1, "max": 1, "note": "cible" },
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "tree_chart", "tier": 3, "status": "active",
+      "intent": "Arbre : hierarchie parent/enfant.",
+      "requires": ["has_hierarchy"],
+      "data_slots": {
+        "id": { "role": "hierarchy_id", "required": true, "min": 1, "max": 1 },
+        "parent": { "role": "hierarchy_parent", "required": true, "min": 1, "max": 1 },
+        "metric": { "role": "measure", "required": false, "min": 0, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "world_map", "tier": 3, "status": "active",
+      "intent": "Carte du monde : une mesure par pays.",
+      "requires": ["has_geo_region_code", "has_measure"],
+      "data_slots": {
+        "entity": { "role": "geo_region_code", "required": true, "min": 1, "max": 1, "note": "code pays (ISO-3, etc.)" },
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "country_map", "tier": 3, "status": "active",
+      "intent": "Carte d'un pays : une mesure par region/departement.",
+      "requires": ["has_geo_region_code", "has_measure"],
+      "data_slots": {
+        "entity": { "role": "geo_region_code", "required": true, "min": 1, "max": 1, "note": "code region ISO" },
+        "metric": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "point_cluster_map", "tier": 3, "status": "active",
+      "intent": "Carte de points/clusters a partir de latitude/longitude.",
+      "requires": ["has_geo_point"],
+      "data_slots": {
+        "latitude": { "role": "geo_point", "required": true, "min": 1, "max": 1 },
+        "longitude": { "role": "geo_point", "required": true, "min": 1, "max": 1 }
+      } },
+
+    { "viz_type": "mapbox", "tier": 3, "status": "legacy",
+      "intent": "Carte Mapbox (viz legacy) : points lat/lon.",
+      "requires": ["has_geo_point"],
+      "data_slots": {
+        "latitude": { "role": "geo_point", "required": true, "min": 1, "max": 1 },
+        "longitude": { "role": "geo_point", "required": true, "min": 1, "max": 1 }
+      } },
+
+    { "viz_type": "cartodiagram", "tier": 3, "status": "active",
+      "intent": "Diagrammes positionnes sur une carte (composite geo).",
+      "requires": ["has_geo_point"],
+      "data_slots": {
+        "latitude": { "role": "geo_point", "required": true, "min": 1, "max": 1 },
+        "longitude": { "role": "geo_point", "required": true, "min": 1, "max": 1 }
+      } },
+
+    { "viz_type": "deck_scatter", "tier": 3, "status": "active",
+      "intent": "deck.gl : points geolocalises.",
+      "requires": ["has_geo_point"],
+      "data_slots": {
+        "spatial": { "role": "geo_point", "required": true, "min": 1, "max": 1, "note": "lat/lon ou geohash" },
+        "size": { "role": "measure", "required": false, "min": 0, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "deck_polygon", "tier": 3, "status": "active",
+      "intent": "deck.gl : polygones colores par une mesure.",
+      "requires": ["has_geo_polygon"],
+      "data_slots": {
+        "polygon": { "role": "geo_polygon", "required": true, "min": 1, "max": 1 },
+        "metric": { "role": "measure", "required": false, "min": 0, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "deck_arc", "tier": 3, "status": "active",
+      "intent": "deck.gl : arcs entre deux points geolocalises.",
+      "requires": ["has_geo_point"],
+      "data_slots": {
+        "start_spatial": { "role": "geo_point", "required": true, "min": 1, "max": 1 },
+        "end_spatial": { "role": "geo_point", "required": true, "min": 1, "max": 1 }
+      } },
+
+    { "viz_type": "deck_path", "tier": 3, "status": "active",
+      "intent": "deck.gl : trajectoires (chemins geolocalises).",
+      "requires": ["has_geo_point"],
+      "data_slots": {
+        "line_column": { "role": "geo_polygon", "required": true, "min": 1, "max": 1, "note": "colonne de chemin" }
+      } },
+
+    { "viz_type": "deck_grid", "tier": 3, "status": "active",
+      "intent": "deck.gl : agregation en grille sur une carte.",
+      "requires": ["has_geo_point"],
+      "data_slots": {
+        "spatial": { "role": "geo_point", "required": true, "min": 1, "max": 1 },
+        "size": { "role": "measure", "required": false, "min": 0, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "deck_hex", "tier": 3, "status": "active",
+      "intent": "deck.gl : agregation hexagonale sur une carte.",
+      "requires": ["has_geo_point"],
+      "data_slots": {
+        "spatial": { "role": "geo_point", "required": true, "min": 1, "max": 1 },
+        "size": { "role": "measure", "required": false, "min": 0, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "deck_screengrid", "tier": 3, "status": "active",
+      "intent": "deck.gl : grille ecran (densite de points).",
+      "requires": ["has_geo_point"],
+      "data_slots": {
+        "spatial": { "role": "geo_point", "required": true, "min": 1, "max": 1 },
+        "size": { "role": "measure", "required": false, "min": 0, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "deck_heatmap", "tier": 3, "status": "active",
+      "intent": "deck.gl : carte de chaleur geolocalisee.",
+      "requires": ["has_geo_point"],
+      "data_slots": {
+        "spatial": { "role": "geo_point", "required": true, "min": 1, "max": 1 },
+        "size": { "role": "measure", "required": false, "min": 0, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "deck_contour", "tier": 3, "status": "active",
+      "intent": "deck.gl : contours de densite geolocalisee.",
+      "requires": ["has_geo_point"],
+      "data_slots": {
+        "spatial": { "role": "geo_point", "required": true, "min": 1, "max": 1 },
+        "size": { "role": "measure", "required": false, "min": 0, "max": 1, "aggregation": true }
+      } },
+
+    { "viz_type": "deck_geojson", "tier": 3, "status": "active",
+      "intent": "deck.gl : rendu direct d'une colonne GeoJSON.",
+      "requires": ["has_geo_polygon"],
+      "data_slots": {
+        "geojson": { "role": "geo_polygon", "required": true, "min": 1, "max": 1 }
+      } },
+
+    { "viz_type": "deck_multi", "tier": 3, "status": "active",
+      "intent": "deck.gl : composition de plusieurs couches deck (composite).",
+      "requires": ["has_geo_point"],
+      "data_slots": {},
+      "note": "Compose d'autres charts deck existants - non generable depuis un profil de table seule." },
+
+    { "viz_type": "handlebars", "tier": 3, "status": "excluded",
+      "intent": "Rendu HTML libre via template Handlebars sur des colonnes brutes.",
+      "requires": [],
+      "data_slots": {
+        "all_columns": { "role": "raw_column", "required": true, "min": 1, "max": 20 }
+      },
+      "note": "EXCLU de la suggestion : necessite un template Handlebars ecrit a la main, hors perimetre IA." },
+
+    { "viz_type": "bubble", "tier": 3, "status": "legacy",
+      "intent": "Bulles (viz legacy). Utiliser bubble_v2.",
+      "requires": ["measures_gte_3", "has_dimension"],
+      "data_slots": {
+        "entity": { "role": "dimension", "required": true, "min": 1, "max": 1 },
+        "x": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "y": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true },
+        "size": { "role": "measure", "required": true, "min": 1, "max": 1, "aggregation": true }
+      },
+      "note": "EXCLU par defaut (status legacy) au profit de bubble_v2." }
+
+  ]
+}

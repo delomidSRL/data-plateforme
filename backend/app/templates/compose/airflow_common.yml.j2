@@ -1,0 +1,31 @@
+x-airflow-common:
+  &airflow-common
+  image: {{ airflow.image }}
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
+    AIRFLOW__CORE__FERNET_KEY: '{{ airflow.fernet_key }}'
+    AIRFLOW__API_AUTH__JWT_SECRET: '{{ airflow.jwt_secret }}'
+    AIRFLOW__WEBSERVER__SECRET_KEY: '{{ airflow.webserver_secret_key }}'
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: '{{ "true" if airflow.load_examples else "false" }}'
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+  volumes:
+    - {{ airflow.proj_dir }}/dags:/opt/airflow/dags
+    - {{ airflow.proj_dir }}/logs:/opt/airflow/logs
+    - {{ airflow.proj_dir }}/config:/opt/airflow/config
+    - {{ airflow.proj_dir }}/plugins:/opt/airflow/plugins
+    - {{ airflow.proj_dir }}/dbt:/opt/airflow/dbt
+  user: "{{ airflow.uid }}:0"
+  depends_on:
+    &airflow-common-depends-on
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy

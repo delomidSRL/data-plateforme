@@ -1,0 +1,366 @@
+"""Reusable bronze ingestion operator, deposited once per Airflow stack (plugins/).
+Reads a source table in chunks, writes partitioned Parquet to the object store, then
+loads each chunk into the warehouse's `bronze` schema. Incremental loads track a
+high-water-mark per (bronze_table) in a control table in the warehouse.
+"""
+import decimal
+import io
+import json
+import logging
+import sys
+from datetime import date, datetime, timezone
+
+import pandas as pd
+from airflow.hooks.base import BaseHook
+from sqlalchemy import create_engine, text
+
+# Airflow pins SQLAlchemy 1.4.x, which has no built-in "oracledb" dialect (that was
+# added in SQLAlchemy 2.0) — only the older "cx_Oracle" one. python-oracledb ships an
+# official compatibility shim for exactly this: alias it as cx_Oracle so SQLAlchemy's
+# existing cx_Oracle dialect drives it — still thin mode, no Instant Client needed.
+import oracledb
+
+sys.modules["cx_Oracle"] = oracledb
+# SQLAlchemy 1.4's cx_Oracle dialect gates on `cx_Oracle.version >= 5.2` to detect
+# driver features. python-oracledb's own version numbering (2.x) is unrelated and
+# fails that check, even though the shim is fully compatible — spoof it per
+# python-oracledb's documented workaround for this exact situation.
+oracledb.version = "8.3.0"
+
+logger = logging.getLogger(__name__)
+
+CONTROL_TABLE = "_dataplateforme_control"
+DEFAULT_CHUNKSIZE = 50000
+
+_DIALECT_MAP = {
+    "postgres": "postgresql+psycopg2",
+    "postgresql": "postgresql+psycopg2",
+    "mysql": "mysql+pymysql",
+    "oracle": "oracle+cx_oracle",
+}
+
+
+def _sql_engine(conn_id: str):
+    conn = BaseHook.get_connection(conn_id)
+    dialect = _DIALECT_MAP.get(conn.conn_type, conn.conn_type)
+    extra = ""
+    if conn.conn_type == "oracle":
+        service_name = conn.schema
+        dsn = f"{dialect}://{conn.login}:{conn.password}@{conn.host}:{conn.port}/?service_name={service_name}"
+    else:
+        dsn = f"{dialect}://{conn.login}:{conn.password}@{conn.host}:{conn.port}/{conn.schema}{extra}"
+    return create_engine(dsn)
+
+
+def _minio_client(conn_id: str):
+    from minio import Minio
+
+    conn = BaseHook.get_connection(conn_id)
+    extra = conn.extra_dejson or {}
+    secure = bool(extra.get("secure", False))
+    return Minio(f"{conn.host}:{conn.port}", access_key=conn.login, secret_key=conn.password, secure=secure)
+
+
+def _ensure_control_table(warehouse_engine) -> None:
+    with warehouse_engine.begin() as conn:
+        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS bronze"))
+        conn.execute(text(
+            f"CREATE TABLE IF NOT EXISTS bronze.{CONTROL_TABLE} ("
+            "bronze_table VARCHAR(255) PRIMARY KEY, "
+            "high_water_mark VARCHAR(255), "
+            "updated_at TIMESTAMPTZ DEFAULT now())"
+        ))
+
+
+def _get_high_water_mark(warehouse_engine, bronze_table: str) -> str | None:
+    with warehouse_engine.connect() as conn:
+        row = conn.execute(
+            text(f"SELECT high_water_mark FROM bronze.{CONTROL_TABLE} WHERE bronze_table = :t"),
+            {"t": bronze_table},
+        ).fetchone()
+    return row[0] if row else None
+
+
+def _set_high_water_mark(warehouse_engine, bronze_table: str, value: str) -> None:
+    with warehouse_engine.begin() as conn:
+        conn.execute(
+            text(
+                f"INSERT INTO bronze.{CONTROL_TABLE} (bronze_table, high_water_mark, updated_at) "
+                f"VALUES (:t, :v, now()) "
+                f"ON CONFLICT (bronze_table) DO UPDATE SET high_water_mark = :v, updated_at = now()"
+            ),
+            {"t": bronze_table, "v": str(value)},
+        )
+
+
+_PG_TYPE_MAP = [
+    ("is_bool_dtype", "BOOLEAN"),
+    ("is_integer_dtype", "BIGINT"),
+    ("is_float_dtype", "DOUBLE PRECISION"),
+    ("is_datetime64_any_dtype", "TIMESTAMP"),
+]
+
+
+def _pg_column_type(series) -> str:
+    dtype = series.dtype
+    for check_name, pg_type in _PG_TYPE_MAP:
+        if getattr(pd.api.types, check_name)(dtype):
+            return pg_type
+    if dtype == object:
+        # DBAPI drivers commonly return exact-precision numeric columns (Oracle NUMBER,
+        # Postgres NUMERIC/DECIMAL) as decimal.Decimal rather than float, which pandas
+        # stores as an "object" column — undetectable by the float/int checks above.
+        # Without this, those columns would silently degrade to TEXT and break any
+        # downstream SUM()/AVG() in dbt.
+        sample = series.dropna()
+        if len(sample) and sample.map(lambda v: isinstance(v, decimal.Decimal)).all():
+            return "NUMERIC"
+        # A pure `datetime.date` source column (e.g. a Postgres/CSV-inferred DATE, no time
+        # component) stays "object" dtype in pandas — only datetime.datetime auto-promotes
+        # to datetime64[ns], already caught by is_datetime64_any_dtype above. Without this,
+        # a genuine date column silently degrades to TEXT here and breaks any downstream
+        # DATE_TRUNC/date arithmetic in dbt (confirmed on a real CSV-imported "bill_date").
+        if len(sample) and sample.map(lambda v: isinstance(v, date) and not isinstance(v, datetime)).all():
+            return "DATE"
+        # Module 6 extension (payload & structuration) — a `payload JSONB` column from
+        # `imports.<table>` round-trips through psycopg2 as native dict/list objects, which
+        # fail every check above. Without this it silently degrades to TEXT, and _write_chunk
+        # below would then try to hand a dict straight to a TEXT column.
+        if len(sample) and sample.map(lambda v: isinstance(v, (dict, list))).all():
+            return "JSONB"
+    return "TEXT"
+
+
+def _write_chunk(warehouse_engine, schema: str, table: str, chunk, replace: bool) -> None:
+    """Writes a chunk to Postgres via plain SQLAlchemy Core — pandas.to_sql's engine-connectable
+    detection misbehaves against Airflow's pinned SQLAlchemy 1.4.x (see note in ingest_bronze)."""
+    with warehouse_engine.begin() as conn:
+        if replace:
+            # CASCADE: a dbt silver view from a prior run commonly depends on this bronze
+            # table by now, and Postgres refuses a plain DROP TABLE while that view exists.
+            # Safe here — dbt_run_silver (next DAG task) recreates the view immediately after.
+            conn.execute(text(f"DROP TABLE IF EXISTS {schema}.{table} CASCADE"))
+        columns_sql = ", ".join(f'"{col}" {_pg_column_type(chunk[col])}' for col in chunk.columns)
+        conn.execute(text(f"CREATE TABLE IF NOT EXISTS {schema}.{table} ({columns_sql})"))
+
+        if not replace:
+            # Bronze is schema-on-read: a later chunk (another file under an object-store
+            # source, or a later run) can carry fields the table wasn't created with.
+            # CREATE TABLE IF NOT EXISTS is a no-op once the table exists, so without this
+            # the INSERT below crashes with UndefinedColumn on the first new field — widen
+            # the table instead.
+            existing_cols = {
+                r[0] for r in conn.execute(
+                    text("SELECT column_name FROM information_schema.columns WHERE table_schema = :s AND table_name = :t"),
+                    {"s": schema, "t": table},
+                ).fetchall()
+            }
+            for col in chunk.columns:
+                if col not in existing_cols:
+                    conn.execute(text(f'ALTER TABLE {schema}.{table} ADD COLUMN IF NOT EXISTS "{col}" {_pg_column_type(chunk[col])}'))
+
+        records = chunk.astype(object).where(chunk.notnull(), None).to_dict("records")
+        if not records:
+            return
+        # Module 6 extension — a JSONB column's values are Python dict/list objects here;
+        # this raw-SQL executemany-style insert can't hand those to the driver directly, so
+        # serialize to a JSON string, which Postgres accepts as valid input for a jsonb column.
+        for record in records:
+            for key, value in record.items():
+                if isinstance(value, (dict, list)):
+                    record[key] = json.dumps(value)
+        col_list = ", ".join(f'"{c}"' for c in records[0].keys())
+        placeholders = ", ".join(f":{c}" for c in records[0].keys())
+        conn.execute(text(f'INSERT INTO {schema}.{table} ({col_list}) VALUES ({placeholders})'), records)
+
+
+def ingest_bronze(
+    source_conn_id: str,
+    source_object: str,
+    warehouse_conn_id: str,
+    bronze_table: str,
+    object_store_conn_id: str,
+    bronze_bucket: str,
+    load_mode: str,
+    incremental_key: str | None = None,
+    chunksize: int = DEFAULT_CHUNKSIZE,
+    **context,
+) -> int:
+    warehouse_engine = _sql_engine(warehouse_conn_id)
+    minio = _minio_client(object_store_conn_id)
+
+    if not minio.bucket_exists(bronze_bucket):
+        try:
+            minio.make_bucket(bronze_bucket)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Le bucket '{bronze_bucket}' n'existe pas et ces identifiants ne sont pas autorisés à le créer "
+                f"(s3:CreateBucket refusé — courant sur une politique IAM AWS restreinte). Créez ce bucket "
+                f"manuellement dans votre compte S3/MinIO, ou renseignez le nom d'un bucket déjà existant dans "
+                f"les options de la source objet ('bucket'), puis relancez. Erreur d'origine : {exc}"
+            ) from exc
+
+    _ensure_control_table(warehouse_engine)
+
+    # A "generic" connection is a MinIO/S3 source (see _CONN_TYPE_MAP in
+    # medallion_deploy.py) — there is no SQL to run against it, it holds files instead.
+    # source_object is "<bucket>" or "<bucket>/<prefix>", read directly below rather
+    # than forced through _sql_engine (which would try to load a "generic" SQLAlchemy
+    # dialect that doesn't exist and crash with NoSuchModuleError).
+    source_conn_type = BaseHook.get_connection(source_conn_id).conn_type
+    if source_conn_type == "generic":
+        return _ingest_from_object_store(source_conn_id, source_object, warehouse_engine, bronze_table, minio, bronze_bucket, load_mode)
+
+    return _ingest_from_sql(
+        source_conn_id, source_object, warehouse_engine, bronze_table, minio, bronze_bucket,
+        load_mode, incremental_key, chunksize,
+    )
+
+
+def _ingest_from_object_store(source_conn_id: str, source_object: str, warehouse_engine, bronze_table: str, minio, bronze_bucket: str, load_mode: str) -> int:
+    """Bronze source is a bucket of files (CSV/Parquet/(ND)JSON), not a database. Each
+    matching object is read in full, archived as Parquet under the platform's own bronze
+    bucket (same convention as the SQL path), then loaded into the warehouse."""
+    if load_mode != "full":
+        raise ValueError(
+            f"Le mode de chargement '{load_mode}' n'est pas supporté pour une source bronze "
+            "MinIO/S3 (fichiers) — seul le mode 'full' l'est pour l'instant."
+        )
+
+    bucket, _, prefix = source_object.partition("/")
+    if not bucket:
+        raise ValueError(f"source_object invalide pour une source MinIO : {source_object!r} (attendu 'bucket' ou 'bucket/prefixe').")
+
+    source_client = _minio_client(source_conn_id)
+    objects = [o for o in source_client.list_objects(bucket, prefix=prefix or None, recursive=True) if not o.is_dir]
+    if not objects:
+        logger.warning("Aucun objet trouvé sous %s/%s — table bronze non modifiée.", bucket, prefix)
+        return 0
+
+    run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    total_rows = 0
+    replace_on_first_chunk = True
+
+    for i, obj in enumerate(objects):
+        key = obj.object_name
+        ext = key.rsplit(".", 1)[-1].lower() if "." in key else ""
+        if ext not in ("csv", "parquet", "json", "ndjson"):
+            logger.warning("Fichier ignoré (extension non supportée) : %s", key)
+            continue
+
+        resp = source_client.get_object(bucket, key)
+        try:
+            raw = resp.read()
+        finally:
+            resp.close()
+            resp.release_conn()
+
+        buffer = io.BytesIO(raw)
+        if ext == "csv":
+            chunk = pd.read_csv(buffer)
+        elif ext == "parquet":
+            chunk = pd.read_parquet(buffer)
+        else:  # json / ndjson — try a JSON array first, fall back to newline-delimited
+            try:
+                chunk = pd.read_json(buffer)
+            except ValueError:
+                buffer.seek(0)
+                chunk = pd.read_json(buffer, lines=True)
+
+        if chunk.empty:
+            logger.info("Fichier vide, ignoré : %s", key)
+            continue
+
+        out_buffer = io.BytesIO()
+        chunk.to_parquet(out_buffer, index=False)
+        out_buffer.seek(0)
+        object_name = f"bronze/{bronze_table}/dt={run_date}/part-{i:05d}.parquet"
+        minio.put_object(bronze_bucket, object_name, out_buffer, length=out_buffer.getbuffer().nbytes)
+
+        _write_chunk(warehouse_engine, "bronze", bronze_table, chunk, replace=replace_on_first_chunk)
+        replace_on_first_chunk = False
+        total_rows += len(chunk)
+        logger.info("Ingéré %s : %s lignes (total %s)", key, len(chunk), total_rows)
+
+    logger.info("Ingestion bronze (fichiers) de %s terminée : %s lignes", bronze_table, total_rows)
+    return total_rows
+
+
+def _ingest_from_sql(
+    source_conn_id: str,
+    source_object: str,
+    warehouse_engine,
+    bronze_table: str,
+    minio,
+    bronze_bucket: str,
+    load_mode: str,
+    incremental_key: str | None,
+    chunksize: int,
+) -> int:
+    source_engine = _sql_engine(source_conn_id)
+
+    where_clause = ""
+    params: dict = {}
+    if load_mode == "incremental" and incremental_key:
+        hwm = _get_high_water_mark(warehouse_engine, bronze_table)
+        if hwm is not None:
+            where_clause = f" WHERE {incremental_key} > :hwm"
+            params["hwm"] = hwm
+
+    query = f"SELECT * FROM {source_object}{where_clause}"
+    run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    total_rows = 0
+    max_key_seen = None
+    replace_on_first_chunk = load_mode == "full"
+
+    # Airflow pins SQLAlchemy 1.4.x, which trips pandas>=2's engine-connectable detection
+    # (pandas falls back to a legacy path that rejects `text()` queries). Reading via a
+    # raw DBAPI cursor with fetchmany() sidesteps that entirely and still chunks properly.
+    # The `:name` placeholder above is SQLAlchemy-style; the raw cursor needs the DBAPI's
+    # own paramstyle (psycopg2/PyMySQL use pyformat, oracledb uses named — same as ours).
+    i = 0
+    with source_engine.connect() as raw_conn:
+        cursor = raw_conn.connection.cursor()
+        if params:
+            paramstyle = source_engine.dialect.paramstyle
+            if paramstyle in ("pyformat", "format"):
+                cursor.execute(query.replace(":hwm", "%(hwm)s"), params)
+            elif paramstyle == "qmark":
+                cursor.execute(query.replace(":hwm", "?"), (params["hwm"],))
+            else:  # "named" (oracledb) already matches our :hwm syntax
+                cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+        columns = [c[0] for c in cursor.description]
+
+        while True:
+            rows = cursor.fetchmany(chunksize)
+            if not rows:
+                break
+            chunk = pd.DataFrame(rows, columns=columns)
+
+            buffer = io.BytesIO()
+            chunk.to_parquet(buffer, index=False)
+            buffer.seek(0)
+            object_name = f"bronze/{bronze_table}/dt={run_date}/part-{i:05d}.parquet"
+            minio.put_object(bronze_bucket, object_name, buffer, length=buffer.getbuffer().nbytes)
+
+            _write_chunk(warehouse_engine, "bronze", bronze_table, chunk, replace=replace_on_first_chunk)
+            replace_on_first_chunk = False
+
+            if incremental_key and incremental_key in chunk.columns:
+                chunk_max = chunk[incremental_key].max()
+                if max_key_seen is None or chunk_max > max_key_seen:
+                    max_key_seen = chunk_max
+
+            total_rows += len(chunk)
+            logger.info("Ingested chunk %s: %s rows (total %s)", i, len(chunk), total_rows)
+            i += 1
+        cursor.close()
+
+    if load_mode == "incremental" and incremental_key and max_key_seen is not None:
+        _set_high_water_mark(warehouse_engine, bronze_table, max_key_seen)
+
+    logger.info("Bronze ingestion of %s complete: %s rows", bronze_table, total_rows)
+    return total_rows

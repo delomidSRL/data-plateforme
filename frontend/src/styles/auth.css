@@ -1,0 +1,68 @@
+.auth-stage {
+  position: relative; min-height: 100vh; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: var(--ink-900);
+}
+.auth-bg { position: absolute; inset: 0; z-index: 0; }
+.auth-glow {
+  position: absolute; width: 620px; height: 620px; border-radius: 50%;
+  background: radial-gradient(circle, var(--ember-glow), transparent 62%);
+  filter: blur(30px); opacity: .5; pointer-events: none;
+  animation: auth-float 14s ease-in-out infinite;
+}
+.auth-glow.g1 { top: -160px; right: -120px; }
+.auth-glow.g2 { bottom: -220px; left: -140px; opacity: .34; animation-delay: -6s; }
+@keyframes auth-float { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(-26px, 24px) scale(1.08); } }
+
+.auth-svg-net { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .5; }
+.auth-edge { stroke: rgba(255, 255, 255, 0.10); stroke-width: 1; fill: none; }
+.auth-pulse { stroke: var(--ember); stroke-width: 1.6; fill: none; stroke-dasharray: 6 220; animation: auth-flow 3.4s linear infinite; }
+@keyframes auth-flow { to { stroke-dashoffset: -226; } }
+.auth-node { fill: var(--ink-800); stroke: rgba(255, 255, 255, 0.16); stroke-width: 1; }
+.auth-node-live { fill: var(--ember); animation: auth-blink 2.6s ease-in-out infinite; }
+@keyframes auth-blink { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
+
+.auth-card {
+  position: relative; z-index: 2; width: 100%; max-width: 430px;
+  background: linear-gradient(160deg, rgba(33, 43, 52, 0.92), rgba(21, 27, 33, 0.94));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg); padding: 38px 34px 30px;
+  backdrop-filter: blur(18px);
+  box-shadow: 0 40px 80px -30px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  animation: auth-rise .6s cubic-bezier(.2, .7, .2, 1) both;
+  color: #fff;
+}
+@keyframes auth-rise { from { opacity: 0; transform: translateY(18px) scale(.985); } to { opacity: 1; transform: none; } }
+
+.auth-brand { display: flex; align-items: center; gap: 11px; margin-bottom: 26px; }
+.auth-mark {
+  width: 40px; height: 40px; border-radius: 11px; flex-shrink: 0;
+  background: linear-gradient(140deg, var(--ember), var(--ember-600));
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 8px 20px -6px var(--ember-glow);
+}
+.auth-brand-name { font-family: var(--font-d); font-weight: 600; font-size: 16px; letter-spacing: .2px; line-height: 1.1; }
+.auth-brand-sub { font-size: 11px; color: var(--dim-2); font-family: var(--font-m); letter-spacing: .05em; }
+
+.auth-eyebrow { font-family: var(--font-m); font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--ember); }
+.auth-h1 { font-family: var(--font-d); font-size: 25px; font-weight: 600; letter-spacing: -.4px; margin-bottom: 6px; margin-top: 8px; }
+.auth-sub { font-size: 13.5px; color: var(--dim); margin-bottom: 24px; line-height: 1.5; }
+
+.auth-row-between { display: flex; align-items: center; justify-content: space-between; }
+
+.auth-demo { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.auth-demo-title { font-size: 11px; color: var(--dim-2); text-transform: uppercase; letter-spacing: .14em; margin-bottom: 10px; font-family: var(--font-m); }
+.auth-demo-chips { display: flex; gap: 8px; }
+.auth-chip { flex: 1; text-align: left; border: 1px solid var(--line-strong); border-radius: 10px; padding: 9px 11px; transition: border-color .2s, background .2s; }
+.auth-chip:hover { border-color: var(--ember); background: var(--ember-soft); }
+.auth-chip-role { font-size: 12.5px; font-weight: 600; }
+.auth-chip-mail { font-size: 10.5px; color: var(--dim-2); font-family: var(--font-m); }
+
+.auth-ok { text-align: center; padding: 8px 0 4px; }
+.auth-ok-ring {
+  width: 60px; height: 60px; border-radius: 50%; margin: 0 auto 18px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--ember-soft); border: 1px solid var(--ember); color: var(--ember);
+  animation: auth-pop .5s cubic-bezier(.2, .8, .2, 1) both;
+}
+@keyframes auth-pop { from { transform: scale(.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }

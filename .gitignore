@@ -1,0 +1,35 @@
+# backend
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/.pytest_cache/
+backend/.env
+backend/token.txt
+backend/*.log
+
+# frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# real env files (only *.example is ever tracked)
+.env
+.env.prod
+.env.*.local
+
+# never version: local scratch, DB dumps, reference scaffolds, generated media
+.secret_tmp
+dataplateforme_export.sql
+references/
+demo-video/
+token.txt
+*.pem
+*.key
+
+# editors / OS
+.DS_Store
+.vscode/
+*.swp
