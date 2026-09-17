@@ -522,9 +522,10 @@ def _prepare_payload_table(cur, schema_name: str, table_name: str, write_mode: F
     """DDL for the payload+audit landing shape (§3.3): `payload JSONB NOT NULL` plus
     `load_id`/`source_file`/`row_number` audit columns — never a cast, never a column per
     source key. Same create/replace/append semantics as the typed-mode `_prepare_table`.
-    `source_pk` (nullable) is the optional §3.3 identifier column: the *name* of the payload
-    key that acts as the record's business key, not its value — set once at import time,
-    identical on every row."""
+    `source_pk` (nullable) is the optional §3.3 identifier column: the *name(s)* of the payload
+    key(s) that act as the record's business key, not their value(s) — a composite key is
+    stored comma-joined (e.g. "customer_id,order_id") — set once at import time, identical on
+    every row."""
     schema_ident = sql.Identifier(_validate_identifier(schema_name, "Schéma cible"))
     table_ident = sql.Identifier(_validate_identifier(table_name, "Table cible"))
 

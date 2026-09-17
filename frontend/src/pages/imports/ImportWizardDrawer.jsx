@@ -195,8 +195,11 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
           <Field label={t("imports.wizard.sourcePk")}>
             {pkLoading && <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 6 }}>{t("imports.wizard.sourcePkAnalyzing")}</div>}
             {pkCandidates.length > 0 && (
-              <select className="input" style={{ marginBottom: 8 }} value={sourcePk} onChange={(e) => setSourcePk(e.target.value)}>
-                <option value="">{t("imports.wizard.sourcePkNone")}</option>
+              <select
+                multiple className="input" style={{ marginBottom: 8, minHeight: 90 }}
+                value={sourcePk ? sourcePk.split(",").map((s) => s.trim()).filter(Boolean) : []}
+                onChange={(e) => setSourcePk(Array.from(e.target.selectedOptions, (o) => o.value).join(","))}
+              >
                 {pkCandidates.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             )}
