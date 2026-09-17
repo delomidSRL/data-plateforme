@@ -298,8 +298,21 @@ def delete_dataset(did: int, db: Session = Depends(get_db), project: MedallionPr
 def get_dataset_columns(did: int, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
     """Live column list read straight from the warehouse — helps authoring dbt SQL for
     datasets upstream of the one being edited. Empty (not an error) if that dataset's
-    table hasn't been created yet (no successful pipeline run so far)."""
+    table hasn't been created yet (no successful pipeline run so far).
+
+    A payload-mode bronze dataset's own physical table is just `payload`/`load_id`/
+    `source_file`/`row_number`/`source_pk`/`source_system` (§3.3 audit shape) — useless for
+    authoring downstream SQL. Once it has a saved structuration contract, its `__parsed`
+    model is what silver/gold should reference instead (§5.2), so its *structured* columns
+    (the profiled, included target_name/target_type pairs) are returned here in its place."""
     dataset = _get_dataset(db, project.id, did)
+    if dataset.layer == MedallionLayer.bronze:
+        structuration = db.query(PayloadStructuration).filter(PayloadStructuration.dataset_id == dataset.id).first()
+        if structuration is not None and structuration.contract_hash:
+            included = [f for f in structuration.column_mapping if f.get("include", True)]
+            columns = [DatasetColumnOut(column=f["target_name"], type=f["target_type"]) for f in included]
+            return DatasetColumnsOut(columns=columns, table_exists=bool(columns), structured=True)
+
     warehouse = db.get(DataSource, project.warehouse_source_id)
     if not warehouse:
         return DatasetColumnsOut(columns=[], table_exists=False)

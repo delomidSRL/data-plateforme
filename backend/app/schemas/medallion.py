@@ -202,6 +202,10 @@ class DatasetColumnOut(BaseModel):
 class DatasetColumnsOut(BaseModel):
     columns: list[DatasetColumnOut]
     table_exists: bool
+    # true when `columns` came from a saved structuration contract (the dataset's
+    # `<name>__parsed` model) rather than the raw bronze payload table — callers authoring
+    # SQL should then reference `{{ ref('<name>__parsed') }}`, not `{{ source('bronze', ...) }}`.
+    structured: bool = False
 
 
 class PreviewResult(BaseModel):

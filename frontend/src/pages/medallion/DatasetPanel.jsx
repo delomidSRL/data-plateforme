@@ -65,7 +65,9 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
 
   const [dbtModelName, setDbtModelName] = useState(dataset?.dbt_model_name || "");
   const [materialization, setMaterialization] = useState(dataset?.materialization || "view");
-  const [sql, setSql] = useState(dataset?.sql || "");
+  // A new silver dataset starts its query pre-filled with "SELECT * " rather than empty —
+  // one less thing to type before picking the FROM/upstream reference.
+  const [sql, setSql] = useState(dataset?.sql || ((dataset?.layer || defaultLayer) === "silver" ? "SELECT * " : ""));
 
   const [transformType, setTransformType] = useState(dataset?.transform_type || "dbt");
   const [mlObjective, setMlObjective] = useState(dataset?.ml_objective || "none");
@@ -184,6 +186,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   const setLayerSafe = (l) => {
     setLayer(l);
     if (l !== "gold") setTransformType("dbt");
+    if (l === "silver" && !sql.trim()) setSql("SELECT * ");
   };
 
   const isOutputField = (f) => f.is_output === true || f.key === "TABLE_SORTIE";
@@ -235,9 +238,16 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   // Mirrors the backend's actual dbt referencing convention (dbt_project.py): bronze
   // datasets are declared as a dbt source keyed by their `name`; silver/gold dbt models
   // are files named after `dbt_model_name` and referenced via ref(); gold ML (python)
-  // outputs are declared as a separate `gold_ml` source keyed by `output_table`.
+  // outputs are declared as a separate `gold_ml` source keyed by `output_table`. A payload
+  // bronze dataset with a saved structuration contract is the one exception (§5.2): its own
+  // source table is just the raw audit/payload shape, so downstream SQL should read its
+  // `__parsed` model instead — columnsByDataset[d.id].structured (set by getDatasetColumns)
+  // is what tells us that contract exists.
   const referenceSnippetFor = (d) => {
-    if (d.layer === "bronze") return `{{ source('bronze', '${d.name}') }}`;
+    if (d.layer === "bronze") {
+      if (columnsByDataset[d.id]?.structured) return `{{ ref('${d.name}__parsed') }}`;
+      return `{{ source('bronze', '${d.name}') }}`;
+    }
     if (d.transform_type === "python") return `{{ source('gold_ml', '${d.output_table || d.name}') }}`;
     return `{{ ref('${d.dbt_model_name || d.name}') }}`;
   };
@@ -276,7 +286,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
     });
     missing.forEach((d) => {
       medallionApi.getDatasetColumns(project.id, d.id)
-        .then((res) => setColumnsByDataset((prev) => ({ ...prev, [d.id]: { loading: false, columns: res.columns } })))
+        .then((res) => setColumnsByDataset((prev) => ({ ...prev, [d.id]: { loading: false, columns: res.columns, structured: res.structured } })))
         .catch(() => setColumnsByDataset((prev) => ({ ...prev, [d.id]: { loading: false, columns: [] } })));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
