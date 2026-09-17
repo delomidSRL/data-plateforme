@@ -88,7 +88,7 @@ from app.schemas.payload_structuration import (
     StructurationOut,
     StructurationUpdate,
 )
-from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_project, gold_export, gold_profile, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot
+from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_project, file_import as file_import_service, gold_export, gold_profile, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot
 from app.services.ai_config import get_ai_config
 from app.services.superset_instances import get_superset_config
 from app.services.medallion_crud import create_dataset_internal, validate_lineage
@@ -251,11 +251,40 @@ def list_datasets(db: Session = Depends(get_db), project: MedallionProject = Dep
     return datasets
 
 
+def _try_create_instant_bronze_view(db: Session, project: MedallionProject, dataset: MedallionDataset) -> None:
+    """Best-effort, control-plane-only bronze materialization (no Airflow) for a bronze
+    dataset backed by a file import — see create_bronze_passthrough_view's own docstring.
+    Same-warehouse only: a file import targeting a different PostgreSQL source than the
+    project's own warehouse can't become a plain view (no cross-database query in Postgres) —
+    that case still waits on the normal Airflow ingestion, unchanged."""
+    if dataset.layer != MedallionLayer.bronze or not dataset.source_id or not dataset.source_object:
+        return
+    if dataset.source_id != project.warehouse_source_id or "." not in dataset.source_object:
+        return
+    schema_name, table = dataset.source_object.split(".", 1)
+    fi = (
+        db.query(FileImport)
+        .filter(FileImport.target_source_id == dataset.source_id, FileImport.target_schema == schema_name, FileImport.target_table == table)
+        .order_by(FileImport.id.desc())
+        .first()
+    )
+    if fi is None:
+        return
+    warehouse = db.get(DataSource, dataset.source_id)
+    if warehouse is None:
+        return
+    try:
+        file_import_service.create_bronze_passthrough_view(warehouse, schema_name, table, dataset.name)
+    except Exception as exc:
+        logger.warning("instant bronze view failed for dataset %s: %s", dataset.id, exc)
+
+
 @router.post("/{pid}/datasets", response_model=DatasetOut, status_code=status.HTTP_201_CREATED)
 def create_dataset(payload: DatasetCreate, db: Session = Depends(get_db), project: MedallionProject = Depends(get_owned_project)):
     dataset = create_dataset_internal(db, project, payload)
     db.commit()
     db.refresh(dataset)
+    _try_create_instant_bronze_view(db, project, dataset)
     dataset.payload_backed = payload_structure.resolve_import(db, dataset) is not None
     return dataset
 
