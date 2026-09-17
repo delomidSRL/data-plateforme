@@ -203,8 +203,9 @@ class DatasetColumnsOut(BaseModel):
     columns: list[DatasetColumnOut]
     table_exists: bool
     # true when `columns` came from a saved structuration contract (the dataset's
-    # `02_typed_<name>` model) rather than the raw bronze payload table — callers authoring
-    # SQL should then reference `{{ ref('02_typed_<name>') }}`, not `{{ source('bronze', ...) }}`.
+    # `05_validated_<name>` model, Module 18 §7.5) rather than the raw bronze payload table —
+    # callers authoring SQL should then reference `{{ ref('05_validated_<name>') }}`, not
+    # `{{ source('bronze', ...) }}`.
     structured: bool = False
 
 

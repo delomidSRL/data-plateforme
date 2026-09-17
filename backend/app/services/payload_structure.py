@@ -442,17 +442,288 @@ def render_unpacked_typed_models(column_mapping: list[dict], bronze_name: str) -
 
 
 # ---------------------------------------------------------------------------
-# Étape 4 — anomaly inspection: no separate quarantine relation anymore (every row from bronze
-# reaches `02_typed_<name>`, diagnosed, never excluded) — this reads the rows that carry at
-# least one cast issue straight from that table. No control-plane copy of the data ever
-# exists, same relay-not-store principle as the M10 preview / M11 export.
+# Module 18 — no-code raffinage silver: 03 (standardization), 04 (annotation), 05 (routing),
+# and the dq_flag_registry seed. Same "one stage, one question" discipline as 01/02, generic
+# where the platform can be (05, the registry mechanism, every macro below) and per-dataset
+# only where real business knowledge lives (which standardize op applies to which field, which
+# quality-flag rules exist) — configured through the structuration UI, never hand-written SQL.
 # ---------------------------------------------------------------------------
 
-def _typed_table_exists(conn, bronze_name: str) -> bool:
+NORMALIZE_FOR_MATCHING_MACRO_SQL = """{% macro normalize_for_matching(col) -%}
+btrim(regexp_replace(lower(translate({{ col }}, 'àâäáãåÀÂÄÁÃÅèéêëÈÉÊËìíîïÌÍÎÏòóôöõÒÓÔÖÕùúûüÙÚÛÜçÇñÑ', 'aaaaaaAAAAAAeeeeEEEEiiiiIIIIooooOOOOOuuuuUUUUcCnN')), '[^a-z0-9]+', ' ', 'g'))
+{%- endmacro %}
+"""
+
+CLEAN_VAT_MACRO_SQL = """{% macro clean_vat(col) -%}
+upper(regexp_replace({{ col }}, '[\\s.\\-]', '', 'g'))
+{%- endmacro %}
+"""
+
+CLEAN_PHONE_MACRO_SQL = """{% macro clean_phone(col) -%}
+concat(case when {{ col }} like '+%' then '+' else '' end, regexp_replace({{ col }}, '[^0-9]', '', 'g'))
+{%- endmacro %}
+"""
+
+FORMAT_FLAG_MACRO_SQL = """{% macro format_flag(col, flag, regex) -%}
+CASE WHEN {{ col }} IS NOT NULL AND {{ col }} !~ '{{ regex }}' THEN '{{ flag }}' END
+{%- endmacro %}
+"""
+
+PLACEHOLDER_NAME_FLAG_MACRO_SQL = """{% macro placeholder_name_flag(col, flag) -%}
+CASE WHEN lower(btrim({{ col }})) IN ('test', 'n/a', 'na', 'none', 'unknown', 'todo', 'tbd', 'xxx', 'xxxx', '-', '--', '???') THEN '{{ flag }}' END
+{%- endmacro %}
+"""
+
+GARBAGE_FLAG_MACRO_SQL = r"""{% macro garbage_flag(col, flag) -%}
+CASE WHEN {{ col }} IS NOT NULL AND {{ col }} ~ '^(.)\1+$' THEN '{{ flag }}' END
+{%- endmacro %}
+"""
+
+DATE_RANGE_FLAG_MACRO_SQL = """{% macro date_range_flag(col, flag, min_date='1900-01-01', max_date=none) -%}
+CASE WHEN {{ col }} IS NOT NULL AND ({{ col }} < DATE '{{ min_date }}' OR {{ col }} > {{ ("DATE '" ~ max_date ~ "'") if max_date else "current_date" }}) THEN '{{ flag }}' END
+{%- endmacro %}
+"""
+
+UNMAPPED_BOOLEAN_FLAG_MACRO_SQL = """{% macro unmapped_boolean_flag(cast_issues_col, boolean_fields, flag) -%}
+CASE WHEN {{ cast_issues_col }} && ARRAY[{% for f in boolean_fields %}'{{ f }}:invalid'{{ "," if not loop.last }}{% endfor %}]::text[] THEN '{{ flag }}' END
+{%- endmacro %}
+"""
+
+STRUCTURATION_MACROS.update({
+    "macros/normalize_for_matching.sql": NORMALIZE_FOR_MATCHING_MACRO_SQL,
+    "macros/clean_vat.sql": CLEAN_VAT_MACRO_SQL,
+    "macros/clean_phone.sql": CLEAN_PHONE_MACRO_SQL,
+    "macros/format_flag.sql": FORMAT_FLAG_MACRO_SQL,
+    "macros/placeholder_name_flag.sql": PLACEHOLDER_NAME_FLAG_MACRO_SQL,
+    "macros/garbage_flag.sql": GARBAGE_FLAG_MACRO_SQL,
+    "macros/date_range_flag.sql": DATE_RANGE_FLAG_MACRO_SQL,
+    "macros/unmapped_boolean_flag.sql": UNMAPPED_BOOLEAN_FLAG_MACRO_SQL,
+})
+
+# Closed catalog (schemas.StandardizeOp) -> the macro/function call each op renders to. Only
+# ever applied to text fields (validated below) — a passthrough (no key here, or None) leaves
+# the field exactly as 02_typed produced it.
+_STANDARDIZE_EXPR = {
+    "upper": lambda col: f"upper({col})",
+    "lower": lambda col: f"lower({col})",
+    "title_case": lambda col: f"initcap({col})",
+    "trim_collapse": lambda col: f"{{{{ clean_string({col}) }}}}",
+    "normalize_matching": lambda col: f"{{{{ normalize_for_matching({col}) }}}}",
+    "clean_vat": lambda col: f"{{{{ clean_vat({col}) }}}}",
+    "clean_phone": lambda col: f"{{{{ clean_phone({col}) }}}}",
+    "url_prefix": lambda col: f"(CASE WHEN {col} IS NOT NULL AND {col} !~* '^https?://' THEN 'https://' || {col} ELSE {col} END)",
+}
+
+
+def _jinja_arg(value: str) -> str:
+    """A user-supplied string (a regex, a flag name) about to be passed as a macro-call
+    argument, safe against BOTH layers it crosses: the macro substitutes it verbatim into a
+    SQL '...' literal (so embedded single quotes are SQL-doubled first), then this whole call
+    is itself Jinja source the dbt compiler parses (so it's wrapped in a double-quoted Jinja
+    string literal, backslash-escaping \\ and " — never single-quote-delimited, precisely
+    because the SQL-escaping step above just filled it with doubled single quotes)."""
+    sql_escaped = value.replace("'", "''")
+    jinja_escaped = sql_escaped.replace("\\", "\\\\").replace('"', '\\"')
+    return '"' + jinja_escaped + '"'
+
+
+def _standardize_expr(op: str, col: str) -> str:
+    builder = _STANDARDIZE_EXPR.get(op)
+    if builder is None:
+        raise PayloadStructureError(f"Opération de standardisation non supportée : « {op} ».")
+    return builder(col)
+
+
+def validate_standardize_ops(column_mapping: list[dict]) -> None:
+    """A standardize op only ever makes sense on text — 02_typed already cast everything else
+    to its real type, and calling e.g. upper() on an integer is a modeling mistake to reject
+    at contract-save time, not a build-time surprise."""
+    for field in column_mapping:
+        op = field.get("standardize")
+        if op and field.get("target_type") != "text":
+            raise PayloadStructureError(
+                f"« {field.get('target_name')} » : la standardisation ne s'applique qu'aux champs texte (type actuel : {field.get('target_type')})."
+            )
+        if op and op not in _STANDARDIZE_EXPR:
+            raise PayloadStructureError(f"Opération de standardisation non supportée : « {op} ».")
+
+
+def render_standardized_model(column_mapping: list[dict], bronze_name: str) -> str:
+    """03 (§5) — the only question: what's this field's canonical form? Never touches
+    validity (04) or type (02). Every column listed explicitly (Postgres has no "select *
+    except this one"): a field with a standardize op gets that expression in place, every
+    other field (and cast_issues, and the audit columns) passes through unchanged."""
+    included = [f for f in column_mapping if f.get("include", True)]
+    if not included:
+        raise PayloadStructureError("Le contrat de structuration n'a aucun champ inclus.")
+    validate_standardize_ops(included)
+
+    cols = []
+    for f in included:
+        target = f["target_name"]
+        op = f.get("standardize")
+        cols.append(f'{_standardize_expr(op, target)} as "{target}"' if op else f'"{target}"')
+    cols.append("cast_issues")
+    cols.extend(_TRACEABILITY_COLUMNS)
+
+    select_list = ",\n    ".join(cols)
+    return (
+        "{{ config(materialized='table', schema='bronze') }}\n\n"
+        "select\n    " + select_list + "\n"
+        f"from {{{{ ref('02_typed_{bronze_name}') }}}}\n"
+    )
+
+
+_FLAG_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def validate_quality_flags(quality_flags: list[dict], column_mapping: list[dict]) -> None:
+    """§6/§8 — a flag name is a literal tag matched verbatim by 05's routing (never a SQL
+    identifier), but it still can't contain ':' — that's the delimiter cast_issue tags use
+    ('FIELD:absent'/'FIELD:invalid'), and 05 treats *any* ':'-bearing flag as bloquant by
+    construction (§8): a user-chosen name containing one would silently misroute regardless
+    of its declared category."""
+    target_names = {f["target_name"] for f in column_mapping}
+    seen: set[str] = set()
+    for rule in quality_flags:
+        name = rule.get("name", "")
+        if not _FLAG_NAME_RE.match(name):
+            raise PayloadStructureError(f"Nom de flag invalide : « {name} » (minuscules, chiffres, underscore, ne commence pas par un chiffre).")
+        if ":" in name:
+            raise PayloadStructureError(f"Nom de flag invalide : « {name} » — ':' est réservé aux tags de cast.")
+        if name in seen:
+            raise PayloadStructureError(f"Flag en double : « {name} ».")
+        seen.add(name)
+        if rule.get("field") not in target_names:
+            raise PayloadStructureError(f"Le flag « {name} » référence un champ inconnu : « {rule.get('field')} ».")
+        rule_type = rule.get("rule_type")
+        if rule_type == "format" and not rule.get("regex"):
+            raise PayloadStructureError(f"Le flag « {name} » (format) requiert une expression régulière.")
+        if rule_type not in ("format", "placeholder", "garbage", "date_range"):
+            raise PayloadStructureError(f"Type de règle qualité non supporté : « {rule_type} ».")
+
+
+def _flag_expr(rule: dict) -> str:
+    field = rule["field"]
+    name = rule["name"]
+    rule_type = rule["rule_type"]
+    col = f'"{field}"'
+    if rule_type == "format":
+        return f"{{{{ format_flag({col}, {_jinja_arg(name)}, {_jinja_arg(rule['regex'])}) }}}}"
+    if rule_type == "placeholder":
+        return f"{{{{ placeholder_name_flag({col}, {_jinja_arg(name)}) }}}}"
+    if rule_type == "garbage":
+        return f"{{{{ garbage_flag({col}, {_jinja_arg(name)}) }}}}"
+    if rule_type == "date_range":
+        args = [col, _jinja_arg(name)]
+        if rule.get("min_date"):
+            args.append(f"min_date={_jinja_arg(rule['min_date'])}")
+        if rule.get("max_date"):
+            args.append(f"max_date={_jinja_arg(rule['max_date'])}")
+        return f"{{{{ date_range_flag({', '.join(args)}) }}}}"
+    raise PayloadStructureError(f"Type de règle qualité non supporté : « {rule_type} ».")
+
+
+def render_annotated_model(quality_flags: list[dict], bronze_name: str) -> str:
+    """04 (§6) — the only question: what problems does this row carry? Stacks every flag,
+    informative and blocking alike, into one `data_quality_flags` array — 04 has no authority
+    over which are blocking (that's 05, via the registry). `cast_issues` (from 02) is prefixed,
+    never replaced, never lost."""
+    flag_exprs = [_flag_expr(rule) for rule in quality_flags]
+    flags_array = ("array_remove(array[\n        " + ",\n        ".join(flag_exprs) + "\n    ], null)") if flag_exprs else "'{}'::text[]"
+    return (
+        "{{ config(materialized='table', schema='bronze') }}\n\n"
+        "select *,\n"
+        f"    cast_issues || {flags_array} as data_quality_flags\n"
+        f"from {{{{ ref('03_standardized_{bronze_name}') }}}}\n"
+    )
+
+
+def render_validated_quarantine_models(bronze_name: str) -> dict:
+    """05 (§7) — partitions 04_annotated into two complementary, disjoint views, with zero
+    routing logic hard-coded here: a row is quarantined iff it carries a cast tag ('%:%') or a
+    flag absent from dq_flag_registry's 'informative' rows (§8's "undeclared = blocking, safe
+    default"). validated is the exact mirror (`not exists` of the same condition) — never a
+    second, independently-written query that could drift out of sync."""
+    condition = (
+        "exists (\n"
+        "        select 1\n"
+        "        from unnest(t.data_quality_flags) as flag\n"
+        "        where flag like '%:%'\n"
+        "           or flag not in (select flag_name from {{ ref('dq_flag_registry') }} where category = 'informative')\n"
+        "    )"
+    )
+    ref = f"{{{{ ref('04_annotated_{bronze_name}') }}}}"
+    quarantine_sql = (
+        "{{ config(materialized='view', schema='bronze') }}\n\n"
+        f"select t.*\nfrom {ref} t\nwhere {condition}\n"
+    )
+    validated_sql = (
+        "{{ config(materialized='view', schema='bronze') }}\n\n"
+        f"select t.*\nfrom {ref} t\nwhere not {condition}\n"
+    )
+    return {"validated_sql": validated_sql, "quarantine_sql": quarantine_sql}
+
+
+_ISSUE_TYPE_BY_RULE = {
+    "format": "FORMAT_MISMATCH",
+    "placeholder": "PROXY_VALUE",
+    "garbage": "SUSPECT_VALUE",
+    "date_range": "SUSPECT_VALUE",
+}
+
+
+def render_registry_seed(all_quality_flags: list[dict]) -> str:
+    """§8 — seeds/dq_flag_registry.csv, the sole source of truth 05's routing reads (only
+    `category` — `issue_type` is descriptive-only, per §8). One row per unique flag_name
+    project-wide (§8: "quelle que soit la table"); a name repeated across datasets keeps its
+    first definition — a naming collision is the engineer's mistake to avoid, not something to
+    silently resolve differently per caller."""
+    import csv
+    import io
+
+    seen: set[str] = set()
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(["flag_name", "category", "source_rule", "issue_type"])
+    for rule in all_quality_flags:
+        name = rule["name"]
+        if name in seen:
+            continue
+        seen.add(name)
+        writer.writerow([name, rule.get("category", "elimination"), rule.get("source_rule") or "", _ISSUE_TYPE_BY_RULE.get(rule["rule_type"], "")])
+    return buf.getvalue()
+
+
+def render_reconciliation_test(bronze_name: str) -> str:
+    """§7.4 — a livrable, not an option: fails the build if 05_validated + 05_quarantine's row
+    count ever drifts from 04_annotated's. (Disjointness itself needs no separate check: the
+    two views are exact boolean complements of the same `exists(...)` predicate over the same
+    `t` — a row structurally cannot satisfy both at once.)"""
+    return (
+        "with counts as (\n"
+        f"    select (select count(*) from {{{{ ref('04_annotated_{bronze_name}') }}}}) as annotated_n,\n"
+        f"           (select count(*) from {{{{ ref('05_validated_{bronze_name}') }}}}) as validated_n,\n"
+        f"           (select count(*) from {{{{ ref('05_quarantine_{bronze_name}') }}}}) as quarantine_n\n"
+        ")\n"
+        "select * from counts where annotated_n != validated_n + quarantine_n\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Étape 4 — anomaly inspection. Module 18 §7.5/§10 — reused, not recreated: this now reads
+# `05_quarantine_<name>` (every row already routed as bloquant, whether by a cast tag or a
+# quality flag), not the old `02_typed_<name>`-with-cast_issues interim surface. Every row here
+# IS quarantined by construction (05's own WHERE clause), so no extra filter is needed. No
+# control-plane copy of the data ever exists, same relay-not-store principle as the M10
+# preview / M11 export.
+# ---------------------------------------------------------------------------
+
+def _quarantine_view_exists(conn, bronze_name: str) -> bool:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT 1 FROM information_schema.tables WHERE table_schema = 'bronze' AND table_name = %s",
-            (f"02_typed_{bronze_name}",),
+            (f"05_quarantine_{bronze_name}",),
         )
         return cur.fetchone() is not None
 
@@ -460,27 +731,25 @@ def _typed_table_exists(conn, bronze_name: str) -> bool:
 def list_quarantine(warehouse: DataSource, bronze_name: str, column: str | None, limit: int, offset: int) -> list[dict]:
     if not IDENTIFIER_RE.match(bronze_name):
         raise PayloadStructureError("Nom de dataset invalide.")
-    table = f"02_typed_{bronze_name}"
+    table = f"05_quarantine_{bronze_name}"
     conn = _connect_warehouse(warehouse)
     try:
-        if not _typed_table_exists(conn, bronze_name):
+        if not _quarantine_view_exists(conn, bronze_name):
             return []
         with conn.cursor() as cur:
             if column:
                 cur.execute(
                     pgsql.SQL(
-                        "SELECT row_number, source_file, cast_issues FROM bronze.{} "
-                        "WHERE EXISTS (SELECT 1 FROM unnest(cast_issues) i WHERE split_part(i, ':', 1) = %s) "
+                        "SELECT row_number, source_file, data_quality_flags FROM bronze.{} "
+                        "WHERE EXISTS (SELECT 1 FROM unnest(data_quality_flags) i WHERE split_part(i, ':', 1) = %s) "
                         "ORDER BY row_number LIMIT %s OFFSET %s"
                     ).format(pgsql.Identifier(table)),
                     (column, limit, offset),
                 )
             else:
                 cur.execute(
-                    pgsql.SQL(
-                        "SELECT row_number, source_file, cast_issues FROM bronze.{} "
-                        "WHERE cardinality(cast_issues) > 0 ORDER BY row_number LIMIT %s OFFSET %s"
-                    ).format(pgsql.Identifier(table)),
+                    pgsql.SQL("SELECT row_number, source_file, data_quality_flags FROM bronze.{} ORDER BY row_number LIMIT %s OFFSET %s")
+                    .format(pgsql.Identifier(table)),
                     (limit, offset),
                 )
             rows = cur.fetchall()
@@ -492,23 +761,24 @@ def list_quarantine(warehouse: DataSource, bronze_name: str, column: str | None,
 
 
 def quarantine_summary(warehouse: DataSource, bronze_name: str) -> dict:
-    """§6.2 — per-column issue counts, to point the engineer at *which* field to fix first."""
+    """§6.2 — per-column issue counts, to point the engineer at *which* field to fix first.
+    A bucket is either a field name (from a 'FIELD:absent'/'FIELD:invalid' cast tag) or a
+    quality-flag name itself (flag names are validated ':'-free, §6/§8) — split_part on a
+    colon-less string is a no-op, so both group correctly, just under one shared axis."""
     if not IDENTIFIER_RE.match(bronze_name):
         raise PayloadStructureError("Nom de dataset invalide.")
-    table = f"02_typed_{bronze_name}"
+    table = f"05_quarantine_{bronze_name}"
     conn = _connect_warehouse(warehouse)
     try:
-        if not _typed_table_exists(conn, bronze_name):
+        if not _quarantine_view_exists(conn, bronze_name):
             return {"total": 0, "by_column": []}
         with conn.cursor() as cur:
-            cur.execute(
-                pgsql.SQL("SELECT count(*) FROM bronze.{} WHERE cardinality(cast_issues) > 0").format(pgsql.Identifier(table))
-            )
+            cur.execute(pgsql.SQL("SELECT count(*) FROM bronze.{}").format(pgsql.Identifier(table)))
             total = cur.fetchone()[0]
             cur.execute(
                 pgsql.SQL(
                     "SELECT split_part(i, ':', 1) AS col, count(*) "
-                    "FROM bronze.{} t, unnest(t.cast_issues) i "
+                    "FROM bronze.{} t, unnest(t.data_quality_flags) i "
                     "GROUP BY col ORDER BY count(*) DESC"
                 ).format(pgsql.Identifier(table))
             )
@@ -520,12 +790,21 @@ def quarantine_summary(warehouse: DataSource, bronze_name: str) -> dict:
     return {"total": total, "by_column": by_column}
 
 
-def canonical_contract(column_mapping: list[dict]) -> str:
+def canonical_contract(column_mapping: list[dict], quality_flags: list[dict] | None = None) -> str:
     minimal = {
         "fields": [
             {"source_name": c["source_name"], "target_name": c["target_name"], "target_type": c["target_type"],
-             "format": c.get("format"), "include": c.get("include", True), "nullable": c.get("nullable", True)}
+             "format": c.get("format"), "include": c.get("include", True), "nullable": c.get("nullable", True),
+             "standardize": c.get("standardize")}
             for c in column_mapping
+        ],
+        # Module 18 — a rule change (regex, category, bounds) alters 04/05's rendered SQL just
+        # as much as a field edit alters 01/02/03's, so it belongs in the same hash: this is
+        # what has_pending_changes/redeploy-staleness tracking keys off.
+        "quality_flags": [
+            {"name": f["name"], "field": f["field"], "rule_type": f["rule_type"], "category": f.get("category", "elimination"),
+             "regex": f.get("regex"), "min_date": f.get("min_date"), "max_date": f.get("max_date")}
+            for f in (quality_flags or [])
         ],
     }
     return hashlib.sha256(json.dumps(minimal, sort_keys=True).encode()).hexdigest()

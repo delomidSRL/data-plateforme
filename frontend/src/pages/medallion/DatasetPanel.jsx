@@ -253,13 +253,15 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   // datasets are declared as a dbt source keyed by their `name`; silver/gold dbt models
   // are files named after `dbt_model_name` and referenced via ref(); gold ML (python)
   // outputs are declared as a separate `gold_ml` source keyed by `output_table`. A payload
-  // bronze dataset with a saved structuration contract is the one exception (§5 rewrite): its
-  // own source table is just the raw audit/payload shape, so downstream SQL should read its
-  // `02_typed_<name>` model instead — columnsByDataset[d.id].structured (set by
-  // getDatasetColumns) is what tells us that contract exists.
+  // bronze dataset with a saved structuration contract is the one exception (Module 18 §7.5):
+  // its own source table is just the raw audit/payload shape, so downstream SQL should read
+  // its `05_validated_<name>` model instead — the clean, routed output of the full
+  // 01..05 chain, never 04_annotated nor the bronze directly.
+  // columnsByDataset[d.id].structured (set by getDatasetColumns) is what tells us that
+  // contract exists.
   const referenceSnippetFor = (d) => {
     if (d.layer === "bronze") {
-      if (columnsByDataset[d.id]?.structured) return `{{ ref('02_typed_${d.name}') }}`;
+      if (columnsByDataset[d.id]?.structured) return `{{ ref('05_validated_${d.name}') }}`;
       return `{{ source('bronze', '${d.name}') }}`;
     }
     if (d.transform_type === "python") return `{{ source('gold_ml', '${d.output_table || d.name}') }}`;

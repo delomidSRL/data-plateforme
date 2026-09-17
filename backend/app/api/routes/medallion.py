@@ -304,9 +304,12 @@ def get_dataset_columns(did: int, db: Session = Depends(get_db), project: Medall
 
     A payload-mode bronze dataset's own physical table is just `payload`/`load_id`/
     `source_file`/`row_number`/`source_pk`/`source_system` (§3.3 audit shape) — useless for
-    authoring downstream SQL. Once it has a saved structuration contract, its `02_typed`
-    model is what silver/gold should reference instead (§5.2), so its *structured* columns
-    (the profiled, included target_name/target_type pairs) are returned here in its place."""
+    authoring downstream SQL. Once it has a saved structuration contract, its
+    `05_validated_<name>` model (Module 18 §7.5 — the clean, routed output; never
+    `04_annotated` nor the bronze directly) is what silver/gold should reference instead, so
+    its *structured* columns (the profiled, included target_name/target_type pairs — column
+    names are stable across 02/03/05, only 03's in-place standardize ops touch values) are
+    returned here in its place."""
     dataset = _get_dataset(db, project.id, did)
     if dataset.layer == MedallionLayer.bronze:
         structuration = db.query(PayloadStructuration).filter(PayloadStructuration.dataset_id == dataset.id).first()
@@ -345,7 +348,7 @@ def get_dataset_preview(
 def _structuration_out(row: PayloadStructuration) -> StructurationOut:
     return StructurationOut(
         dataset_id=row.dataset_id, payload_column=row.payload_column, column_mapping=row.column_mapping,
-        contract_hash=row.contract_hash, updated_at=row.updated_at, updated_by=row.updated_by,
+        quality_flags=row.quality_flags, contract_hash=row.contract_hash, updated_at=row.updated_at, updated_by=row.updated_by,
     )
 
 
@@ -392,15 +395,21 @@ def update_dataset_structuration(
 ):
     """§4.4 — persists the validated contract: identifiers checked before anything is written.
     Marks the project as needing a redeploy (a changed contract re-renders the
-    01_unpacked/02_typed dbt models at next build)."""
+    01_unpacked ... 05_validated/05_quarantine dbt models, Module 18, at next build)."""
     dataset = _get_dataset(db, project.id, did)
     if payload_structure.resolve_import(db, dataset) is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ce dataset bronze n'est pas adossé à un import en mode payload.")
 
     column_mapping = [f.model_dump() for f in payload.column_mapping]
+    quality_flags = [f.model_dump() for f in payload.quality_flags]
     try:
         payload_structure.validate_column_mapping(column_mapping)
-        payload_structure.render_unpacked_typed_models(column_mapping, dataset.name)  # proves it will actually build
+        payload_structure.validate_standardize_ops(column_mapping)
+        payload_structure.validate_quality_flags(quality_flags, column_mapping)
+        # proves the whole chain will actually build, not just 01/02
+        payload_structure.render_unpacked_typed_models(column_mapping, dataset.name)
+        payload_structure.render_standardized_model(column_mapping, dataset.name)
+        payload_structure.render_annotated_model(quality_flags, dataset.name)
     except payload_structure.PayloadStructureError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
@@ -409,7 +418,8 @@ def update_dataset_structuration(
         row = PayloadStructuration(dataset_id=dataset.id)
         db.add(row)
     row.column_mapping = column_mapping
-    row.contract_hash = payload_structure.canonical_contract(column_mapping)
+    row.quality_flags = quality_flags
+    row.contract_hash = payload_structure.canonical_contract(column_mapping, quality_flags)
     row.updated_by = current_user.id
 
     if project.status in (ProjectStatus.deployed, ProjectStatus.paused):
@@ -424,9 +434,9 @@ def list_dataset_quarantine(
     did: int, column: str | None = None, limit: int = 50, offset: int = 0,
     db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project),
 ):
-    """Module 6 extension §6.2 — paginated rows carrying at least one cast issue, straight
-    from `bronze.02_typed_<name>` (never copied into the control plane; no separate
-    quarantine relation anymore — every row reaches this table, diagnosed, never excluded)."""
+    """Module 6 extension §6.2, Module 18 §7.5 — paginated rows already routed as bloquant
+    (cast tag or quality flag), straight from `bronze.05_quarantine_<name>` (never copied into
+    the control plane)."""
     dataset = _get_dataset(db, project.id, did)
     warehouse = db.get(DataSource, project.warehouse_source_id)
     if warehouse is None:

@@ -207,14 +207,22 @@ def generate_project_files(
 
     # §5 rewrite — rendered first so their vars can go straight into dbt_project.yml below,
     # one <name>_fields key per structured bronze dataset, merged into a single vars block.
+    # Module 18 — 03/04/05 are rendered right alongside 01/02 for every structured dataset,
+    # unconditionally (not opt-in per stage): an empty standardize/quality_flags list is a
+    # no-op passthrough at each stage, so this is additive for every contract that predates
+    # Module 18, zero regression for 01/02-only projects.
     structuration_vars: dict[str, list] = {}
     structuration_models: dict[str, str] = {}
+    all_quality_flags: list[dict] = []
     for ds in bronze:
         structuration = structurations.get(ds.id)
         if structuration is None:
             continue
         try:
             rendered = payload_structure.render_unpacked_typed_models(structuration.column_mapping, ds.name)
+            standardized_sql = payload_structure.render_standardized_model(structuration.column_mapping, ds.name)
+            annotated_sql = payload_structure.render_annotated_model(structuration.quality_flags, ds.name)
+            validated_quarantine = payload_structure.render_validated_quarantine_models(ds.name)
         except payload_structure.PayloadStructureError as exc:
             # A contract that fails to re-render at build time (e.g. a field removed from the
             # payload since it was written) must not silently skip structuration nor crash the
@@ -224,6 +232,12 @@ def generate_project_files(
         structuration_vars[rendered["vars_key"]] = rendered["vars_entries"]
         structuration_models[f"models/bronze/01_unpacked_{ds.name}.sql"] = rendered["unpacked_sql"]
         structuration_models[f"models/bronze/02_typed_{ds.name}.sql"] = rendered["typed_sql"]
+        structuration_models[f"models/bronze/03_standardized_{ds.name}.sql"] = standardized_sql
+        structuration_models[f"models/bronze/04_annotated_{ds.name}.sql"] = annotated_sql
+        structuration_models[f"models/bronze/05_validated_{ds.name}.sql"] = validated_quarantine["validated_sql"]
+        structuration_models[f"models/bronze/05_quarantine_{ds.name}.sql"] = validated_quarantine["quarantine_sql"]
+        structuration_models[f"tests/dq_reconciliation_{ds.name}.sql"] = payload_structure.render_reconciliation_test(ds.name)
+        all_quality_flags.extend(structuration.quality_flags)
 
     files: dict[str, str] = {
         "dbt_project.yml": yaml.safe_dump(
@@ -235,6 +249,12 @@ def generate_project_files(
     }
     if structurations:
         files.update(payload_structure.STRUCTURATION_MACROS)
+        # §8 — one registry seed for the whole project, read by every dataset's 05 (never
+        # per-dataset: a flag name is a project-wide identifier, §8's "quelle que soit la
+        # table"). Present even when no dataset has defined a single flag yet (05's routing
+        # still needs the seed to exist — an empty registry just means every flag routes to
+        # quarantine, the documented safe default for anything undeclared).
+        files["seeds/dq_flag_registry.csv"] = payload_structure.render_registry_seed(all_quality_flags)
     if for_export or rendered_tests.has_tier_a:
         # §6 — the exported bundle always pins dbt-expectations/dbt-utils, even for a project
         # with zero Tier A checks today: a standalone artifact ready to extend. The live build
