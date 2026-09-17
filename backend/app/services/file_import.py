@@ -459,34 +459,24 @@ def _table_exists(cur, schema_name: str, table_name: str) -> bool:
     return cur.fetchone() is not None
 
 
-def create_bronze_passthrough_view(warehouse: DataSource, schema_name: str, table: str, bronze_name: str) -> bool:
-    """Instant bronze (control-plane-only, no Airflow) for a bronze dataset backed by a file
-    import: the data already sits fully loaded in `imports.<table>` the moment the import
-    finishes, so a live passthrough view is enough to make `bronze.<bronze_name>` queryable
-    right away — no reason to wait for a deploy + DAG run just to see it. The real
-    `ingest_bronze` operator (Parquet-archived, chunked) still runs at the next actual pipeline
-    run and replaces this with its own table; since it does so via `DROP TABLE ... CASCADE`
-    then `CREATE TABLE` (never touching a pre-existing view of the same name until dropped),
-    and this function only ever acts when `bronze.<bronze_name>` doesn't exist yet in any form,
-    the two never race or conflict. Returns False (no-op) if something is already there.
-    Best-effort: never raises past the caller — see its own try/except."""
-    _validate_identifier(schema_name, "Schéma source")
-    _validate_identifier(table, "Table source")
-    _validate_identifier(bronze_name, "Nom du dataset bronze")
-    conn = _pg_connect(warehouse)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS bronze"))
-            if _table_exists(cur, "bronze", bronze_name):
-                return False
-            cur.execute(
-                sql.SQL("CREATE VIEW {} AS SELECT * FROM {}.{}")
-                .format(sql.Identifier("bronze", bronze_name), sql.Identifier(schema_name), sql.Identifier(table))
-            )
-        conn.commit()
-        return True
-    finally:
-        conn.close()
+def _sync_bronze_mirror(conn, schema_name: str, table: str) -> None:
+    """Bronze IS the same table as the import — mirrored synchronously here, in the control
+    plane, right after `imports.<table>` is (re)written, instead of waiting on a deploy + an
+    Airflow run of the `ingest_bronze` operator to copy it over later. A real TABLE (`CREATE
+    TABLE ... AS SELECT *`), never a view: the operator's own `DROP TABLE IF EXISTS
+    bronze.<table> CASCADE` at that later run requires the existing object to actually be a
+    table (Postgres raises "is not a table" against a view of the same name) — matching its
+    object kind here is what lets that future run replace this mirror without erroring.
+    Uses the caller's own connection/transaction — same warehouse, same import, one round trip.
+    Every reimport calls this too (both _do_run_import and _do_run_import_payload), so the
+    mirror never goes stale."""
+    with conn.cursor() as cur:
+        cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS bronze"))
+        cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier("bronze", table)))
+        cur.execute(
+            sql.SQL("CREATE TABLE {} AS SELECT * FROM {}.{}")
+            .format(sql.Identifier("bronze", table), sql.Identifier(schema_name), sql.Identifier(table))
+        )
 
 
 def _prepare_table(cur, schema_name: str, table_name: str, included_columns: list[dict], write_mode: FileImportWriteMode) -> None:
@@ -653,6 +643,13 @@ def _do_run_import_payload(db, fi: FileImport) -> None:
             with conn.cursor() as cur:
                 row_count += _insert_payload_chunk(cur, fi.target_schema, fi.target_table, fi.id, fi.source_file_name, chunk, row_count, source_pk, source_system)
             conn.commit()
+
+        try:
+            _sync_bronze_mirror(conn, fi.target_schema, fi.target_table)
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            logger.warning("bronze mirror failed for import %s (%s.%s): %s", fi.id, fi.target_schema, fi.target_table, exc)
     finally:
         conn.close()
 
@@ -714,6 +711,13 @@ def _do_run_import(db, fi: FileImport) -> None:
             with conn.cursor() as cur:
                 row_count += _insert_chunk(cur, fi.target_schema, fi.target_table, included_columns, chunk, cast_errors)
             conn.commit()
+
+        try:
+            _sync_bronze_mirror(conn, fi.target_schema, fi.target_table)
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            logger.warning("bronze mirror failed for import %s (%s.%s): %s", fi.id, fi.target_schema, fi.target_table, exc)
     finally:
         conn.close()
 
