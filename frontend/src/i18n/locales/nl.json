@@ -1104,6 +1104,7 @@
       "rejectedCount": "{{count}} afwijking(en)",
       "viewRows": "Rijen bekijken",
       "acceptAsText": "Zo accepteren (tekst)",
+      "acceptAsTextDone": "Kolom \"{{column}}\" omgezet naar tekst — sla het contract op om toe te passen.",
       "colRowNumber": "Rij",
       "colSourceFile": "Bestand",
       "colMotif": "Reden",

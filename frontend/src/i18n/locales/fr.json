@@ -1104,6 +1104,7 @@
       "rejectedCount": "{{count}} anomalie(s)",
       "viewRows": "Voir les lignes",
       "acceptAsText": "Accepter tel quel (texte)",
+      "acceptAsTextDone": "Colonne « {{column}} » passée en texte — enregistrez le contrat pour appliquer.",
       "colRowNumber": "Ligne",
       "colSourceFile": "Fichier",
       "colMotif": "Motif",

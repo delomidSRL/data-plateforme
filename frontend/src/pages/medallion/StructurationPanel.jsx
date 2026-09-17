@@ -194,10 +194,19 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
 // Étape 4 — per-column summary (what to fix first) + the rows carrying an issue, with a
 // one-click repair shortcut that jumps straight to editing the offending field above.
 function QuarantineSection({ project, dataset, t, onFieldFix }) {
+  const showToast = useToast();
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState(null);
   const [activeColumn, setActiveColumn] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // onFieldFix only patches the (possibly off-screen) field row's state above — nothing near
+  // this button otherwise confirms the click did anything, since the anomaly panel itself
+  // only reflects the last saved+rebuilt contract, not this pending edit.
+  const acceptAsText = (column) => {
+    onFieldFix(column, { target_type: "text" });
+    showToast(t("medallion.structuration.acceptAsTextDone", { column }));
+  };
 
   const loadSummary = async () => {
     setLoading(true);
@@ -245,7 +254,7 @@ function QuarantineSection({ project, dataset, t, onFieldFix }) {
               </div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button className="btn-ghost" style={{ padding: "4px 8px", fontSize: 11.5 }} onClick={() => openColumn(c.column)}>{t("medallion.structuration.viewRows")}</button>
-                <button className="btn-ghost" style={{ padding: "4px 8px", fontSize: 11.5 }} onClick={() => onFieldFix(c.column, { target_type: "text" })}>{t("medallion.structuration.acceptAsText")}</button>
+                <button className="btn-ghost" style={{ padding: "4px 8px", fontSize: 11.5 }} onClick={() => acceptAsText(c.column)}>{t("medallion.structuration.acceptAsText")}</button>
               </div>
             </div>
             {activeColumn === c.column && (

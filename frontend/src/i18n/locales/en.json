@@ -1104,6 +1104,7 @@
       "rejectedCount": "{{count}} anomaly(ies)",
       "viewRows": "View rows",
       "acceptAsText": "Accept as-is (text)",
+      "acceptAsTextDone": "Column \"{{column}}\" switched to text — save the contract to apply it.",
       "colRowNumber": "Row",
       "colSourceFile": "File",
       "colMotif": "Reason",
