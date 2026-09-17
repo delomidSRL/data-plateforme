@@ -15,6 +15,7 @@ import StructurationPopup from "./StructurationPopup.jsx";
 
 const LAYER_ORDER = { bronze: 0, silver: 1, gold: 2 };
 const TEST_TYPES = ["not_null", "unique", "accepted_values", "relationships"];
+const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "Oracle", minio: "MinIO" };
 
 const BLANK_STARTER = `df = read_table("TABLE_ENTREE")
 
@@ -58,6 +59,12 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   const [name, setName] = useState(dataset?.name || "");
   const [description, setDescription] = useState(dataset?.description || "");
 
+  // Sources span 4 unrelated types (PostgreSQL/MySQL/Oracle/MinIO) — picking the type first
+  // narrows a possibly-long flat list down to only the sources that could actually apply.
+  const [sourceType, setSourceType] = useState(() => {
+    if (!dataset?.source_id) return "";
+    return (sources || []).find((s) => s.id === dataset.source_id)?.type || "";
+  });
   const [sourceId, setSourceId] = useState(dataset?.source_id || "");
   const [sourceObject, setSourceObject] = useState(dataset?.source_object || "");
   const [loadMode, setLoadMode] = useState(dataset?.load_mode || "full");
@@ -172,6 +179,13 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   const pickBrowsedTable = (qualified) => {
     setSourceObject(qualified);
     if (!name.trim()) setName(qualified.split(".").pop().replace(/\W/g, "_"));
+  };
+
+  const availableSourceTypes = [...new Set(sources.map((s) => s.type))];
+  const sourcesOfType = sourceType ? sources.filter((s) => s.type === sourceType) : [];
+  const handleSourceTypeChange = (newType) => {
+    setSourceType(newType);
+    setSourceId(""); // the previous pick may not exist under the new type
   };
 
   const isBronze = layer === "bronze";
@@ -419,10 +433,17 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
 
         {isBronze ? (
           <>
+            <Field label={t("medallion.panel.sourceType")}>
+              <select className="input" value={sourceType} onChange={(e) => handleSourceTypeChange(e.target.value)}>
+                <option value="">{t("medallion.panel.chooseSourceType")}</option>
+                {availableSourceTypes.map((ty) => <option key={ty} value={ty}>{SOURCE_TYPE_LABEL[ty] || ty}</option>)}
+              </select>
+            </Field>
+
             <Field label={t("medallion.panel.source")}>
-              <select className="input" value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
-                <option value="">{t("medallion.panel.chooseSource")}</option>
-                {sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              <select className="input" value={sourceId} onChange={(e) => setSourceId(e.target.value)} disabled={!sourceType}>
+                <option value="">{sourceType ? t("medallion.panel.chooseSource") : t("medallion.panel.chooseSourceTypeFirst")}</option>
+                {sourcesOfType.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </Field>
 
