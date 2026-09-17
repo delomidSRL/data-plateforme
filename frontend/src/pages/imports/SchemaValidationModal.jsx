@@ -54,6 +54,14 @@ export default function SchemaValidationModal({ fileImport, onClose, onValidated
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // Nested JSON/XML lands as a single `payload JSONB` column by default (scalar keys are
+  // opt-in, unchecked) — the full mapping table has nothing to decide in the common case, so
+  // it stays collapsed behind "customize" instead of forcing a review of an empty decision.
+  const payloadEntry = fileImport.column_mapping.find((c) => c.source_name === "__root__");
+  const isNestedPayload = Boolean(payloadEntry);
+  const [expanded, setExpanded] = useState(false);
+  const showTable = !isNestedPayload || expanded;
+
   const updateColumn = (idx, patch) => {
     setColumns((cols) => cols.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
   };
@@ -97,9 +105,13 @@ export default function SchemaValidationModal({ fileImport, onClose, onValidated
         </div>
       ))}
 
-      {columns.some((c) => c.source_name === "__root__") && (
+      {isNestedPayload && (
         <div className="card" style={{ padding: 14, marginBottom: 16, background: "var(--bg)" }}>
-          <div style={{ fontSize: 13, marginBottom: 8 }}>{t("imports.modal.payloadOrientation")}</div>
+          <div style={{ fontSize: 13, marginBottom: 8 }}>{t("imports.modal.payloadPreviewLabel")}</div>
+          <pre style={{ fontFamily: "var(--font-m)", fontSize: 11.5, background: "var(--surface)", padding: 10, borderRadius: 8, margin: 0, overflowX: "auto" }}>
+            {(payloadEntry.sample || []).map((s, i) => <div key={i}>{s}</div>)}
+          </pre>
+          <div style={{ fontSize: 13, margin: "12px 0 8px" }}>{t("imports.modal.payloadOrientation")}</div>
           <pre style={{ fontFamily: "var(--font-m)", fontSize: 11.5, background: "var(--surface)", padding: 10, borderRadius: 8, margin: 0, overflowX: "auto" }}>
 {`select
   payload->>'some_key' as some_key,
@@ -109,67 +121,75 @@ from {{ source('imports', '${targetTable || "..."}') }}`}
         </div>
       )}
 
-      <div style={{ overflowX: "auto", marginBottom: 16 }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>{t("imports.modal.colInclude")}</th>
-              <th>{t("imports.modal.colSource")}</th>
-              <th>{t("imports.modal.colTarget")}</th>
-              <th>{t("imports.modal.colType")}</th>
-              <th>{t("imports.modal.colConfidence")}</th>
-              <th>{t("imports.modal.preview")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {columns.map((c, idx) => {
-              const invalidName = c.include && (!IDENTIFIER_RE.test(c.target_name) || hasDuplicate(c.target_name));
-              const showDateFormat = c.include && (c.target_type === "date" || c.target_type === "timestamp");
-              return (
-                <tr key={c.source_name} style={{ opacity: c.include ? 1 : 0.5 }}>
-                  <td>
-                    <input type="checkbox" checked={c.include} onChange={(e) => updateColumn(idx, { include: e.target.checked })} />
-                  </td>
-                  <td style={{ fontFamily: "var(--font-m)", fontSize: 12 }}>{c.source_name}</td>
-                  <td style={{ minWidth: 140 }}>
-                    <Input
-                      className="input"
-                      style={{ fontFamily: "var(--font-m)", fontSize: 12, borderColor: invalidName ? "var(--danger)" : undefined }}
-                      value={c.target_name}
-                      disabled={!c.include}
-                      onChange={(e) => updateColumn(idx, { target_name: e.target.value })}
-                    />
-                    {showDateFormat && (
-                      <select
-                        className="input" style={{ marginTop: 6, fontSize: 11.5 }}
-                        value={c.format || "%d/%m/%Y"}
-                        onChange={(e) => updateColumn(idx, { format: e.target.value })}
-                      >
-                        <option value="%Y-%m-%d">{t("imports.modal.dateFormatISO")}</option>
-                        <option value="%d/%m/%Y">{t("imports.modal.dateFormatDDMM")}</option>
-                        <option value="%m/%d/%Y">{t("imports.modal.dateFormatMMDD")}</option>
+      {isNestedPayload && (
+        <button type="button" className="link" style={{ marginBottom: 12 }} onClick={() => setExpanded((v) => !v)}>
+          {expanded ? t("imports.modal.hideColumns") : t("imports.modal.customizeColumns")}
+        </button>
+      )}
+
+      {showTable && (
+        <div style={{ overflowX: "auto", marginBottom: 16 }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{t("imports.modal.colInclude")}</th>
+                <th>{t("imports.modal.colSource")}</th>
+                <th>{t("imports.modal.colTarget")}</th>
+                <th>{t("imports.modal.colType")}</th>
+                <th>{t("imports.modal.colConfidence")}</th>
+                <th>{t("imports.modal.preview")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {columns.map((c, idx) => {
+                const invalidName = c.include && (!IDENTIFIER_RE.test(c.target_name) || hasDuplicate(c.target_name));
+                const showDateFormat = c.include && (c.target_type === "date" || c.target_type === "timestamp");
+                return (
+                  <tr key={c.source_name} style={{ opacity: c.include ? 1 : 0.5 }}>
+                    <td>
+                      <input type="checkbox" checked={c.include} onChange={(e) => updateColumn(idx, { include: e.target.checked })} />
+                    </td>
+                    <td style={{ fontFamily: "var(--font-m)", fontSize: 12 }}>{c.source_name}</td>
+                    <td style={{ minWidth: 140 }}>
+                      <Input
+                        className="input"
+                        style={{ fontFamily: "var(--font-m)", fontSize: 12, borderColor: invalidName ? "var(--danger)" : undefined }}
+                        value={c.target_name}
+                        disabled={!c.include}
+                        onChange={(e) => updateColumn(idx, { target_name: e.target.value })}
+                      />
+                      {showDateFormat && (
+                        <select
+                          className="input" style={{ marginTop: 6, fontSize: 11.5 }}
+                          value={c.format || "%d/%m/%Y"}
+                          onChange={(e) => updateColumn(idx, { format: e.target.value })}
+                        >
+                          <option value="%Y-%m-%d">{t("imports.modal.dateFormatISO")}</option>
+                          <option value="%d/%m/%Y">{t("imports.modal.dateFormatDDMM")}</option>
+                          <option value="%m/%d/%Y">{t("imports.modal.dateFormatMMDD")}</option>
+                        </select>
+                      )}
+                    </td>
+                    <td style={{ minWidth: 110 }}>
+                      <select className="input" value={c.target_type} disabled={!c.include} onChange={(e) => updateColumn(idx, { target_type: e.target.value })}>
+                        {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
                       </select>
-                    )}
-                  </td>
-                  <td style={{ minWidth: 110 }}>
-                    <select className="input" value={c.target_type} disabled={!c.include} onChange={(e) => updateColumn(idx, { target_type: e.target.value })}>
-                      {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
-                    </select>
-                  </td>
-                  <td>
-                    <Badge tone={c.confidence >= 0.95 ? "accent" : "danger"}>{Math.round((c.confidence ?? 0) * 100)}%</Badge>
-                  </td>
-                  <td style={{ fontFamily: "var(--font-m)", fontSize: 11.5, color: "var(--text-muted)" }}>
-                    {(c.sample || []).slice(0, 3).map((s, i) => (
-                      <div key={i}>{previewCast(s, c.target_type, c.format)}</div>
-                    ))}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                    </td>
+                    <td>
+                      <Badge tone={c.confidence >= 0.95 ? "accent" : "danger"}>{Math.round((c.confidence ?? 0) * 100)}%</Badge>
+                    </td>
+                    <td style={{ fontFamily: "var(--font-m)", fontSize: 11.5, color: "var(--text-muted)" }}>
+                      {(c.sample || []).slice(0, 3).map((s, i) => (
+                        <div key={i}>{previewCast(s, c.target_type, c.format)}</div>
+                      ))}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 12, alignItems: "flex-end", marginBottom: 8 }}>
         <div style={{ flex: 2 }}>
@@ -188,9 +208,11 @@ from {{ source('imports', '${targetTable || "..."}') }}`}
         </div>
       </div>
 
-      <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 12 }}>
-        {t("imports.modal.columnsSelected", { included: includedCount, total: columns.length })}
-      </div>
+      {showTable && (
+        <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 12 }}>
+          {t("imports.modal.columnsSelected", { included: includedCount, total: columns.length })}
+        </div>
+      )}
 
       <div className="modal-actions">
         <Button type="button" variant="ghost" onClick={onClose}>{t("imports.modal.cancel")}</Button>
