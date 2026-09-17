@@ -33,6 +33,7 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
   const [sourcePk, setSourcePk] = useState("");
   const [pkCandidates, setPkCandidates] = useState([]);
   const [pkLoading, setPkLoading] = useState(false);
+  const [sourceSystem, setSourceSystem] = useState("");
   const [targetSourceId, setTargetSourceId] = useState("");
   const [archiveSourceId, setArchiveSourceId] = useState("");
   const [name, setName] = useState("");
@@ -120,6 +121,7 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
         formatOptions.record_xpath = recordXpath.trim();
       }
       if (isPayload && sourcePk.trim()) formatOptions.source_pk = sourcePk.trim();
+      if (isPayload && sourceSystem.trim()) formatOptions.source_system = sourceSystem.trim();
       const fi = await importsApi.createImport(file, {
         format, formatOptions, targetSourceId: Number(targetSourceId), archiveSourceId: Number(archiveSourceId), name: name.trim() || undefined,
         importMode: isPayload ? "payload" : "typed", writeMode: isPayload ? payloadWriteMode : "create",
@@ -205,6 +207,10 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
             )}
             <Input placeholder={t("imports.wizard.sourcePkPlaceholder")} value={sourcePk} onChange={(e) => setSourcePk(e.target.value)} />
             <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>{t("imports.wizard.sourcePkHelp")}</div>
+          </Field>
+          <Field label={t("imports.wizard.sourceSystem")}>
+            <Input placeholder={t("imports.wizard.sourceSystemPlaceholder")} value={sourceSystem} onChange={(e) => setSourceSystem(e.target.value)} />
+            <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>{t("imports.wizard.sourceSystemHelp")}</div>
           </Field>
           <div className="card" style={{ padding: 12, marginBottom: 14, background: "var(--bg)" }}>
             <div style={{ fontFamily: "var(--font-m)", fontSize: 12.5 }}>
