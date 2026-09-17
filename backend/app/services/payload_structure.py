@@ -169,9 +169,19 @@ def profile_payload(db: Session, dataset: MedallionDataset) -> list[dict]:
                 seen.add(k)
                 keys.append(k)
 
+    # Carries the source_pk chosen at import time (§3.6) forward into the contract: those
+    # keys pre-fill as the primary key of the structured (__parsed) table — badge only,
+    # never a hard SQL constraint (__parsed stays a view) — and, since a PK can't be null,
+    # nullable=False so the existing quarantine gate already enforces it. Still plain
+    # editable defaults, same "pré-remplissage effaçable" rule as every other inferred field.
+    pk_keys = {k.strip() for k in ((fi.format_options or {}).get("source_pk") or "").split(",") if k.strip()}
+
     mapping = schema_infer.infer_schema(payload_rows, keys)
     for entry in mapping:
         entry["on_cast_error"] = "quarantine"
+        if entry["source_name"] in pk_keys:
+            entry["is_primary_key"] = True
+            entry["nullable"] = False
     return mapping
 
 

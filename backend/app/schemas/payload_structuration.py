@@ -14,6 +14,7 @@ class StructurationFieldEntry(BaseModel):
     format: str | None = None
     include: bool = True
     nullable: bool = True
+    is_primary_key: bool = False
     on_cast_error: OnCastError = "quarantine"
     # produced by inference, kept for traceability — not required on the way back in
     inferred_type: str | None = None

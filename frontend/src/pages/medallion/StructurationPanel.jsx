@@ -142,7 +142,14 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
               return (
                 <tr key={f.source_name} style={{ opacity: f.include ? 1 : 0.5 }}>
                   <td><input type="checkbox" checked={f.include} disabled={readOnly} onChange={(e) => updateField(idx, { include: e.target.checked })} /></td>
-                  <td style={{ fontFamily: "var(--font-m)", fontSize: 12 }}>{f.source_name}</td>
+                  <td style={{ fontFamily: "var(--font-m)", fontSize: 12 }}>
+                    {f.source_name}
+                    {f.is_primary_key && (
+                      <span style={{ marginLeft: 6 }} title={t("medallion.structuration.primaryKeyHelp")}>
+                        <Badge tone="accent">{t("medallion.structuration.primaryKeyBadge")}</Badge>
+                      </span>
+                    )}
+                  </td>
                   <td style={{ minWidth: 140 }}>
                     <Input
                       style={{ fontFamily: "var(--font-m)", fontSize: 12, borderColor: invalidName ? "var(--danger)" : undefined }}
