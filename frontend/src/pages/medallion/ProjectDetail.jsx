@@ -285,7 +285,12 @@ export default function ProjectDetail({ readOnly = false }) {
 
   const handleImportAnalyzed = (fi) => {
     setImportWizardOpen(false);
-    setImportValidating(fi);
+    // Payload mode (§3.5) comes back status=imported directly — no mapping to validate, so
+    // the schema modal must be skipped entirely; only "typed" analysis needs it (mirrors
+    // ImportsList.jsx's onAnalyzed, which already branches the same way).
+    if (fi.status === "awaiting_validation") setImportValidating(fi);
+    else if (fi.status === "imported") handleImportValidated(fi);
+    else showToast(t("imports.wizard.analyzeFailed"));
   };
 
   const handleImportValidated = async (fi) => {
