@@ -1,17 +1,24 @@
 """Module 6 extension (payload & structuration) — §4 (profiling & contract) and §5 (rendering).
 
 Structuration is a **deterministic compiler**: contract x payload -> SQL, never SQL from an
-LLM. Every field goes text-first (`payload->>'key'`) then through a guarded, never-raising
-cast (`dp_try_cast_*`, a tiny set of PL/pgSQL helpers deployed once per project via
-`on-run-start` in `public` — Postgres's own `::type`/`to_date` casts raise a hard error on a
-bad value, which would abort the whole model; these helpers catch that and return NULL
-instead, exactly the "try_cast-style, never a naked cast" decision in spec §11.7, empirically
-confirmed: `to_date('31/02/2024','DD/MM/YYYY')` and `'99999999999999'::integer` both raise in
-real Postgres, they don't silently clamp). A row is clean iff every field under
-`on_cast_error=quarantine` policy cast cleanly; a field under `null`/`text` policy never
-quarantines the row (§0) — its own materialized value differs (NULL vs. raw text) but it can
-never gate the split. Rows that fail route to `__quarantine`, tagged with the failing columns,
-their raw value and the target type — never silently NULLed, never dropped.
+LLM. Two dbt models per payload bronze dataset, staged (§5 rewrite — unpacked/typed
+convention):
+
+- `01_unpacked_<name>`: pure extraction (`payload->>'key'`) + generic string hygiene
+  (`clean_string`), every field the same way. No casting here.
+- `02_typed_<name>`: casts `01_unpacked`'s cleaned text into real types, defensively, via
+  `safe_cast` — a guarded dispatch to `dp_try_cast_*` (a tiny set of PL/pgSQL helpers deployed
+  once per project via `on-run-start` in `public`; Postgres's own `::type`/`to_date` casts
+  raise a hard error on a bad value, which would abort the whole model — these helpers catch
+  that and return NULL instead). Every row from bronze reaches `02_typed` — nothing is ever
+  excluded — diagnosed instead via a per-row `cast_issues` text[] (one `"field:absent"` or
+  `"field:invalid"` tag per problem field, via the `cast_issue` macro), so a bad row is always
+  inspectable and never silently dropped or gated behind a separate relation.
+
+The field list itself (which payload keys to extract, their type, whether they're required)
+is externalized as a dbt var (`<name>_fields`, written into `dbt_project.yml`) — the SQL is
+pure logic ("clean and cast every field the same way"), the var is pure config ("here's the
+list"), read by both stages via `var()`.
 """
 import hashlib
 import json
@@ -27,13 +34,11 @@ from app.models.data_source import DataSource, DataSourceType
 from app.models.file_import import FileImport, FileImportStatus, ImportMode
 from app.models.medallion import MedallionDataset, MedallionLayer
 from app.services import connections, schema_infer
-from app.services.sql_validator import validate_predicate_sql
 
 logger = logging.getLogger("app.payload_structure")
 
 IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 ALLOWED_TARGET_TYPES = {"text", "integer", "bigint", "numeric", "boolean", "date", "timestamp", "jsonb"}
-ON_CAST_ERROR_POLICIES = {"quarantine", "null", "text"}
 
 PROFILE_SAMPLE_SIZE = schema_infer.SAMPLE_SIZE  # 1000, same bound as M6's own inference
 
@@ -170,15 +175,14 @@ def profile_payload(db: Session, dataset: MedallionDataset) -> list[dict]:
                 keys.append(k)
 
     # Carries the source_pk chosen at import time (§3.6) forward into the contract: those
-    # keys pre-fill as the primary key of the structured (__parsed) table — badge only,
-    # never a hard SQL constraint (__parsed stays a view) — and, since a PK can't be null,
-    # nullable=False so the existing quarantine gate already enforces it. Still plain
-    # editable defaults, same "pré-remplissage effaçable" rule as every other inferred field.
+    # keys pre-fill as the primary key of the structured (02_typed) table — badge only, never
+    # a hard SQL constraint — and, since a PK can't be null, nullable=False so it's flagged
+    # "required" in the rendered var (cast_issue tags a missing value). Still plain editable
+    # defaults, same "pré-remplissage effaçable" rule as every other inferred field.
     pk_keys = {k.strip() for k in ((fi.format_options or {}).get("source_pk") or "").split(",") if k.strip()}
 
     mapping = schema_infer.infer_schema(payload_rows, keys)
     for entry in mapping:
-        entry["on_cast_error"] = "quarantine"
         if entry["source_name"] in pk_keys:
             entry["is_primary_key"] = True
             entry["nullable"] = False
@@ -186,7 +190,9 @@ def profile_payload(db: Session, dataset: MedallionDataset) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Contract validation (Étape 2, §4.4) — identifiers + AST-checked cast expressions
+# Contract validation (Étape 2, §4.4) — identifiers only; the cast itself is a closed,
+# type-dispatched macro call (safe_cast), not contract-built SQL text, so there's no
+# injection surface left for an AST safety net to guard.
 # ---------------------------------------------------------------------------
 
 def _pg_date_format(py_format: str) -> str:
@@ -196,59 +202,8 @@ def _pg_date_format(py_format: str) -> str:
     return fmt
 
 
-def _jinja_string_literal(s: str) -> str:
-    """Escape for embedding as a Jinja string literal inside `{{ config(...) }}` — a
-    different trust boundary than _sql_string_literal below: this text is parsed by dbt's
-    Jinja engine, not Postgres, and it can contain BOTH single quotes (the RAISE message's own
-    SQL string literal) and double quotes (every quoted identifier in the rendered SQL), so
-    neither bare quote char is safe as a delimiter without escaping — Python/Jinja-style
-    backslash escaping handles both uniformly."""
-    return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'"
-
-
-def _sql_string_literal(s: str) -> str:
-    """Single-quote a string for SQL embedding — the date/timestamp format is the one contract
-    parameter that's a raw string rather than an already-identifier-safe name (mirrors
-    quality_intrinsic._sql_string_literal, same trust boundary)."""
-    return "'" + s.replace("'", "''") + "'"
-
-
-def _clean_numeric_expr(txt_expr: str) -> str:
-    """Strip thousands separators, normalize the French decimal comma to a dot — a pure text
-    transform, never fails, so it's safe to embed directly (no try_cast needed for this part)."""
-    return f"regexp_replace(replace({txt_expr}, ',', '.'), '[{_THOUSANDS_CHARS}]', '', 'g')"
-
-
-def field_cast_expr(field: dict, txt_expr: str) -> str:
-    """The guarded cast expression for one field, operating on `txt_expr` (either
-    `payload->>'key'` at contract-validation time, or an already-extracted text column alias
-    at render time — same builder, same guarantee: never raises, regardless of input."""
-    target_type = field["target_type"]
-    if target_type == "text":
-        return txt_expr
-    if target_type == "jsonb":
-        return f"dp_try_cast_jsonb({txt_expr})"
-    if target_type in ("integer", "bigint"):
-        fn = "dp_try_cast_integer" if target_type == "integer" else "dp_try_cast_bigint"
-        return f"{fn}({_clean_numeric_expr(txt_expr)})"
-    if target_type == "numeric":
-        return f"dp_try_cast_numeric({_clean_numeric_expr(txt_expr)})"
-    if target_type == "boolean":
-        return f"dp_try_cast_boolean({txt_expr})"
-    if target_type == "date":
-        fmt = _pg_date_format(field.get("format") or _DEFAULT_DATE_FORMAT)
-        return f"dp_try_cast_date({txt_expr}, {_sql_string_literal(fmt)})"
-    if target_type == "timestamp":
-        fmt = _pg_date_format(field.get("format") or _DEFAULT_TIMESTAMP_FORMAT)
-        return f"dp_try_cast_timestamp({txt_expr}, {_sql_string_literal(fmt)})"
-    raise PayloadStructureError(f"Type cible non supporté : « {target_type} ».")
-
-
 def validate_column_mapping(column_mapping: list[dict]) -> None:
-    """§4.4 — every included field's target_name/target_type validated, and its cast
-    expression run through sql_validator (M14) as a static AST safety net: SELECT-only, no
-    subquery/table, only whitelisted functions, referencing only `payload` (§2's hygiene rule
-    even though the expression here is entirely contract-built, never free user SQL)."""
+    """§4.4 — every included field's source_name/target_name/target_type validated."""
     seen_names: set[str] = set()
     for field in column_mapping:
         if not field.get("include", True):
@@ -256,7 +211,6 @@ def validate_column_mapping(column_mapping: list[dict]) -> None:
         source_name = field.get("source_name")
         target_name = field.get("target_name")
         target_type = field.get("target_type")
-        on_cast_error = field.get("on_cast_error", "quarantine")
         if not source_name:
             raise PayloadStructureError("Chaque champ inclus doit référencer une clé du payload.")
         if not target_name or not IDENTIFIER_RE.match(target_name):
@@ -266,22 +220,15 @@ def validate_column_mapping(column_mapping: list[dict]) -> None:
         seen_names.add(target_name)
         if target_type not in ALLOWED_TARGET_TYPES:
             raise PayloadStructureError(f"Type cible non supporté : « {target_type} ».")
-        if on_cast_error not in ON_CAST_ERROR_POLICIES:
-            raise PayloadStructureError(f"Politique d'erreur invalide : « {on_cast_error} ».")
-
-        expr = field_cast_expr(field, f"(payload->>{_sql_string_literal(source_name)})")
-        result = validate_predicate_sql(expr, "postgres", available_columns={"payload"})
-        if not result.valid:
-            raise PayloadStructureError(f"Expression de cast invalide pour « {target_name} » : {'; '.join(result.errors)}")
 
     if not seen_names:
         raise PayloadStructureError("Au moins un champ doit être inclus.")
 
 
 # ---------------------------------------------------------------------------
-# Étape 3 — rendering (§5.2/§5.3): two dbt models per bronze payload dataset, both landing in
-# the `bronze` schema next to `<name>` itself — `__parsed` (view, the clean output silver
-# reads via ref()) and `__quarantine` (table, so the rows are actually inspectable/queryable).
+# Étape 3 — rendering (§5 rewrite): two staged dbt models per bronze payload dataset, both
+# landing in the `bronze` schema next to `<name>` itself — `01_unpacked_<name>` (table, clean
+# text extraction) and `02_typed_<name>` (table, cast + cast_issues[], what silver/gold ref()).
 # ---------------------------------------------------------------------------
 
 # Deployed once per project via dbt's on-run-start (dbt_project.py), in `public` — always on
@@ -345,148 +292,167 @@ $$ LANGUAGE plpgsql;
 """.strip()
 
 
-def render_models(
-    column_mapping: list[dict], bronze_name: str,
-    quarantine_policy: str = "report", quarantine_threshold_pct: float | None = None,
-) -> dict[str, str]:
-    """Contract -> SQL, deterministic (§5.4 idempotence: an unchanged contract renders byte-
-    identical SQL). Returns {"parsed_sql": ..., "quarantine_sql": ...} — two dbt model files,
-    both reading `{{ source('bronze', bronze_name) }}` (the existing, unchanged bronze
-    ingestion — §11.1), never `imports.<table>` directly (dbt has no source declared there).
+# ---------------------------------------------------------------------------
+# dbt macros (static, written once per project alongside generate_schema_name.sql) — the
+# unpacked/typed convention's building blocks. safe_cast dispatches to the dp_try_cast_*
+# functions above; cast_issue is the "does this look valid" side of the same per-type
+# dispatch, used only to tag a problem, never to gate anything — it takes an already-computed
+# pattern (see _cast_pattern below) rather than deriving one itself, since a date/timestamp's
+# pattern depends on that field's own format, not just its type.
+# ---------------------------------------------------------------------------
 
-    `quarantine_policy="block"` (§7.3, opt-in — default "report" never blocks) adds a
-    post_hook to `__parsed` that recomputes the quarantine rate from the SAME extracted/typed/
-    flagged CTEs (not by querying the sibling `__quarantine` model/table — dbt gives no
-    ordering guarantee between two models that don't `ref()` each other, so a cross-model
-    check could race) and raises if it exceeds the threshold, failing that model's build."""
+CLEAN_STRING_MACRO_SQL = """{% macro clean_string(expr) -%}
+NULLIF(btrim({{ expr }}), '')
+{%- endmacro %}
+"""
+
+SAFE_CAST_MACRO_SQL = ("""{% macro safe_cast(type, col, format=none) -%}
+{%- if type == 'integer' -%}
+dp_try_cast_integer(regexp_replace(replace({{ col }}, ',', '.'), '[__THOUSANDS__]', '', 'g'))
+{%- elif type == 'bigint' -%}
+dp_try_cast_bigint(regexp_replace(replace({{ col }}, ',', '.'), '[__THOUSANDS__]', '', 'g'))
+{%- elif type == 'numeric' -%}
+dp_try_cast_numeric(regexp_replace(replace({{ col }}, ',', '.'), '[__THOUSANDS__]', '', 'g'))
+{%- elif type == 'boolean' -%}
+dp_try_cast_boolean({{ col }})
+{%- elif type == 'date' -%}
+dp_try_cast_date({{ col }}, '{{ format or "DD/MM/YYYY" }}')
+{%- elif type == 'timestamp' -%}
+dp_try_cast_timestamp({{ col }}, '{{ format or "DD/MM/YYYY HH24:MI:SS" }}')
+{%- elif type == 'jsonb' -%}
+dp_try_cast_jsonb({{ col }})
+{%- else -%}
+{{ col }}
+{%- endif -%}
+{%- endmacro %}
+""").replace("__THOUSANDS__", _THOUSANDS_CHARS)
+
+CAST_ISSUE_MACRO_SQL = """{% macro cast_issue(col, field_name, pattern, required) -%}
+CASE
+    WHEN {{ col }} IS NULL THEN {{ ("'" ~ field_name ~ ":absent'") if required else "NULL" }}
+    WHEN {{ col }} !~* '{{ pattern }}' THEN '{{ field_name }}:invalid'
+    ELSE NULL
+END
+{%- endmacro %}
+"""
+
+STRUCTURATION_MACROS = {
+    "macros/clean_string.sql": CLEAN_STRING_MACRO_SQL,
+    "macros/safe_cast.sql": SAFE_CAST_MACRO_SQL,
+    "macros/cast_issue.sql": CAST_ISSUE_MACRO_SQL,
+}
+
+# Passed through untouched from bronze on every unpacked/typed model — the platform's actual
+# payload+audit shape (file_import.py's _prepare_payload_table / _prepare_table), not a
+# per-field concern.
+_TRACEABILITY_COLUMNS = ["load_id", "source_file", "source_pk", "source_system", "row_number"]
+
+_DATE_TOKEN_DIGITS = [("YYYY", "[0-9]{4}"), ("HH24", "[0-9]{2}"), ("MI", "[0-9]{2}"), ("SS", "[0-9]{2}"), ("MM", "[0-9]{2}"), ("DD", "[0-9]{2}"), ("YY", "[0-9]{2}")]
+
+
+def _cast_pattern(target_type: str, pg_format: str | None) -> str:
+    """The regex cast_issue checks a field's cleaned text against — computed here in Python,
+    not as a type-only dbt macro, because a date/timestamp's pattern depends on that field's
+    own configured format (DD/MM/YYYY vs YYYY-MM-DD aren't interchangeable), not just its
+    type. Longest tokens replaced first (YYYY before YY) so a 4-digit year never gets doubly
+    substituted into two 2-digit ones."""
+    if target_type in ("integer", "bigint"):
+        return r"^-?[0-9]+$"
+    if target_type == "numeric":
+        return r"^-?[0-9]+([.,][0-9]+)?$"
+    if target_type == "boolean":
+        return r"^(true|false|1|0|oui|non|vrai|faux|o|n|yes|no|y)$"
+    if target_type in ("date", "timestamp"):
+        fmt = pg_format or ("DD/MM/YYYY" if target_type == "date" else "DD/MM/YYYY HH24:MI:SS")
+        for token, digits in _DATE_TOKEN_DIGITS:
+            fmt = fmt.replace(token, digits)
+        return f"^{fmt}$"
+    return ".*"
+
+
+def render_unpacked_typed_models(column_mapping: list[dict], bronze_name: str) -> dict:
+    """Contract -> dbt files (§5 rewrite), deterministic (an unchanged contract renders
+    byte-identical SQL): `01_unpacked_<name>` (extraction + clean_string) feeding
+    `02_typed_<name>` (safe_cast + cast_issues[]), plus the `<name>_fields` var both read via
+    `var()`. Both models read `{{ source('bronze', bronze_name) }}` / `{{ ref(...) }}` — the
+    existing, unchanged bronze ingestion (§11.1), never `imports.<table>` directly.
+
+    Returns {"vars_key", "vars_entries", "unpacked_sql", "typed_sql"}."""
     included = [f for f in column_mapping if f.get("include", True)]
     if not included:
         raise PayloadStructureError("Le contrat de structuration n'a aucun champ inclus.")
 
-    extracted_cols = ["row_number", "source_file", "load_id", "payload"]
-    typed_cols = ["row_number", "source_file", "load_id", "payload"]
-    parsed_output_cols = ["row_number", "source_file", "load_id"]
-    fail_flags: list[str] = []
-    failure_pairs: list[str] = []
+    vars_key = f"{bronze_name}_fields"
+    vars_entries = []
+    for f in included:
+        entry = {"name": f["source_name"], "type": f["target_type"], "required": not f.get("nullable", True)}
+        pg_format = None
+        if f["target_type"] in ("date", "timestamp"):
+            default_fmt = _DEFAULT_DATE_FORMAT if f["target_type"] == "date" else _DEFAULT_TIMESTAMP_FORMAT
+            pg_format = _pg_date_format(f.get("format") or default_fmt)
+            entry["format"] = pg_format
+        entry["pattern"] = _cast_pattern(f["target_type"], pg_format)
+        vars_entries.append(entry)
 
-    for field in included:
-        target = field["target_name"]
-        source = field["source_name"]
-        policy = field.get("on_cast_error", "quarantine")
-        txt_alias = f"{target}_txt"
+    # last traceability column has no trailing comma
+    traceability = "\n".join(f"    {c}" + ("," if i < len(_TRACEABILITY_COLUMNS) - 1 else "") for i, c in enumerate(_TRACEABILITY_COLUMNS))
 
-        # NULLIF(btrim(...), '') here — not just for missing keys — mirrors the existing M6
-        # typed-mode cast_value() convention exactly: a blank cell is NULL for every target
-        # type, including text (cast_value strips+blank-checks before its type branch, even
-        # for "text"). Doing it once here keeps every cast branch below simple and correct.
-        extracted_cols.append(f"NULLIF(btrim(payload->>{_sql_string_literal(source)}), '') AS \"{txt_alias}\"")
-        # Carried through `typed` too — `flagged`'s row_ok/failures (§ next CTE) still need
-        # the raw text to tell "legitimately blank" apart from "failed to cast".
-        typed_cols.append(f'"{txt_alias}"')
-
-        if policy == "text":
-            typed_expr = f'"{txt_alias}"'
-        else:
-            typed_expr = field_cast_expr(field, f'"{txt_alias}"')
-            # Same AST safety net as contract-save time (§4.4/§5.3) — never rendered
-            # unvalidated, even though it was already checked once when the contract was PUT.
-            result = validate_predicate_sql(typed_expr, "postgres", available_columns={txt_alias})
-            if not result.valid:
-                raise PayloadStructureError(f"Expression de cast rejetée pour « {target} » : {'; '.join(result.errors)}")
-        typed_cols.append(f'{typed_expr} AS "{target}"')
-        parsed_output_cols.append(f'"{target}"')
-
-        if policy == "quarantine":
-            # `_txt` is already NULL for a blank cell (see extracted_cols above), so this is
-            # exactly "there was a real value and the cast still couldn't make sense of it".
-            fail_flag = f'("{txt_alias}" IS NOT NULL AND "{target}" IS NULL)'
-            fail_flags.append(fail_flag)
-            failure_pairs.append(
-                _sql_string_literal(target) + ", CASE WHEN " + fail_flag + " THEN jsonb_build_object("
-                "'valeur_brute', \"" + txt_alias + "\", 'type_cible', " + _sql_string_literal(field["target_type"]) + ", "
-                "'motif', 'cast_echoue') END"
-            )
-
-        # Data-quality gate, independent of on_cast_error: a field marked non-nullable must
-        # come out non-NULL regardless of policy — "{target}" IS NULL already covers a blank
-        # cell, a missing key AND a suppressed cast failure (null/text policy), so one flag is
-        # enough. Appended after the block above so, when both conditions are true for the same
-        # field, jsonb_build_object's last-key-wins semantics surface this reason (still
-        # quarantined either way — only the reported motif differs).
-        if not field.get("nullable", True):
-            not_null_flag = f'("{target}" IS NULL)'
-            fail_flags.append(not_null_flag)
-            failure_pairs.append(
-                _sql_string_literal(target) + ", CASE WHEN " + not_null_flag + " THEN jsonb_build_object("
-                "'valeur_brute', \"" + txt_alias + "\", 'type_cible', " + _sql_string_literal(field["target_type"]) + ", "
-                "'motif', 'valeur_obligatoire_manquante') END"
-            )
-
-    row_ok_expr = "NOT (" + " OR ".join(fail_flags) + ")" if fail_flags else "true"
-    failures_expr = "jsonb_strip_nulls(jsonb_build_object(" + ", ".join(failure_pairs) + "))" if failure_pairs else "'{}'::jsonb"
-
-    # A plain SELECT can't reference a sibling alias from its own list (Postgres rejects
-    # "nom" inside the very expression that defines it) — row_ok/failures need `typed`'s cast
-    # columns already resolved as real columns, hence a third CTE rather than one more column
-    # bolted onto `typed` itself.
-    def _build_with(from_clause: str) -> str:
-        return (
-            "WITH extracted AS (\n    SELECT " + ",\n        ".join(extracted_cols) + "\n"
-            "    FROM " + from_clause + "\n"
-            "),\ntyped AS (\n    SELECT " + ",\n        ".join(typed_cols) + "\n    FROM extracted\n"
-            "),\nflagged AS (\n    SELECT *,\n"
-            "        (" + row_ok_expr + ") AS __dp_row_ok,\n"
-            "        (" + failures_expr + ") AS __dp_failures\n    FROM typed\n)\n"
-        )
-
-    with_clause = _build_with("{{ source('bronze', '" + bronze_name + "') }}")
-
-    parsed_config = "materialized='view', schema='bronze'"
-    if quarantine_policy == "block" and quarantine_threshold_pct is not None:
-        threshold_ratio = quarantine_threshold_pct / 100
-        # The post_hook is executed as a plain, already-Jinja-rendered SQL string (dbt never
-        # re-parses a config() argument's own text for {{ }} tags — they'd stay literal), so
-        # this copy of the WITH clause can't use {{ source(...) }} like the model body does;
-        # it references the physical bronze table directly instead — same read, same schema.
-        with_clause_literal = _build_with(f'bronze."{bronze_name}"')
-        # Postgres RAISE format strings treat every bare `%` as a positional placeholder
-        # (a literal one needs `%%`) — sidestepped entirely by spelling "pourcent" instead of
-        # using the symbol, so there is exactly one `%` in this string, for the one arg passed.
-        indented_with = "\n".join("    " + line for line in with_clause_literal.rstrip("\n").splitlines())
-        guard_sql = (
-            "DO $$\nDECLARE total_rows bigint; clean_rows bigint;\nBEGIN\n"
-            "    SELECT count(*), count(*) FILTER (WHERE __dp_row_ok) INTO total_rows, clean_rows\n"
-            "    FROM (\n" + indented_with + "\n        SELECT __dp_row_ok FROM flagged\n    ) t;\n"
-            f"    IF total_rows > 0 AND (total_rows - clean_rows)::numeric / total_rows > {threshold_ratio} THEN\n"
-            f"        RAISE EXCEPTION 'Structuration bloquee pour {bronze_name} : taux de quarantaine % pourcent (seuil {quarantine_threshold_pct:g} pourcent)', "
-            "round(100.0 * (total_rows - clean_rows) / total_rows, 2);\n"
-            "    END IF;\nEND $$;"
-        )
-        parsed_config += f", post_hook={_jinja_string_literal(guard_sql)}"
-
-    parsed_sql = (
-        "{{ config(" + parsed_config + ") }}\n\n" + with_clause
-        + "SELECT " + ", ".join(parsed_output_cols) + "\nFROM flagged\nWHERE __dp_row_ok\n"
+    unpacked_sql = (
+        "{{ config(materialized='table') }}\n\n"
+        f"{{% set fields = var('{vars_key}') %}}\n\n"
+        "with source as (\n\n"
+        "    select *\n"
+        f"    from {{{{ source('bronze', '{bronze_name}') }}}}\n\n"
+        ")\n\n"
+        "select\n\n"
+        "    {% for f in fields %}\n"
+        "    {{ clean_string(\"payload->>'\" ~ f.name ~ \"'\") }} as {{ f.name.lower() }},\n"
+        "    {% endfor %}\n\n"
+        "    -- traceability, passed through from bronze\n"
+        f"{traceability}\n\n"
+        "from source\n"
     )
-    quarantine_sql = (
-        "{{ config(materialized='table', schema='bronze') }}\n\n" + with_clause
-        + "SELECT row_number, source_file, load_id, __dp_failures AS failures, payload\n"
-        "FROM flagged\nWHERE NOT __dp_row_ok\n"
+
+    typed_sql = (
+        "{{ config(materialized='table') }}\n\n"
+        f"{{% set fields = var('{vars_key}') %}}\n\n"
+        "with unpacked as (\n\n"
+        "    select *\n"
+        f"    from {{{{ ref('01_unpacked_{bronze_name}') }}}}\n\n"
+        ")\n\n"
+        "select\n\n"
+        "    {% for f in fields %}\n"
+        "    {%- set col = f.name.lower() %}\n"
+        "    {{ safe_cast(f.type, col, f.get('format')) }} as {{ col }},\n"
+        "    {% endfor %}\n\n"
+        "    -- cast issues raised on the fields above — every row still reaches this table,\n"
+        "    -- diagnosed, never excluded\n"
+        "    array_remove(array[\n"
+        "        {% for f in fields %}\n"
+        "        {%- set col = f.name.lower() %}\n"
+        "        {{ cast_issue(col, f.name, f.pattern, f.required) }}{{ \",\" if not loop.last }}\n"
+        "        {% endfor %}\n"
+        "    ], null) as cast_issues,\n\n"
+        "    -- traceability\n"
+        f"{traceability}\n\n"
+        "from unpacked\n"
     )
-    return {"parsed_sql": parsed_sql, "quarantine_sql": quarantine_sql}
+
+    return {"vars_key": vars_key, "vars_entries": vars_entries, "unpacked_sql": unpacked_sql, "typed_sql": typed_sql}
 
 
 # ---------------------------------------------------------------------------
-# Étape 4 — quarantine inspection (reads the materialized `bronze.<name>__quarantine` table
-# directly; no control-plane copy of the data ever exists, same relay-not-store principle as
-# the M10 preview / M11 export).
+# Étape 4 — anomaly inspection: no separate quarantine relation anymore (every row from bronze
+# reaches `02_typed_<name>`, diagnosed, never excluded) — this reads the rows that carry at
+# least one cast issue straight from that table. No control-plane copy of the data ever
+# exists, same relay-not-store principle as the M10 preview / M11 export.
 # ---------------------------------------------------------------------------
 
-def _quarantine_table_exists(conn, bronze_name: str) -> bool:
+def _typed_table_exists(conn, bronze_name: str) -> bool:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT 1 FROM information_schema.tables WHERE table_schema = 'bronze' AND table_name = %s",
-            (f"{bronze_name}__quarantine",),
+            (f"02_typed_{bronze_name}",),
         )
         return cur.fetchone() is not None
 
@@ -494,22 +460,27 @@ def _quarantine_table_exists(conn, bronze_name: str) -> bool:
 def list_quarantine(warehouse: DataSource, bronze_name: str, column: str | None, limit: int, offset: int) -> list[dict]:
     if not IDENTIFIER_RE.match(bronze_name):
         raise PayloadStructureError("Nom de dataset invalide.")
-    table = f"{bronze_name}__quarantine"
+    table = f"02_typed_{bronze_name}"
     conn = _connect_warehouse(warehouse)
     try:
-        if not _quarantine_table_exists(conn, bronze_name):
+        if not _typed_table_exists(conn, bronze_name):
             return []
         with conn.cursor() as cur:
             if column:
                 cur.execute(
-                    pgsql.SQL("SELECT row_number, source_file, failures, payload FROM bronze.{} WHERE failures ? %s ORDER BY row_number LIMIT %s OFFSET %s")
-                    .format(pgsql.Identifier(table)),
+                    pgsql.SQL(
+                        "SELECT row_number, source_file, cast_issues FROM bronze.{} "
+                        "WHERE EXISTS (SELECT 1 FROM unnest(cast_issues) i WHERE split_part(i, ':', 1) = %s) "
+                        "ORDER BY row_number LIMIT %s OFFSET %s"
+                    ).format(pgsql.Identifier(table)),
                     (column, limit, offset),
                 )
             else:
                 cur.execute(
-                    pgsql.SQL("SELECT row_number, source_file, failures, payload FROM bronze.{} ORDER BY row_number LIMIT %s OFFSET %s")
-                    .format(pgsql.Identifier(table)),
+                    pgsql.SQL(
+                        "SELECT row_number, source_file, cast_issues FROM bronze.{} "
+                        "WHERE cardinality(cast_issues) > 0 ORDER BY row_number LIMIT %s OFFSET %s"
+                    ).format(pgsql.Identifier(table)),
                     (limit, offset),
                 )
             rows = cur.fetchall()
@@ -517,33 +488,31 @@ def list_quarantine(warehouse: DataSource, bronze_name: str, column: str | None,
         raise PayloadStructureError(connections.clean_error(exc)) from exc
     finally:
         conn.close()
-    return [{"row_number": r[0], "source_file": r[1], "failures": r[2], "payload": r[3]} for r in rows]
+    return [{"row_number": r[0], "source_file": r[1], "issues": r[2] or []} for r in rows]
 
 
 def quarantine_summary(warehouse: DataSource, bronze_name: str) -> dict:
-    """§6.2 — per-column rejection counts + a few raw examples, to point the engineer at
-    *which* field to fix first (e.g. "montant: 214 rejets, tous du type 1 249,90")."""
+    """§6.2 — per-column issue counts, to point the engineer at *which* field to fix first."""
     if not IDENTIFIER_RE.match(bronze_name):
         raise PayloadStructureError("Nom de dataset invalide.")
-    table = f"{bronze_name}__quarantine"
+    table = f"02_typed_{bronze_name}"
     conn = _connect_warehouse(warehouse)
     try:
-        if not _quarantine_table_exists(conn, bronze_name):
+        if not _typed_table_exists(conn, bronze_name):
             return {"total": 0, "by_column": []}
         with conn.cursor() as cur:
-            cur.execute(pgsql.SQL("SELECT count(*) FROM bronze.{}").format(pgsql.Identifier(table)))
+            cur.execute(
+                pgsql.SQL("SELECT count(*) FROM bronze.{} WHERE cardinality(cast_issues) > 0").format(pgsql.Identifier(table))
+            )
             total = cur.fetchone()[0]
             cur.execute(
                 pgsql.SQL(
-                    "SELECT kv.key, count(*), (array_agg(kv.value->>'valeur_brute'))[1:3] "
-                    "FROM bronze.{} q, jsonb_each(q.failures) AS kv(key, value) "
-                    "GROUP BY kv.key ORDER BY count(*) DESC"
+                    "SELECT split_part(i, ':', 1) AS col, count(*) "
+                    "FROM bronze.{} t, unnest(t.cast_issues) i "
+                    "GROUP BY col ORDER BY count(*) DESC"
                 ).format(pgsql.Identifier(table))
             )
-            by_column = [
-                {"column": r[0], "count": r[1], "sample_values": [v for v in (r[2] or []) if v is not None]}
-                for r in cur.fetchall()
-            ]
+            by_column = [{"column": r[0], "count": r[1], "sample_values": []} for r in cur.fetchall()]
     except Exception as exc:
         raise PayloadStructureError(connections.clean_error(exc)) from exc
     finally:
@@ -551,15 +520,12 @@ def quarantine_summary(warehouse: DataSource, bronze_name: str) -> dict:
     return {"total": total, "by_column": by_column}
 
 
-def canonical_contract(column_mapping: list[dict], quarantine_policy: str, quarantine_threshold_pct: float | None) -> str:
+def canonical_contract(column_mapping: list[dict]) -> str:
     minimal = {
         "fields": [
             {"source_name": c["source_name"], "target_name": c["target_name"], "target_type": c["target_type"],
-             "format": c.get("format"), "include": c.get("include", True), "on_cast_error": c.get("on_cast_error", "quarantine"),
-             "nullable": c.get("nullable", True)}
+             "format": c.get("format"), "include": c.get("include", True), "nullable": c.get("nullable", True)}
             for c in column_mapping
         ],
-        "quarantine_policy": quarantine_policy,
-        "quarantine_threshold_pct": quarantine_threshold_pct,
     }
     return hashlib.sha256(json.dumps(minimal, sort_keys=True).encode()).hexdigest()

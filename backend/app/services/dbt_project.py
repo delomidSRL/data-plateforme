@@ -61,7 +61,7 @@ def _schema_yml(datasets: list[MedallionDataset], extra_tests_by_dataset: dict[i
     return {"version": 2, "models": models}
 
 
-def _dbt_project_yml(project: MedallionProject, needs_try_cast: bool) -> dict:
+def _dbt_project_yml(project: MedallionProject, needs_try_cast: bool, structuration_vars: dict | None = None) -> dict:
     config = {
         "name": project.dbt_project_name,
         "version": "1.0.0",
@@ -82,6 +82,10 @@ def _dbt_project_yml(project: MedallionProject, needs_try_cast: bool) -> dict:
         # every structuration model's guarded cast calls (deployed once per run, in `public` —
         # always on the default search_path, idempotent CREATE OR REPLACE).
         config["on-run-start"] = [payload_structure.TRY_CAST_FUNCTIONS_SQL]
+    if structuration_vars:
+        # §5 rewrite — the field list each bronze payload dataset's 01_unpacked/02_typed pair
+        # reads via var(<name>_fields); one key per structured dataset, merged here.
+        config["vars"] = structuration_vars
     return config
 
 
@@ -177,11 +181,12 @@ def generate_project_files(
     """Returns {relative_path: file_content} for the whole dbt project.
 
     `structurations` — Module 6 extension (payload & structuration), keyed by bronze dataset
-    id: for each one, two extra models are rendered (`<name>__parsed`, `<name>__quarantine`,
-    §5.2), both landing in the `bronze` schema next to `<name>` itself, both reading
-    `{{ source('bronze', name) }}` — the same, unchanged bronze ingestion (§11.1). A dataset
-    absent from this map (no contract yet, or not payload-backed) gets nothing extra —
-    additive only, zero regression for every project that doesn't use this feature.
+    id: for each one, two staged models are rendered (`01_unpacked_<name>`, `02_typed_<name>`,
+    §5 rewrite), both landing in the `bronze` schema next to `<name>` itself, the first reading
+    `{{ source('bronze', name) }}` (the same, unchanged bronze ingestion — §11.1), the second
+    `ref()`-ing the first. A dataset absent from this map (no contract yet, or not
+    payload-backed) gets nothing extra — additive only, zero regression for every project that
+    doesn't use this feature.
 
     Module 16 extension §4 — `dbt_test_renderer.render()` is replayed on EVERY generation
     (build, preview, export alike), never a separate write path: a project that materializes
@@ -200,11 +205,36 @@ def generate_project_files(
     # build/preview path is unchanged (render(), materialize_as_dbt_test-gated).
     rendered_tests = (dbt_test_renderer.render_for_export if for_export else dbt_test_renderer.render)(db, project.id, datasets)
 
+    # §5 rewrite — rendered first so their vars can go straight into dbt_project.yml below,
+    # one <name>_fields key per structured bronze dataset, merged into a single vars block.
+    structuration_vars: dict[str, list] = {}
+    structuration_models: dict[str, str] = {}
+    for ds in bronze:
+        structuration = structurations.get(ds.id)
+        if structuration is None:
+            continue
+        try:
+            rendered = payload_structure.render_unpacked_typed_models(structuration.column_mapping, ds.name)
+        except payload_structure.PayloadStructureError as exc:
+            # A contract that fails to re-render at build time (e.g. a field removed from the
+            # payload since it was written) must not silently skip structuration nor crash the
+            # whole project's build — surfaced as a normal build error instead (§2 "messages
+            # lisibles, jamais de stack trace").
+            raise ValueError(f"Structuration invalide pour le dataset « {ds.name} » : {exc}") from exc
+        structuration_vars[rendered["vars_key"]] = rendered["vars_entries"]
+        structuration_models[f"models/bronze/01_unpacked_{ds.name}.sql"] = rendered["unpacked_sql"]
+        structuration_models[f"models/bronze/02_typed_{ds.name}.sql"] = rendered["typed_sql"]
+
     files: dict[str, str] = {
-        "dbt_project.yml": yaml.safe_dump(_dbt_project_yml(project, needs_try_cast=bool(structurations)), sort_keys=False),
+        "dbt_project.yml": yaml.safe_dump(
+            _dbt_project_yml(project, needs_try_cast=bool(structurations), structuration_vars=structuration_vars),
+            sort_keys=False,
+        ),
         "macros/generate_schema_name.sql": GENERATE_SCHEMA_MACRO,
         "models/bronze/sources.yml": yaml.safe_dump(_sources_yml(bronze, rendered_tests.schema_by_dataset), sort_keys=False),
     }
+    if structurations:
+        files.update(payload_structure.STRUCTURATION_MACROS)
     if for_export or rendered_tests.has_tier_a:
         # §6 — the exported bundle always pins dbt-expectations/dbt-utils, even for a project
         # with zero Tier A checks today: a standalone artifact ready to extend. The live build
@@ -216,24 +246,7 @@ def generate_project_files(
         # instead (§6).
         files["profiles.yml"] = yaml.safe_dump(_profiles_yml(project, warehouse), sort_keys=False)
     files.update(rendered_tests.singular_files)
-
-    for ds in bronze:
-        structuration = structurations.get(ds.id)
-        if structuration is None:
-            continue
-        try:
-            rendered = payload_structure.render_models(
-                structuration.column_mapping, ds.name,
-                structuration.quarantine_policy.value, structuration.quarantine_threshold_pct,
-            )
-        except payload_structure.PayloadStructureError as exc:
-            # A contract that fails to re-render at build time (e.g. a field removed from the
-            # payload since it was written) must not silently skip structuration nor crash the
-            # whole project's build — surfaced as a normal build error instead (§2 "messages
-            # lisibles, jamais de stack trace").
-            raise ValueError(f"Structuration invalide pour le dataset « {ds.name} » : {exc}") from exc
-        files[f"models/bronze/{ds.name}__parsed.sql"] = rendered["parsed_sql"]
-        files[f"models/bronze/{ds.name}__quarantine.sql"] = rendered["quarantine_sql"]
+    files.update(structuration_models)
 
     if silver:
         files["models/silver/schema.yml"] = yaml.safe_dump(_schema_yml(silver, rendered_tests.schema_by_dataset), sort_keys=False)

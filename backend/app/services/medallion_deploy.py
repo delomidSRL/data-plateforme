@@ -140,8 +140,8 @@ async def build_project(
         "database_name": warehouse.database_name,
     }
     # Module 6 extension (payload & structuration) — every bronze dataset's validated
-    # contract, keyed by dataset id; generate_project_files renders `__parsed`/`__quarantine`
-    # for exactly the ones present here (additive, §5.2).
+    # contract, keyed by dataset id; generate_project_files renders `01_unpacked`/`02_typed`
+    # for exactly the ones present here (additive, §5 rewrite).
     bronze_ids = [ds.id for ds in datasets if ds.layer == MedallionLayer.bronze]
     structurations = (
         {s.dataset_id: s for s in db.query(PayloadStructuration).filter(PayloadStructuration.dataset_id.in_(bronze_ids)).all()}

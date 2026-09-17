@@ -230,32 +230,33 @@ def _collect_bronze(db: Session, snapshot: DataQualitySnapshot, dataset: Medalli
 
 
 def _collect_parsing_rejection_rate(db: Session, snapshot: DataQualitySnapshot, dataset: MedallionDataset, table: str, conn: Connection) -> None:
-    """Module 6 extension (payload & structuration) §7.2 — `taux_de_quarantaine` fills in the
-    catalogue's pre-existing `parsing_rejection_rate` indicator (declared in Étape 1's scope
-    but never computed there — nothing produced a rejection rate to measure before this
-    extension's `__parsed`/`__quarantine` split existed). Only applies to a bronze dataset
-    that actually has a validated structuration contract; every other project collects
-    exactly as before (§0 "zéro régression")."""
+    """Module 6 extension (payload & structuration) §7.2 — fills in the catalogue's
+    pre-existing `parsing_rejection_rate` indicator (declared in Étape 1's scope but never
+    computed there — nothing produced a rejection rate to measure before this extension's
+    structuration existed). §5 rewrite: no separate quarantine relation anymore — every row
+    from bronze reaches `02_typed_<name>`, diagnosed via a per-row `cast_issues` array rather
+    than excluded, so the rate is the share of rows carrying at least one issue there. Only
+    applies to a bronze dataset that actually has a validated structuration contract; every
+    other project collects exactly as before (§0 "zéro régression")."""
     has_contract = db.query(PayloadStructuration.id).filter(PayloadStructuration.dataset_id == dataset.id).first() is not None
     if not has_contract:
         return
     try:
         row = conn.execute(text(
-            f'SELECT '
-            f'(SELECT count(*) FROM bronze."{table}__parsed") AS clean, '
-            f'(SELECT count(*) FROM bronze."{table}__quarantine") AS rejected'
+            f'SELECT count(*) AS total, '
+            f'count(*) FILTER (WHERE cardinality(cast_issues) > 0) AS with_issues '
+            f'FROM bronze."02_typed_{table}"'
         )).mappings().one()
-        clean, rejected = row["clean"], row["rejected"]
-        total = clean + rejected
-        rate = round(rejected / total, 4) if total else 0.0
+        total, with_issues = row["total"], row["with_issues"]
+        rate = round(with_issues / total, 4) if total else 0.0
         _upsert_metric(
             db, snapshot, dataset, QualityLayer.bronze, QualityIndicator.parsing_rejection_rate, "",
-            rate, {"rejected": rejected, "clean": clean, "total": total},
+            rate, {"with_issues": with_issues, "total": total},
             _status_for(QualityIndicator.parsing_rejection_rate, rate),
         )
     except Exception as exc:
-        # Most common cause: no build/run yet since the contract was saved — __parsed/
-        # __quarantine don't exist. Not an error worth alarming over, just nothing to measure.
+        # Most common cause: no build/run yet since the contract was saved — 02_typed
+        # doesn't exist. Not an error worth alarming over, just nothing to measure.
         logger.info("quality_intrinsic: parsing_rejection_rate failed for bronze.%s: %s", table, exc)
         _upsert_metric(db, snapshot, dataset, QualityLayer.bronze, QualityIndicator.parsing_rejection_rate, "", None, {"error": str(exc)}, QualityMetricStatus.skipped)
 

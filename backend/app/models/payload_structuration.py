@@ -31,10 +31,13 @@ class PayloadStructuration(Base):
 
     payload_column: Mapped[str] = mapped_column(String(120), default="payload", nullable=False)
     # Same shape as FileImport.column_mapping (source_name/target_name/target_type/format/
-    # include/nullable/inferred_type/confidence/ambiguous/sample), each entry additionally
-    # carrying `on_cast_error` (quarantine|null|text, §4.2).
+    # include/nullable/is_primary_key/inferred_type/confidence/ambiguous/sample).
     column_mapping: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
 
+    # §5 rewrite (unpacked/typed convention) dropped the quarantine relation — every row from
+    # bronze reaches 02_typed, diagnosed via cast_issues, never excluded — so these two are no
+    # longer read or written anywhere. Left in place (harmless, SQLAlchemy-defaulted) rather
+    # than an Alembic migration to drop them for a purely cosmetic cleanup.
     quarantine_policy: Mapped[QuarantinePolicy] = mapped_column(Enum(QuarantinePolicy, name="structuration_quarantine_policy"), default=QuarantinePolicy.report, nullable=False)
     quarantine_threshold_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as structurationApi from "../../api/structuration.js";
 import { ApiError } from "../../api/client.js";
-import { Field, Input } from "../../components/ui/Input.jsx";
+import { Input } from "../../components/ui/Input.jsx";
 import { Button } from "../../components/ui/Button.jsx";
 import { Badge } from "../../components/ui/Badge.jsx";
 import { Icon } from "../../components/icons.jsx";
@@ -11,17 +11,17 @@ import { useToast } from "../../context/ToastContext.jsx";
 const TYPES = ["text", "integer", "bigint", "numeric", "boolean", "date", "timestamp", "jsonb"];
 const IDENTIFIER_RE = /^[a-z_][a-z0-9_]{0,62}$/;
 
-// Module 6 extension (payload & structuration) — étapes 2/3/4. Profile → edit the contract
-// (types, names, on_cast_error policy, quarantine gate) → save (renders __parsed/__quarantine
-// at next build) → inspect the quarantine and repair the contract from what it shows.
+// Module 6 extension (payload & structuration) — étapes 2/3/4, §5 rewrite (unpacked/typed
+// convention). Profile → edit the contract (types, names, required/PK) → save (renders
+// 01_unpacked/02_typed at next build) → inspect rows with a cast issue and repair the
+// contract from what it shows. No quarantine relation: every row from bronze reaches
+// 02_typed, diagnosed via cast_issues, never excluded.
 export default function StructurationPanel({ project, dataset, readOnly = false }) {
   const { t } = useTranslation();
   const showToast = useToast();
   const [state, setState] = useState("loading"); // loading | none | notApplicable | ready
   const [notApplicableReason, setNotApplicableReason] = useState("");
   const [fields, setFields] = useState([]);
-  const [quarantinePolicy, setQuarantinePolicy] = useState("report");
-  const [quarantineThreshold, setQuarantineThreshold] = useState(5);
   const [contractHash, setContractHash] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -32,8 +32,6 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
     try {
       const c = await structurationApi.getStructuration(project.id, dataset.id);
       setFields(c.column_mapping);
-      setQuarantinePolicy(c.quarantine_policy);
-      setQuarantineThreshold(c.quarantine_threshold_pct ?? 5);
       setContractHash(c.contract_hash);
       setState("ready");
     } catch (err) {
@@ -54,8 +52,6 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
     try {
       const c = await structurationApi.profileStructuration(project.id, dataset.id);
       setFields(c.column_mapping);
-      setQuarantinePolicy(c.quarantine_policy);
-      setQuarantineThreshold(c.quarantine_threshold_pct ?? 5);
       setContractHash(c.contract_hash);
       setState("ready");
     } catch (err) {
@@ -77,11 +73,7 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
     setBusy(true);
     setError("");
     try {
-      const c = await structurationApi.saveStructuration(project.id, dataset.id, {
-        column_mapping: fields,
-        quarantine_policy: quarantinePolicy,
-        quarantine_threshold_pct: quarantinePolicy === "block" ? Number(quarantineThreshold) : null,
-      });
+      const c = await structurationApi.saveStructuration(project.id, dataset.id, { column_mapping: fields });
       setContractHash(c.contract_hash);
       showToast(t("medallion.structuration.saved"));
     } catch (err) {
@@ -130,7 +122,6 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
               <th>{t("imports.modal.colSource")}</th>
               <th>{t("imports.modal.colTarget")}</th>
               <th>{t("imports.modal.colType")}</th>
-              <th>{t("medallion.structuration.onCastError")}</th>
               <th>{t("medallion.structuration.colNullable")}</th>
               <th>{t("imports.modal.colConfidence")}</th>
             </tr>
@@ -170,13 +161,6 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
                       {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
                     </select>
                   </td>
-                  <td style={{ minWidth: 130 }}>
-                    <select className="input" value={f.on_cast_error} disabled={readOnly || !f.include} onChange={(e) => updateField(idx, { on_cast_error: e.target.value })}>
-                      <option value="quarantine">{t("medallion.structuration.policyQuarantine")}</option>
-                      <option value="null">{t("medallion.structuration.policyNull")}</option>
-                      <option value="text">{t("medallion.structuration.policyText")}</option>
-                    </select>
-                  </td>
                   <td style={{ textAlign: "center" }}>
                     <input
                       type="checkbox" checked={f.nullable ?? true} disabled={readOnly || !f.include}
@@ -190,28 +174,6 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
             })}
           </tbody>
         </table>
-      </div>
-
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-end", marginBottom: 14, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 200 }}>
-          <Field label={t("medallion.structuration.quarantinePolicy")}>
-            <div className="seg">
-              <button type="button" className={"seg-opt" + (quarantinePolicy === "report" ? " selected" : "")} disabled={readOnly} onClick={() => setQuarantinePolicy("report")}>
-                <div className="seg-role">{t("medallion.structuration.policyReport")}</div>
-              </button>
-              <button type="button" className={"seg-opt" + (quarantinePolicy === "block" ? " selected" : "")} disabled={readOnly} onClick={() => setQuarantinePolicy("block")}>
-                <div className="seg-role">{t("medallion.structuration.policyBlock")}</div>
-              </button>
-            </div>
-          </Field>
-        </div>
-        {quarantinePolicy === "block" && (
-          <div style={{ width: 140 }}>
-            <Field label={t("medallion.structuration.thresholdPct")}>
-              <Input type="number" min={0} max={100} step={0.5} value={quarantineThreshold} disabled={readOnly} onChange={(e) => setQuarantineThreshold(e.target.value)} />
-            </Field>
-          </div>
-        )}
       </div>
 
       {!readOnly && (
@@ -229,8 +191,8 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
   );
 }
 
-// Étape 4 — per-column summary (what to fix first) + the raw rejected rows, with two
-// one-click repair shortcuts that jump straight to editing the offending field above.
+// Étape 4 — per-column summary (what to fix first) + the rows carrying an issue, with a
+// one-click repair shortcut that jumps straight to editing the offending field above.
 function QuarantineSection({ project, dataset, t, onFieldFix }) {
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState(null);
@@ -283,28 +245,26 @@ function QuarantineSection({ project, dataset, t, onFieldFix }) {
               </div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button className="btn-ghost" style={{ padding: "4px 8px", fontSize: 11.5 }} onClick={() => openColumn(c.column)}>{t("medallion.structuration.viewRows")}</button>
-                <button className="btn-ghost" style={{ padding: "4px 8px", fontSize: 11.5 }} onClick={() => onFieldFix(c.column, { on_cast_error: "text" })}>{t("medallion.structuration.acceptAsText")}</button>
+                <button className="btn-ghost" style={{ padding: "4px 8px", fontSize: 11.5 }} onClick={() => onFieldFix(c.column, { target_type: "text" })}>{t("medallion.structuration.acceptAsText")}</button>
               </div>
             </div>
-            {c.sample_values.length > 0 && (
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6, fontFamily: "var(--font-m)" }}>
-                {t("medallion.structuration.examples")}: {c.sample_values.join(", ")}
-              </div>
-            )}
             {activeColumn === c.column && (
               <div className="table-wrap" style={{ marginTop: 10 }}>
                 <table className="table">
-                  <thead><tr><th>{t("medallion.structuration.colRowNumber")}</th><th>{t("medallion.structuration.colSourceFile")}</th><th>{t("medallion.structuration.colRawValue")}</th><th>{t("medallion.structuration.colMotif")}</th></tr></thead>
+                  <thead><tr><th>{t("medallion.structuration.colRowNumber")}</th><th>{t("medallion.structuration.colSourceFile")}</th><th>{t("medallion.structuration.colMotif")}</th></tr></thead>
                   <tbody>
-                    {rows === null && <tr><td colSpan={4} style={{ color: "var(--text-muted)" }}>{t("common.loading")}</td></tr>}
-                    {rows?.map((r, i) => (
-                      <tr key={i}>
-                        <td style={{ fontFamily: "var(--font-m)", fontSize: 12 }}>{r.row_number ?? "—"}</td>
-                        <td style={{ fontFamily: "var(--font-m)", fontSize: 12 }}>{r.source_file ?? "—"}</td>
-                        <td style={{ fontFamily: "var(--font-m)", fontSize: 12 }}>{r.failures?.[c.column]?.valeur_brute ?? "—"}</td>
-                        <td style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{r.failures?.[c.column]?.motif ?? "—"}</td>
-                      </tr>
-                    ))}
+                    {rows === null && <tr><td colSpan={3} style={{ color: "var(--text-muted)" }}>{t("common.loading")}</td></tr>}
+                    {rows?.map((r, i) => {
+                      const issue = r.issues?.find((iss) => iss.startsWith(`${c.column}:`));
+                      const motif = issue ? issue.split(":", 2)[1] : "—";
+                      return (
+                        <tr key={i}>
+                          <td style={{ fontFamily: "var(--font-m)", fontSize: 12 }}>{r.row_number ?? "—"}</td>
+                          <td style={{ fontFamily: "var(--font-m)", fontSize: 12 }}>{r.source_file ?? "—"}</td>
+                          <td style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{motif}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

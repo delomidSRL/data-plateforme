@@ -14,7 +14,7 @@ from app.models.export_log import ExportLog
 from app.models.file_import import FileImport, FileImportStatus
 from app.models.file_watch import FileWatch
 from app.models.infra_stack import InfraStack
-from app.models.payload_structuration import PayloadStructuration, QuarantinePolicy
+from app.models.payload_structuration import PayloadStructuration
 from app.models.project_environment_binding import ProjectEnvironmentBinding
 from app.models.server import Environment, Server
 from app.models.medallion import (
@@ -304,7 +304,7 @@ def get_dataset_columns(did: int, db: Session = Depends(get_db), project: Medall
 
     A payload-mode bronze dataset's own physical table is just `payload`/`load_id`/
     `source_file`/`row_number`/`source_pk`/`source_system` (§3.3 audit shape) — useless for
-    authoring downstream SQL. Once it has a saved structuration contract, its `__parsed`
+    authoring downstream SQL. Once it has a saved structuration contract, its `02_typed`
     model is what silver/gold should reference instead (§5.2), so its *structured* columns
     (the profiled, included target_name/target_type pairs) are returned here in its place."""
     dataset = _get_dataset(db, project.id, did)
@@ -345,7 +345,6 @@ def get_dataset_preview(
 def _structuration_out(row: PayloadStructuration) -> StructurationOut:
     return StructurationOut(
         dataset_id=row.dataset_id, payload_column=row.payload_column, column_mapping=row.column_mapping,
-        quarantine_policy=row.quarantine_policy.value, quarantine_threshold_pct=row.quarantine_threshold_pct,
         contract_hash=row.contract_hash, updated_at=row.updated_at, updated_by=row.updated_by,
     )
 
@@ -391,9 +390,9 @@ def update_dataset_structuration(
     did: int, payload: StructurationUpdate, db: Session = Depends(get_db),
     project: MedallionProject = Depends(get_owned_project), current_user: User = Depends(get_current_user),
 ):
-    """§4.4 — persists the validated contract: identifiers + every cast expression checked by
-    sql_validator (M14) before anything is written. Marks the project as needing a redeploy
-    (a changed contract re-renders the __parsed/__quarantine dbt models at next build)."""
+    """§4.4 — persists the validated contract: identifiers checked before anything is written.
+    Marks the project as needing a redeploy (a changed contract re-renders the
+    01_unpacked/02_typed dbt models at next build)."""
     dataset = _get_dataset(db, project.id, did)
     if payload_structure.resolve_import(db, dataset) is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ce dataset bronze n'est pas adossé à un import en mode payload.")
@@ -401,9 +400,7 @@ def update_dataset_structuration(
     column_mapping = [f.model_dump() for f in payload.column_mapping]
     try:
         payload_structure.validate_column_mapping(column_mapping)
-        payload_structure.render_models(  # proves it will actually build
-            column_mapping, dataset.name, payload.quarantine_policy, payload.quarantine_threshold_pct,
-        )
+        payload_structure.render_unpacked_typed_models(column_mapping, dataset.name)  # proves it will actually build
     except payload_structure.PayloadStructureError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
@@ -412,9 +409,7 @@ def update_dataset_structuration(
         row = PayloadStructuration(dataset_id=dataset.id)
         db.add(row)
     row.column_mapping = column_mapping
-    row.quarantine_policy = QuarantinePolicy(payload.quarantine_policy)
-    row.quarantine_threshold_pct = payload.quarantine_threshold_pct
-    row.contract_hash = payload_structure.canonical_contract(column_mapping, payload.quarantine_policy, payload.quarantine_threshold_pct)
+    row.contract_hash = payload_structure.canonical_contract(column_mapping)
     row.updated_by = current_user.id
 
     if project.status in (ProjectStatus.deployed, ProjectStatus.paused):
@@ -429,8 +424,9 @@ def list_dataset_quarantine(
     did: int, column: str | None = None, limit: int = 50, offset: int = 0,
     db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project),
 ):
-    """Module 6 extension §6.2 — paginated quarantined rows, straight from the materialized
-    `bronze.<name>__quarantine` table (never copied into the control plane)."""
+    """Module 6 extension §6.2 — paginated rows carrying at least one cast issue, straight
+    from `bronze.02_typed_<name>` (never copied into the control plane; no separate
+    quarantine relation anymore — every row reaches this table, diagnosed, never excluded)."""
     dataset = _get_dataset(db, project.id, did)
     warehouse = db.get(DataSource, project.warehouse_source_id)
     if warehouse is None:

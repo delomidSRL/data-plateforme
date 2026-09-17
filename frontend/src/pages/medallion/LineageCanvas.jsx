@@ -49,9 +49,28 @@ function DatasetNode({ data }) {
       style={{
         padding: "10px 14px", minWidth: 190, borderLeft: `3px solid ${LAYER_COLOR[data.layer]}`,
         boxShadow: data.selected ? "0 0 0 2px var(--ember)" : "0 1px 3px rgba(0,0,0,.08)", cursor: "pointer",
+        position: "relative",
       }}
       onClick={data.onClick}
     >
+      {data.layer === "bronze" && data.payloadBacked && (
+        // Module 6 extension (payload & structuration) — a shortcut straight to profiling,
+        // available the moment the bronze node exists (unlike the synthetic "structuration"
+        // node spliced into a bronze->silver edge below, which needs a silver to already
+        // reference this bronze as upstream).
+        <button
+          type="button"
+          title="Application data quality"
+          onClick={(e) => { e.stopPropagation(); data.onOpenStructuration?.(); }}
+          style={{
+            position: "absolute", top: -9, right: -9, width: 20, height: 20, borderRadius: "50%",
+            border: "1.5px solid var(--ember)", background: "var(--ember-soft)", color: "var(--ember)",
+            fontSize: 14, lineHeight: "17px", fontWeight: 700, cursor: "pointer", padding: 0,
+          }}
+        >
+          +
+        </button>
+      )}
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontFamily: "var(--font-m)" }}>{data.layer}</div>
@@ -175,6 +194,7 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
             dashboard: !!dashboardByDataset[n.id], dashboardLabel,
             dashboardTitle: dashboardByDataset[n.id]?.last_generated_at ? new Date(dashboardByDataset[n.id].last_generated_at).toLocaleString(i18n.language) : undefined,
             dashboardDate: dashboardByDataset[n.id]?.last_generated_at ? new Date(dashboardByDataset[n.id].last_generated_at).toLocaleDateString(i18n.language) : "",
+            payloadBacked: n.payload_backed, onOpenStructuration: () => onOpenStructuration?.(n.id),
             selected: selectedId === n.id, onClick: () => onSelect(n.id),
           },
         });
