@@ -397,6 +397,21 @@ def render_models(
                 "'motif', 'cast_echoue') END"
             )
 
+        # Data-quality gate, independent of on_cast_error: a field marked non-nullable must
+        # come out non-NULL regardless of policy — "{target}" IS NULL already covers a blank
+        # cell, a missing key AND a suppressed cast failure (null/text policy), so one flag is
+        # enough. Appended after the block above so, when both conditions are true for the same
+        # field, jsonb_build_object's last-key-wins semantics surface this reason (still
+        # quarantined either way — only the reported motif differs).
+        if not field.get("nullable", True):
+            not_null_flag = f'("{target}" IS NULL)'
+            fail_flags.append(not_null_flag)
+            failure_pairs.append(
+                _sql_string_literal(target) + ", CASE WHEN " + not_null_flag + " THEN jsonb_build_object("
+                "'valeur_brute', \"" + txt_alias + "\", 'type_cible', " + _sql_string_literal(field["target_type"]) + ", "
+                "'motif', 'valeur_obligatoire_manquante') END"
+            )
+
     row_ok_expr = "NOT (" + " OR ".join(fail_flags) + ")" if fail_flags else "true"
     failures_expr = "jsonb_strip_nulls(jsonb_build_object(" + ", ".join(failure_pairs) + "))" if failure_pairs else "'{}'::jsonb"
 
@@ -530,7 +545,8 @@ def canonical_contract(column_mapping: list[dict], quarantine_policy: str, quara
     minimal = {
         "fields": [
             {"source_name": c["source_name"], "target_name": c["target_name"], "target_type": c["target_type"],
-             "format": c.get("format"), "include": c.get("include", True), "on_cast_error": c.get("on_cast_error", "quarantine")}
+             "format": c.get("format"), "include": c.get("include", True), "on_cast_error": c.get("on_cast_error", "quarantine"),
+             "nullable": c.get("nullable", True)}
             for c in column_mapping
         ],
         "quarantine_policy": quarantine_policy,

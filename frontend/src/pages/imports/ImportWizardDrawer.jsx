@@ -30,6 +30,9 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
   const [recordXpath, setRecordXpath] = useState("");
   const [xpathCandidates, setXpathCandidates] = useState([]);
   const [xpathLoading, setXpathLoading] = useState(false);
+  const [sourcePk, setSourcePk] = useState("");
+  const [pkCandidates, setPkCandidates] = useState([]);
+  const [pkLoading, setPkLoading] = useState(false);
   const [targetSourceId, setTargetSourceId] = useState("");
   const [archiveSourceId, setArchiveSourceId] = useState("");
   const [name, setName] = useState("");
@@ -82,6 +85,24 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [format, file]);
 
+  // Schema-on-Read has no other preview step (direct import, no inference) — this is the
+  // wizard's only way to let the user pick a source_pk before commit.
+  useEffect(() => {
+    if (!isPayload || !file) {
+      setPkCandidates([]);
+      return;
+    }
+    let cancelled = false;
+    setPkLoading(true);
+    const opts = format === "csv" ? { delimiter: delimiter || undefined, encoding: encoding || undefined } : { sheet: sheet || undefined };
+    importsApi.getColumns(file, format, opts)
+      .then((res) => { if (!cancelled) setPkCandidates(res.columns); })
+      .catch(() => { if (!cancelled) setPkCandidates([]); })
+      .finally(() => { if (!cancelled) setPkLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPayload, file, format]);
+
   const submit = async () => {
     if (!valid) return;
     setBusy(true);
@@ -98,6 +119,7 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
       } else if (format === "xml") {
         formatOptions.record_xpath = recordXpath.trim();
       }
+      if (isPayload && sourcePk.trim()) formatOptions.source_pk = sourcePk.trim();
       const fi = await importsApi.createImport(file, {
         format, formatOptions, targetSourceId: Number(targetSourceId), archiveSourceId: Number(archiveSourceId), name: name.trim() || undefined,
         importMode: isPayload ? "payload" : "typed", writeMode: isPayload ? payloadWriteMode : "create",
@@ -169,6 +191,17 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
               <option value="replace">{t("imports.modal.writeModeReplace")}</option>
               <option value="append">{t("imports.modal.writeModeAppend")}</option>
             </select>
+          </Field>
+          <Field label={t("imports.wizard.sourcePk")}>
+            {pkLoading && <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 6 }}>{t("imports.wizard.sourcePkAnalyzing")}</div>}
+            {pkCandidates.length > 0 && (
+              <select className="input" style={{ marginBottom: 8 }} value={sourcePk} onChange={(e) => setSourcePk(e.target.value)}>
+                <option value="">{t("imports.wizard.sourcePkNone")}</option>
+                {pkCandidates.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            )}
+            <Input placeholder={t("imports.wizard.sourcePkPlaceholder")} value={sourcePk} onChange={(e) => setSourcePk(e.target.value)} />
+            <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>{t("imports.wizard.sourcePkHelp")}</div>
           </Field>
           <div className="card" style={{ padding: 12, marginBottom: 14, background: "var(--bg)" }}>
             <div style={{ fontFamily: "var(--font-m)", fontSize: 12.5 }}>

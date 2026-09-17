@@ -521,7 +521,10 @@ PAYLOAD_FORMATS = {"csv", "excel"}
 def _prepare_payload_table(cur, schema_name: str, table_name: str, write_mode: FileImportWriteMode) -> None:
     """DDL for the payload+audit landing shape (§3.3): `payload JSONB NOT NULL` plus
     `load_id`/`source_file`/`row_number` audit columns — never a cast, never a column per
-    source key. Same create/replace/append semantics as the typed-mode `_prepare_table`."""
+    source key. Same create/replace/append semantics as the typed-mode `_prepare_table`.
+    `source_pk` (nullable) is the optional §3.3 identifier column: the *name* of the payload
+    key that acts as the record's business key, not its value — set once at import time,
+    identical on every row."""
     schema_ident = sql.Identifier(_validate_identifier(schema_name, "Schéma cible"))
     table_ident = sql.Identifier(_validate_identifier(table_name, "Table cible"))
 
@@ -539,25 +542,29 @@ def _prepare_payload_table(cur, schema_name: str, table_name: str, write_mode: F
 
     if not exists:
         cur.execute(
-            sql.SQL("CREATE TABLE {}.{} (payload JSONB NOT NULL, load_id INTEGER, source_file TEXT, row_number BIGINT)")
+            sql.SQL("CREATE TABLE {}.{} (payload JSONB NOT NULL, load_id INTEGER, source_file TEXT, row_number BIGINT, source_pk TEXT)")
             .format(schema_ident, table_ident)
         )
+    else:
+        # append to a table created before source_pk existed — backfill the column so
+        # _insert_payload_chunk's INSERT always has somewhere to put it.
+        cur.execute(sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS source_pk TEXT").format(schema_ident, table_ident))
 
 
-def _insert_payload_chunk(cur, schema_name: str, table_name: str, fi_id: int, source_file: str, records: list[dict], row_offset: int) -> int:
+def _insert_payload_chunk(cur, schema_name: str, table_name: str, fi_id: int, source_file: str, records: list[dict], row_offset: int, source_pk: str | None = None) -> int:
     """Every cell lands as text in the payload, keyed by the file's own header — no cast, no
     row ever rejected here. `row_number` is the file's true 1-based rank, tracked by the
     caller across chunks (§3.3's traceability line for the future quarantine relation)."""
     schema_ident = sql.Identifier(schema_name)
     table_ident = sql.Identifier(table_name)
-    stmt = sql.SQL("INSERT INTO {}.{} (payload, load_id, source_file, row_number) VALUES ({}, {}, {}, {})").format(
-        schema_ident, table_ident, sql.Placeholder(), sql.Placeholder(), sql.Placeholder(), sql.Placeholder(),
+    stmt = sql.SQL("INSERT INTO {}.{} (payload, load_id, source_file, row_number, source_pk) VALUES ({}, {}, {}, {}, {})").format(
+        schema_ident, table_ident, sql.Placeholder(), sql.Placeholder(), sql.Placeholder(), sql.Placeholder(), sql.Placeholder(),
     )
 
     rows_to_insert = []
     for i, record in enumerate(records):
         payload = {k: (None if v is None else str(v)) for k, v in record.items()}
-        rows_to_insert.append((json.dumps(payload), fi_id, source_file, row_offset + i + 1))
+        rows_to_insert.append((json.dumps(payload), fi_id, source_file, row_offset + i + 1, source_pk))
 
     cur.executemany(stmt, rows_to_insert)
     return len(rows_to_insert)
@@ -595,6 +602,8 @@ def _do_run_import_payload(db, fi: FileImport) -> None:
     _validate_identifier(fi.target_schema, "Schéma cible")
     _validate_identifier(fi.target_table, "Table cible")
 
+    source_pk = (fi.format_options or {}).get("source_pk") or None
+
     conn = _pg_connect(target)
     row_count = 0
     try:
@@ -604,7 +613,7 @@ def _do_run_import_payload(db, fi: FileImport) -> None:
 
         for chunk in _iter_chunks(fi.format.value, file_bytes, fi.format_options or {}):
             with conn.cursor() as cur:
-                row_count += _insert_payload_chunk(cur, fi.target_schema, fi.target_table, fi.id, fi.source_file_name, chunk, row_count)
+                row_count += _insert_payload_chunk(cur, fi.target_schema, fi.target_table, fi.id, fi.source_file_name, chunk, row_count, source_pk)
             conn.commit()
     finally:
         conn.close()

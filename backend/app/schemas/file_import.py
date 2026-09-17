@@ -76,3 +76,7 @@ class XmlCandidateOut(BaseModel):
 
 class XmlCandidatesOut(BaseModel):
     candidates: list[XmlCandidateOut]
+
+
+class ColumnsOut(BaseModel):
+    columns: list[str]

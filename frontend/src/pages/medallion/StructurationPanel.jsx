@@ -131,6 +131,7 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
               <th>{t("imports.modal.colTarget")}</th>
               <th>{t("imports.modal.colType")}</th>
               <th>{t("medallion.structuration.onCastError")}</th>
+              <th>{t("medallion.structuration.colNullable")}</th>
               <th>{t("imports.modal.colConfidence")}</th>
             </tr>
           </thead>
@@ -168,6 +169,13 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
                       <option value="null">{t("medallion.structuration.policyNull")}</option>
                       <option value="text">{t("medallion.structuration.policyText")}</option>
                     </select>
+                  </td>
+                  <td style={{ textAlign: "center" }}>
+                    <input
+                      type="checkbox" checked={f.nullable ?? true} disabled={readOnly || !f.include}
+                      title={t("medallion.structuration.nullableHelp")}
+                      onChange={(e) => updateField(idx, { nullable: e.target.checked })}
+                    />
                   </td>
                   <td><Badge tone={(f.confidence ?? 1) >= 0.95 ? "accent" : "danger"}>{Math.round((f.confidence ?? 1) * 100)}%</Badge></td>
                 </tr>

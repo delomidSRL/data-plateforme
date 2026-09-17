@@ -33,3 +33,11 @@ export const getXmlCandidates = (file) => {
   formData.append("file", file);
   return apiUpload(`${base}/xml-candidates`, formData);
 };
+
+export const getColumns = (file, format, formatOptions = {}) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("format", format);
+  formData.append("format_options", JSON.stringify(formatOptions));
+  return apiUpload(`${base}/columns`, formData);
+};

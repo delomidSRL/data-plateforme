@@ -9,7 +9,7 @@ from app.db.session import get_db
 from app.models.data_source import DataSource
 from app.models.file_import import FileImport, FileImportFormat, FileImportStatus, FileImportWriteMode, ImportMode
 from app.models.user import User, UserRole
-from app.schemas.file_import import FileImportOut, FileImportStatusOut, FileImportUpdate, XmlCandidatesOut
+from app.schemas.file_import import ColumnsOut, FileImportOut, FileImportStatusOut, FileImportUpdate, XmlCandidatesOut
 from app.services import file_import as file_import_service
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
@@ -147,6 +147,32 @@ async def xml_candidates(file: UploadFile = File(...), _: User = Depends(get_cur
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Analyse XML impossible : {exc}")
     return XmlCandidatesOut(candidates=candidates)
+
+
+@router.post("/columns", response_model=ColumnsOut)
+async def csv_excel_columns(
+    file: UploadFile = File(...),
+    format: str = Form(...),
+    format_options: str = Form("{}"),
+    _: User = Depends(get_current_user),
+):
+    """Scratch analysis only — no FileImport row, nothing archived. Schema-on-Read (payload)
+    mode skips inference entirely, so this is the wizard's only way to propose source_pk
+    candidates before commit — mirrors xml_candidates above."""
+    if format not in ("csv", "excel"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aperçu des colonnes disponible seulement pour CSV et Excel.")
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier vide.")
+    try:
+        options = json.loads(format_options) if format_options else {}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="format_options doit être un JSON valide.")
+    try:
+        columns, _rows = file_import_service.read_columns_and_sample(format, file_bytes, options)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Analyse des colonnes impossible : {exc}")
+    return ColumnsOut(columns=columns)
 
 
 @router.get("/{import_id}", response_model=FileImportOut)
