@@ -56,6 +56,17 @@ with DAG(
         bash_command=f"{DBT_BIN} deps --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR}",
     )
 
+    # Module 6 extension (payload & structuration) §5 — bronze itself is never a dbt MODEL
+    # (it's declared as a dbt source, populated by the ingest_bronze operators above), but a
+    # payload dataset's structuration (01_unpacked_<name>/02_typed_<name>) IS one, living under
+    # models/bronze/ next to that source declaration. Nothing else in this DAG ever runs it —
+    # a project with no payload-structured bronze dataset has zero matching nodes, and dbt
+    # exits 0 on "Nothing to do" for an empty selection, so this is always safe to run.
+    dbt_run_bronze_structuration = BashOperator(
+        task_id="dbt_run_bronze_structuration",
+        bash_command=f"{DBT_BIN} run --select bronze --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR} --target {{ project.target.value }}",
+    )
+
     dbt_run_silver = BashOperator(
         task_id="dbt_run_silver",
         bash_command=f"{DBT_BIN} run --select silver --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR} --target {{ project.target.value }}",
@@ -85,9 +96,9 @@ with DAG(
 {% endfor %}
 
 {% if bronze_datasets %}
-    [{% for b in bronze_datasets %}bronze_{{ b.safe_name }}{{ ", " if not loop.last }}{% endfor %}] >> dbt_run_silver
+    [{% for b in bronze_datasets %}bronze_{{ b.safe_name }}{{ ", " if not loop.last }}{% endfor %}] >> dbt_run_bronze_structuration
 {% endif %}
-    dbt_deps >> dbt_run_silver
+    dbt_deps >> dbt_run_bronze_structuration >> dbt_run_silver
     dbt_run_silver >> dbt_run_gold
 {% if ml_nodes %}
     dbt_run_gold >> [{% for m in ml_nodes %}ml_{{ m.safe_name }}{{ ", " if not loop.last }}{% endfor %}] >> dbt_test
