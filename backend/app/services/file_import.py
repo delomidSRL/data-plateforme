@@ -413,19 +413,25 @@ def cast_value(raw, target_type: str, date_format: str | None):
     if raw is None or str(raw).strip() == "":
         return None, True
     text = str(raw).strip()
+    # A field defensively double-quoted by the source export (independent of the file's own
+    # CSV-level quoting) hides a date/number behind quote characters no format string expects
+    # — stripped for every non-text cast, same hygiene schema_infer applies when inferring the
+    # type in the first place, so what got detected actually casts. "text" itself keeps the
+    # original, merely-whitespace-trimmed value — no reason to alter genuine free text.
+    cleaned = schema_infer._strip_wrapping_quotes(text)
     try:
         if target_type == "text":
             return text, True
         if target_type in ("integer", "bigint"):
-            n = schema_infer._parse_number(text)
+            n = schema_infer._parse_number(cleaned)
             if n is None or n != n.to_integral_value():
                 return None, False
             return int(n), True
         if target_type == "numeric":
-            n = schema_infer._parse_number(text)
+            n = schema_infer._parse_number(cleaned)
             return (n, True) if n is not None else (None, False)
         if target_type == "boolean":
-            low = text.lower()
+            low = cleaned.lower()
             if low in schema_infer._BOOL_TRUE:
                 return True, True
             if low in schema_infer._BOOL_FALSE:
@@ -433,7 +439,7 @@ def cast_value(raw, target_type: str, date_format: str | None):
             return None, False
         if target_type in ("date", "timestamp"):
             fmt = date_format or ("%d/%m/%Y" if target_type == "date" else "%d/%m/%Y %H:%M:%S")
-            dt = datetime.strptime(text, fmt)
+            dt = datetime.strptime(cleaned, fmt)
             return (dt.date() if target_type == "date" else dt), True
     except Exception:
         return None, False

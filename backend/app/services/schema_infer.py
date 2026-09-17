@@ -18,6 +18,18 @@ _LEADING_ZERO_RE = re.compile(r"^[+-]?0\d+$")
 _BOOL_TRUE = {"true", "1", "oui", "vrai", "o", "yes", "y"}
 _BOOL_FALSE = {"false", "0", "non", "faux", "n", "no"}
 
+_WRAPPING_QUOTE_CHARS = "\"'"
+
+
+def _strip_wrapping_quotes(v: str) -> str:
+    """A field defensively double-quoted by the source export (a common CSV/Excel artifact,
+    independent of the file's own CSV-level quoting) hides a date/number behind a pair of
+    quote characters that no format string ever expects — 'sans quotes ça marche' — so it's
+    stripped before any type check runs, same hygiene the clean_string dbt macro applies at
+    structuration time (payload_structure.py) and cast_value applies at typed-import time
+    (file_import.py), so what gets inferred here matches what actually gets cast later."""
+    return v.strip().strip(_WRAPPING_QUOTE_CHARS).strip()
+
 _SQL_RESERVED = {
     "select", "insert", "update", "delete", "from", "where", "table", "column", "index",
     "order", "group", "by", "and", "or", "not", "null", "true", "false", "primary", "key",
@@ -125,6 +137,8 @@ def infer_column(values: list[str]) -> dict:
     Returns the column_mapping fields produced by inference (not source_name/target_name,
     which the caller attaches): inferred_type, confidence, ambiguous, sample."""
     non_null = [str(v) for v in values if v is not None and str(v).strip() != ""]
+    non_null = [_strip_wrapping_quotes(v) for v in non_null]
+    non_null = [v for v in non_null if v != ""]
     sample = non_null[:5]
 
     if not non_null:

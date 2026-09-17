@@ -302,7 +302,7 @@ $$ LANGUAGE plpgsql;
 # ---------------------------------------------------------------------------
 
 CLEAN_STRING_MACRO_SQL = """{% macro clean_string(expr) -%}
-NULLIF(btrim({{ expr }}), '')
+NULLIF(btrim(btrim(btrim({{ expr }}), '"' || chr(39))), '')
 {%- endmacro %}
 """
 
