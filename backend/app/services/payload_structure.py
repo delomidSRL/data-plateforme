@@ -398,7 +398,7 @@ def render_unpacked_typed_models(column_mapping: list[dict], bronze_name: str) -
     traceability = "\n".join(f"    {c}" + ("," if i < len(_TRACEABILITY_COLUMNS) - 1 else "") for i, c in enumerate(_TRACEABILITY_COLUMNS))
 
     unpacked_sql = (
-        "{{ config(materialized='table') }}\n\n"
+        "{{ config(materialized='table', schema='bronze') }}\n\n"
         f"{{% set fields = var('{vars_key}') %}}\n\n"
         "with source as (\n\n"
         "    select *\n"
@@ -414,7 +414,7 @@ def render_unpacked_typed_models(column_mapping: list[dict], bronze_name: str) -
     )
 
     typed_sql = (
-        "{{ config(materialized='table') }}\n\n"
+        "{{ config(materialized='table', schema='bronze') }}\n\n"
         f"{{% set fields = var('{vars_key}') %}}\n\n"
         "with unpacked as (\n\n"
         "    select *\n"
