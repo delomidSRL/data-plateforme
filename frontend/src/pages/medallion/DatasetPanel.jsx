@@ -16,6 +16,11 @@ import StructurationPopup from "./StructurationPopup.jsx";
 import { BUILTIN_MACROS } from "./builtinMacros.js";
 
 const LAYER_ORDER = { bronze: 0, silver: 1, gold: 2 };
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Any {{ ref('01_unpacked_<name>') }} / '02_typed_<name>' / '05_validated_<name>' for one
+// bronze — the set of refs a "which stage does this SQL read" selector treats as mutually
+// exclusive alternatives to the SAME upstream, never several at once.
+const stageRefPattern = (bronzeName) => new RegExp(`\\{\\{\\s*ref\\(['"](01_unpacked|02_typed|05_validated)_${escapeRegExp(bronzeName)}['"]\\)\\s*\\}\\}`);
 const TEST_TYPES = ["not_null", "unique", "accepted_values", "relationships"];
 const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "Oracle", minio: "MinIO" };
 
@@ -305,11 +310,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   // rerouteThroughStage uses to draw the canvas edge through that same stage node.
   const detectUpstreamStage = (d) => {
     if (d.layer !== "bronze" || !columnsByDataset[d.id]?.structured) return null;
-    const name = d.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (new RegExp(`ref\\(['"]02_typed_${name}['"]\\)`).test(sql)) return "02_typed";
-    if (new RegExp(`ref\\(['"]01_unpacked_${name}['"]\\)`).test(sql)) return "01_unpacked";
-    if (new RegExp(`ref\\(['"]05_validated_${name}['"]\\)`).test(sql)) return "05_validated";
-    return null;
+    return stageRefPattern(d.name).exec(sql)?.[1] || null;
   };
 
   const sqlRef = useRef(null);
@@ -337,6 +338,21 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   // as insertReference, just for a stage instead of the dataset's own default reference.
   const insertStageReference = (d, stageModelName) => {
     insertAtCursor(`{{ ref('${stageModelName}') }}`);
+    setUpstreamIds((s) => (s.has(d.id) ? s : new Set(s).add(d.id)));
+  };
+  // UX ask — the Upstreams (lignée) stage checkboxes (01_unpacked/02_typed) pick ONE stage as
+  // this bronze's source, unlike "Tables disponibles"' free insert-at-cursor: blindly inserting
+  // a second stage's ref at the cursor left the first one's text still sitting in the SQL
+  // (sometimes split apart by the insertion itself), so the SQL matched neither stage cleanly
+  // afterward — the clicked checkbox never showed checked, and the canvas edge (which reads
+  // this same SQL text) had nothing valid to reroute through either. Replaces any existing
+  // 01_unpacked/02_typed/05_validated reference to this bronze with the new one instead;
+  // inserts at cursor only when there's nothing to replace yet (a fresh/empty SQL box).
+  const selectUpstreamStage = (d, stageModelName) => {
+    const newRef = `{{ ref('${stageModelName}') }}`;
+    const pattern = stageRefPattern(d.name);
+    if (pattern.test(sql)) setSql((s) => s.replace(pattern, newRef));
+    else insertAtCursor(newRef);
     setUpstreamIds((s) => (s.has(d.id) ? s : new Set(s).add(d.id)));
   };
   const insertColumn = (columnName) => insertAtCursor(columnName);
@@ -898,10 +914,10 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                           // 03_standardized reads a specific stage, never the bronze directly,
                           // so that stage needs its own real checkbox here, checked by default
                           // whenever the SQL already reads it (e.g. the "+" on 02_typed
-                          // pre-seeds exactly that reference). Checking one inserts its
-                          // reference (same as "Tables disponibles" above) and marks the
-                          // bronze itself as upstream; unchecking is a no-op — pulling a
-                          // {{ ref(...) }} back out of free-form SQL isn't safe to automate.
+                          // pre-seeds exactly that reference). The two are mutually exclusive —
+                          // selecting one (selectUpstreamStage) replaces whichever stage
+                          // reference is already in the SQL rather than inserting a second one
+                          // alongside it, and marks the bronze itself as upstream.
                           [["01_unpacked", "unpacked"], ["02_typed", "typed"]].map(([prefix, stageKey]) => {
                             const modelName = `${prefix}_${d.name}`;
                             const checked = activeStage === prefix;
@@ -909,7 +925,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                               <label key={stageKey} className="service-tile-checkline">
                                 <input
                                   type="checkbox" checked={checked}
-                                  onChange={() => { if (!checked) insertStageReference(d, modelName); }}
+                                  onChange={() => selectUpstreamStage(d, modelName)}
                                   title={t("medallion.structuration.instantPreviewHint")}
                                 />
                                 <span style={{ fontSize: 12.5 }}>
