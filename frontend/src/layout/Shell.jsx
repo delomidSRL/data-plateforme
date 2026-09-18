@@ -43,6 +43,7 @@ export default function Shell() {
     "/orchestrators": t("breadcrumbs.orchestrators"),
     "/settings/users": t("breadcrumbs.users"),
     "/settings/ml-templates": t("breadcrumbs.mlLibrary"),
+    "/settings/dbt-macros": t("breadcrumbs.dbtMacros"),
   };
   const crumb = CRUMBS[location.pathname]
     || (location.pathname.startsWith("/servers/") ? t("breadcrumbs.serverDetail") : null)
@@ -103,6 +104,13 @@ export default function Shell() {
           ) : (
             <button className="nav-item disabled" disabled title={t("common.reservedToAdmins")}>
               {Icon.wand()}{t("sidebar.mlLibrary")} {Icon.lockSm()}
+            </button>
+          )}
+          {isAdmin ? (
+            navItem("/settings/dbt-macros", Icon.code(), t("sidebar.dbtMacros"))
+          ) : (
+            <button className="nav-item disabled" disabled title={t("common.reservedToAdmins")}>
+              {Icon.code()}{t("sidebar.dbtMacros")} {Icon.lockSm()}
             </button>
           )}
         </nav>

@@ -277,11 +277,11 @@ def generate_project_files(
         # still needs the seed to exist — an empty registry just means every flag routes to
         # quarantine, the documented safe default for anything undeclared).
         files["seeds/dq_flag_registry.csv"] = payload_structure.render_registry_seed(all_quality_flags)
-    # New module — a project's own custom macros (DbtMacro), unconditional (not gated on
-    # `structurations`): any dbt SQL dataset can call one, not just a 03_standardized. A macro
-    # nothing calls is simply unused, never a build error — same additive contract as the
-    # built-ins above.
-    custom_macros = db.query(DbtMacro).filter(DbtMacro.project_id == project.id).all()
+    # New module — the platform's admin-managed macro library (DbtMacro), unconditional (not
+    # gated on `structurations`, not scoped to this project): every project gets every macro,
+    # any dbt SQL dataset can call one, not just a 03_standardized. A macro nothing calls is
+    # simply unused, never a build error — same additive contract as the built-ins above.
+    custom_macros = db.query(DbtMacro).all()
     if custom_macros:
         files.update(dbt_macros.render_macro_files(custom_macros))
     if for_export or rendered_tests.has_tier_a:

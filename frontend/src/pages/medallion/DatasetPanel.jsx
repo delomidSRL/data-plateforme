@@ -6,6 +6,7 @@ import { Button } from "../../components/ui/Button.jsx";
 import { Icon } from "../../components/icons.jsx";
 import * as medallionApi from "../../api/medallion.js";
 import * as mlTemplatesApi from "../../api/mlTemplates.js";
+import * as dbtMacrosApi from "../../api/dbtMacros.js";
 import * as sourcesApi from "../../api/sources.js";
 import DataPreviewPanel from "./DataPreviewPanel.jsx";
 import IndicatorsPanel from "./IndicatorsPanel.jsx";
@@ -115,10 +116,11 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
 
   useEffect(() => { mlTemplatesApi.listTemplates().then(setTemplates).catch(() => {}); }, []);
 
-  // New module — a project's own custom dbt macros, offered alongside BUILTIN_MACROS in the
-  // SQL editor's "Macros disponibles" section (same click-to-insert idea as columns/tables).
+  // New module — the platform's admin-managed macro library (Settings · Macros dbt), offered
+  // alongside BUILTIN_MACROS in the SQL editor's "Macros disponibles" section (same
+  // click-to-insert idea as columns/tables).
   const [customMacros, setCustomMacros] = useState([]);
-  useEffect(() => { medallionApi.listMacros(project.id).then(setCustomMacros).catch(() => {}); }, [project.id]);
+  useEffect(() => { dbtMacrosApi.listMacros().then(setCustomMacros).catch(() => {}); }, []);
 
   // MinIO/S3 sources: browse actual files instead of typing a path blind — picking a
   // file (not a whole prefix) is what keeps each bronze table's schema clean. A source
@@ -216,10 +218,13 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   const isBronze = layer === "bronze";
   const isPython = layer === "gold" && transformType === "python";
   const selectedTemplate = templates.find((tp) => tp.id === selectedTemplateId) || null;
+  // UX ask — an upstream may be an equal-or-lower layer (never strictly higher), same rule for
+  // every transform type (mirrors validate_lineage, medallion_crud.py): a new silver can now
+  // also build on another already-existing silver (chained staging→intermediate silvers), not
+  // just on bronze — previously only python/ML gold nodes could chain same-layer.
   const upstreamCandidates = datasets.filter((d) => {
     if (d.id === dataset?.id) return false;
-    const diff = LAYER_ORDER[d.layer] - LAYER_ORDER[layer];
-    return isPython ? diff <= 0 : diff < 0;
+    return LAYER_ORDER[d.layer] - LAYER_ORDER[layer] <= 0;
   });
 
   const setLayerSafe = (l) => {

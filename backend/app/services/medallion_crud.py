@@ -8,19 +8,20 @@ _LAYER_ORDER = {MedallionLayer.bronze: 0, MedallionLayer.silver: 1, MedallionLay
 
 
 def validate_lineage(db: Session, pid: int, layer: MedallionLayer, upstream_ids: list[int], transform_type: TransformType = TransformType.dbt) -> None:
+    """An upstream may be an equal-or-lower layer — never a strictly higher one. Originally
+    dbt nodes were restricted to a strictly-lower layer (silver reads bronze, gold reads
+    bronze/silver) and only python/ML nodes could chain same-layer (another gold mart); UX ask
+    lifted that restriction for dbt too (silver-to-silver, gold-to-gold chains are a normal
+    medallion pattern, e.g. a multi-hop staging→intermediate silver) — same single rule for
+    every transform_type now, `transform_type` kept as a parameter for caller compatibility."""
     if not upstream_ids:
         return
     upstreams = db.query(MedallionDataset).filter(MedallionDataset.id.in_(upstream_ids), MedallionDataset.project_id == pid).all()
     if len(upstreams) != len(set(upstream_ids)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Un ou plusieurs datasets amont sont introuvables.")
     for u in upstreams:
-        if transform_type == TransformType.python:
-            # Python/ML nodes may read an equal-or-lower layer (e.g. another gold mart),
-            # unlike dbt nodes which must strictly move up a layer.
-            if _LAYER_ORDER[u.layer] > _LAYER_ORDER[layer]:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"'{u.name}' ({u.layer.value}) est d'une couche supérieure à {layer.value}.")
-        elif _LAYER_ORDER[u.layer] >= _LAYER_ORDER[layer]:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"'{u.name}' ({u.layer.value}) n'est pas d'une couche inférieure à {layer.value}.")
+        if _LAYER_ORDER[u.layer] > _LAYER_ORDER[layer]:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"'{u.name}' ({u.layer.value}) est d'une couche supérieure à {layer.value}.")
 
 
 def create_dataset_internal(db: Session, project: MedallionProject, payload: DatasetCreate) -> MedallionDataset:

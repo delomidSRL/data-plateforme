@@ -60,14 +60,6 @@ export const getDashboardStatus = (pid, did) => apiFetch(`${base}/${pid}/dataset
 export const deleteDashboard = (pid, did) => apiFetch(`${base}/${pid}/datasets/${did}/dashboard`, { method: "DELETE" });
 export const listDashboards = (pid) => apiFetch(`${base}/${pid}/dashboards`);
 
-// New module — project-scoped, user-defined dbt macros: offered alongside built-ins in the
-// 03_standardized SQL editor (DatasetPanel), written into the generated dbt project's macros/
-// folder on every build.
-export const listMacros = (pid) => apiFetch(`${base}/${pid}/macros/`);
-export const createMacro = (pid, payload) => apiFetch(`${base}/${pid}/macros/`, { method: "POST", body: payload });
-export const updateMacro = (pid, mid, payload) => apiFetch(`${base}/${pid}/macros/${mid}`, { method: "PUT", body: payload });
-export const deleteMacro = (pid, mid) => apiFetch(`${base}/${pid}/macros/${mid}`, { method: "DELETE" });
-
 // Module 9 — admin, read-only supervision across every engineer's projects.
 const adminBase = "/api/medallion/admin";
 export const getAdminOverview = () => apiFetch(`${adminBase}/overview`);

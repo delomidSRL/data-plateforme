@@ -734,6 +734,15 @@ def compile_adhoc_sql(sql: str, ref_map: dict[str, str], extra_macros_src: str =
         raise PayloadStructureError(f"Variable Jinja non définie : {exc.message}") from exc
 
 
+def _sql_without_string_literals(sql: str) -> str:
+    """Strips the content of every Postgres single-quoted string literal (a doubled `''`
+    inside one is the standard escaped-quote, not a terminator, so it's treated as literal
+    content too) — used to check for a real second statement without false-positiving on a
+    semicolon that's actually just part of a literal, e.g. a regex character class like
+    '[,;]' in a normalize_for_matching/clean_string call."""
+    return re.sub(r"'(?:[^']|'')*'", "''", sql)
+
+
 def explain_sql(warehouse: DataSource, sql: str) -> None:
     """Runs EXPLAIN (COSTS FALSE) — never ANALYZE, never executes the query — against the
     warehouse: validates real SQL syntax, table/column existence and type compatibility,
@@ -742,7 +751,7 @@ def explain_sql(warehouse: DataSource, sql: str) -> None:
     would raise on a stacked/second statement). Raises PayloadStructureError with Postgres's
     own message on failure."""
     body = sql.strip().rstrip(";")
-    if ";" in body:
+    if ";" in _sql_without_string_literals(body):
         raise PayloadStructureError("Une seule instruction SQL à la fois (pas de « ; » au milieu de la requête).")
     conn = _connect_warehouse(warehouse)
     try:

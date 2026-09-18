@@ -10,6 +10,7 @@ import ResetPassword from "./pages/auth/ResetPassword.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Users from "./pages/settings/Users.jsx";
 import MLTemplates from "./pages/settings/MLTemplates.jsx";
+import DbtMacros from "./pages/settings/DbtMacros.jsx";
 import ServersList from "./pages/servers/ServersList.jsx";
 import ServerDetail from "./pages/servers/ServerDetail.jsx";
 import OrchestratorsList from "./pages/orchestrators/OrchestratorsList.jsx";
@@ -48,6 +49,7 @@ export default function App() {
                   <Route path="/medallion/overview/:id" element={<ProjectDetail readOnly />} />
                   <Route path="/settings/users" element={<Users />} />
                   <Route path="/settings/ml-templates" element={<MLTemplates />} />
+                  <Route path="/settings/dbt-macros" element={<DbtMacros />} />
                 </Route>
               </Route>
             </Route>

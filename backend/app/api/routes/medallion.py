@@ -796,7 +796,7 @@ def validate_dataset_sql(
     )
     structured_bronze_names = {d.name for d in datasets if d.id in structured_ids}
     ref_map = build_ref_map(datasets, structured_bronze_names)
-    custom_macros = db.query(DbtMacro).filter(DbtMacro.project_id == project.id).all()
+    custom_macros = db.query(DbtMacro).all()
     extra_macros_src = dbt_macros.macros_source_for_validation(custom_macros)
 
     try:
