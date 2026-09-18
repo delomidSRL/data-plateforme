@@ -65,9 +65,11 @@ export default function ProjectDetail({ readOnly = false }) {
   const [importValidating, setImportValidating] = useState(null);
   const [structurationTargetId, setStructurationTargetId] = useState(null); // Module 6 extension — canvas node click
   const [structurationStage, setStructurationStage] = useState(null); // Module 18 §7 — which 01..05 stage node was clicked
-  const openStructuration = (datasetId, stage = null) => {
+  const [structurationGuided, setStructurationGuided] = useState(false); // Module 18 §7 UX — "+" button: walk 01..05 step by step
+  const openStructuration = (datasetId, stage = null, guided = false) => {
     setStructurationTargetId(datasetId);
     setStructurationStage(stage);
+    setStructurationGuided(guided);
   };
   const [hasProdEnvironment, setHasProdEnvironment] = useState(false); // Module 17 §5.3.1
   const [hasProdBinding, setHasProdBinding] = useState(false);
@@ -563,8 +565,8 @@ export default function ProjectDetail({ readOnly = false }) {
         const structurationDataset = datasets.find((d) => d.id === structurationTargetId);
         return structurationDataset ? (
           <StructurationPopup
-            project={project} dataset={structurationDataset} stage={structurationStage}
-            onClose={() => { setStructurationTargetId(null); setStructurationStage(null); }}
+            project={project} dataset={structurationDataset} stage={structurationStage} guided={structurationGuided}
+            onClose={() => { setStructurationTargetId(null); setStructurationStage(null); setStructurationGuided(false); }}
           />
         ) : null;
       })()}

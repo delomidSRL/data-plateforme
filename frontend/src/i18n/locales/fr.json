@@ -1145,7 +1145,11 @@
       "stageHint_annotated": "04 · Annotated — règles de qualité évaluées et taguées dans data_quality_flags.",
       "stageHint_validated": "05 · Validated — lignes sans flag bloquant ; c'est ce que lit le silver.",
       "stageHint_quarantine": "05 · Quarantine — lignes avec un flag bloquant, conservées ici pour être analysées et corrigées.",
-      "showFullContract": "Voir tout le contrat"
+      "showFullContract": "Voir tout le contrat",
+      "wizardStep": "Étape {{current}}/{{total}}",
+      "wizardBack": "Précédent",
+      "wizardNext": "Suivant",
+      "wizardFinish": "Terminer"
     },
     "publish": {
       "tab": "Publier",

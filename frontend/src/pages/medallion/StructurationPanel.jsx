@@ -26,6 +26,11 @@ const STAGE_LEVEL = { unpacked: 1, typed: 2, standardized: 3, annotated: 4, vali
 const MAX_LEVEL = 4;
 // Which popup block a stage's click should scroll to / highlight.
 const STAGE_BLOCK = { unpacked: "fields", typed: "fields", standardized: "fields", validated: "fields", annotated: "flags", quarantine: "quarantine" };
+// Module 18 §7 UX — the "+" on a payload-backed bronze and "pick this bronze as a new
+// silver's upstream" both land a first-timer on a blank contract with nothing decided yet;
+// dumping the full editor on them (the canvas-jump behavior) skips explaining what each
+// stage even is. `guided` walks the same 5 real stage names in order instead, one at a time.
+const WIZARD_STAGES = ["unpacked", "typed", "standardized", "annotated", "quarantine"];
 
 // Module 6 extension (payload & structuration) — étapes 2/3/4, §5 rewrite (unpacked/typed
 // convention), Module 18 (standardisation + flags qualité no-code). Profile → edit the
@@ -33,7 +38,7 @@ const STAGE_BLOCK = { unpacked: "fields", typed: "fields", standardized: "fields
 // save (renders 01_unpacked..05_validated/05_quarantine at next build) → inspect rows already
 // routed to quarantine and repair the contract or a rule from what it shows. No quarantine
 // relation before 05: every row reaches 04_annotated, diagnosed, never excluded there.
-export default function StructurationPanel({ project, dataset, readOnly = false, stage = null }) {
+export default function StructurationPanel({ project, dataset, readOnly = false, stage = null, guided = false, onFinish }) {
   const { t } = useTranslation();
   const showToast = useToast();
   const [state, setState] = useState("loading"); // loading | none | notApplicable | ready
@@ -49,13 +54,17 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
   // only the raw fields, 02 adds naming/typing, 03 adds standardization, 04 adds the quality
   // flags — nothing left to gate after that, so 05 validated/quarantine both show everything.
   // "Show full contract" is the escape hatch for anyone who wants the whole picture anyway.
+  // In `guided` mode there's no jump target from the canvas — the panel drives its own
+  // `wizardStage` through the same 5 names instead, via the Back/Next/Finish row below.
   const [showAll, setShowAll] = useState(false);
+  const [wizardStage, setWizardStage] = useState(WIZARD_STAGES[0]);
   const [highlighted, setHighlighted] = useState(null);
   const fieldsRef = useRef(null);
   const flagsRef = useRef(null);
   const quarantineRef = useRef(null);
 
-  const level = showAll || !stage ? MAX_LEVEL : (STAGE_LEVEL[stage] ?? MAX_LEVEL);
+  const effectiveStage = guided ? wizardStage : stage;
+  const level = showAll || !effectiveStage ? MAX_LEVEL : (STAGE_LEVEL[effectiveStage] ?? MAX_LEVEL);
   const showTyped = level >= 2;
   const showStandardize = level >= 3;
   const showFlags = level >= 4;
@@ -63,15 +72,15 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
   useEffect(() => { setShowAll(false); }, [dataset.id, stage]);
 
   useEffect(() => {
-    if (state !== "ready" || !stage) return;
-    const block = STAGE_BLOCK[stage];
+    if (state !== "ready" || !effectiveStage) return;
+    const block = STAGE_BLOCK[effectiveStage];
     const targetRef = { fields: fieldsRef, flags: flagsRef, quarantine: quarantineRef }[block];
     if (!targetRef?.current) return;
     targetRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     setHighlighted(block);
     const timer = setTimeout(() => setHighlighted(null), 1600);
     return () => clearTimeout(timer);
-  }, [state, stage, dataset.id]);
+  }, [state, effectiveStage, dataset.id]);
 
   const highlightStyle = (block) => (highlighted === block
     ? { boxShadow: "0 0 0 2px var(--ember)", borderRadius: "var(--radius)", transition: "box-shadow .3s" }
@@ -134,11 +143,26 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
       const c = await structurationApi.saveStructuration(project.id, dataset.id, { column_mapping: fields, quality_flags: qualityFlags });
       setContractHash(c.contract_hash);
       showToast(t("medallion.structuration.saved"));
+      return true;
     } catch (err) {
       setError(err.message || t("medallion.structuration.saveFailed"));
+      return false;
     } finally {
       setBusy(false);
     }
+  };
+
+  // Module 18 §7 UX — wizard navigation. What blocks leaving the CURRENT step mirrors what
+  // that step actually lets you edit: 01→02 just needs something kept, 02/03 need valid
+  // names (own contract table), and only 04→05 also needs valid flags (04's own block).
+  const wizardStepIndex = WIZARD_STAGES.indexOf(wizardStage);
+  const wizardCanAdvance = wizardStepIndex === 0 ? fields.some((f) => f.include)
+    : wizardStepIndex === 3 ? fieldsValid && flagsValid
+    : fieldsValid;
+  const wizardGoBack = () => setWizardStage(WIZARD_STAGES[Math.max(wizardStepIndex - 1, 0)]);
+  const wizardGoNext = () => setWizardStage(WIZARD_STAGES[Math.min(wizardStepIndex + 1, WIZARD_STAGES.length - 1)]);
+  const wizardFinish = async () => {
+    if (await save()) onFinish?.();
   };
 
   if (state === "loading") return <div style={{ color: "var(--text-muted)" }}>{t("common.loading")}</div>;
@@ -166,7 +190,16 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
     <div>
       {error && <div className="error-banner">{Icon.warn()}<span>{error}</span></div>}
 
-      {stage && level < MAX_LEVEL && (
+      {guided ? (
+        <div className="card" style={{
+          padding: "8px 12px", marginBottom: 12, background: "var(--ember-soft)", border: "1px solid var(--ember)",
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--ember-600)", textTransform: "uppercase", letterSpacing: ".04em" }}>
+            {t("medallion.structuration.wizardStep", { current: wizardStepIndex + 1, total: WIZARD_STAGES.length })}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--ember-600)", marginTop: 2 }}>{t(`medallion.structuration.stageHint_${wizardStage}`)}</div>
+        </div>
+      ) : stage && level < MAX_LEVEL && (
         <div className="card" style={{
           padding: "8px 12px", marginBottom: 12, display: "flex", justifyContent: "space-between",
           alignItems: "center", gap: 10, background: "var(--ember-soft)", border: "1px solid var(--ember)",
@@ -278,9 +311,22 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
       )}
 
       {!readOnly && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: guided ? 10 : 20 }}>
           <button className="btn-ghost" style={{ padding: "6px 10px" }} disabled={busy} onClick={profile}>{Icon.refresh()} {t("medallion.structuration.reprofile")}</button>
           <Button disabled={!canSave || busy} onClick={save}>{busy ? t("medallion.structuration.saving") : t("medallion.structuration.save")}</Button>
+        </div>
+      )}
+
+      {guided && !readOnly && (
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 20 }}>
+          <button type="button" className="btn-ghost" style={{ padding: "6px 12px" }} disabled={wizardStepIndex === 0 || busy} onClick={wizardGoBack}>
+            ← {t("medallion.structuration.wizardBack")}
+          </button>
+          {wizardStepIndex === WIZARD_STAGES.length - 1 ? (
+            <Button disabled={!canSave || busy} onClick={wizardFinish}>{t("medallion.structuration.wizardFinish")}</Button>
+          ) : (
+            <Button disabled={!wizardCanAdvance || busy} onClick={wizardGoNext}>{t("medallion.structuration.wizardNext")} →</Button>
+          )}
         </div>
       )}
 

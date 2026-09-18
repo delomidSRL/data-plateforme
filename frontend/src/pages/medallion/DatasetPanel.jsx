@@ -782,7 +782,23 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
       )}
     </Drawer>
     {structurationPopupDataset && (
-      <StructurationPopup project={project} dataset={structurationPopupDataset} onClose={() => setStructurationPopupDataset(null)} />
+      <StructurationPopup
+        project={project} dataset={structurationPopupDataset} guided
+        onClose={() => setStructurationPopupDataset(null)}
+        onFinish={() => {
+          // Module 18 §7 UX — the moment the guided contract is saved, hand control straight
+          // to the SQL box: a fresh "SELECT * " gets a real FROM (the reference this bronze's
+          // structuration always produces — see referenceSnippetFor), an already-edited query
+          // just gets the reference inserted at the cursor, same as clicking the table below.
+          const d = structurationPopupDataset;
+          setStructurationPopupDataset(null);
+          if (!d) return;
+          const ref = `{{ ref('05_validated_${d.name}') }}`;
+          if (sql.trim() === "SELECT *") setSql(`SELECT *\nFROM ${ref}\n`);
+          else insertAtCursor(ref);
+          requestAnimationFrame(() => sqlRef.current?.focus());
+        }}
+      />
     )}
     </>
   );

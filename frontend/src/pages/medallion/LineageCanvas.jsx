@@ -241,7 +241,7 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
             dashboard: !!dashboardByDataset[n.id], dashboardLabel,
             dashboardTitle: dashboardByDataset[n.id]?.last_generated_at ? new Date(dashboardByDataset[n.id].last_generated_at).toLocaleString(i18n.language) : undefined,
             dashboardDate: dashboardByDataset[n.id]?.last_generated_at ? new Date(dashboardByDataset[n.id].last_generated_at).toLocaleDateString(i18n.language) : "",
-            payloadBacked: n.payload_backed, onOpenStructuration: () => onOpenStructuration?.(n.id),
+            payloadBacked: n.payload_backed, onOpenStructuration: () => onOpenStructuration?.(n.id, null, true),
             selected: selectedId === n.id, onClick: () => onSelect(n.id),
           },
         });
