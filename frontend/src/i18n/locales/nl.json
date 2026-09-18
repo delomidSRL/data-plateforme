@@ -1149,7 +1149,8 @@
       "wizardStep": "Stap {{current}}/{{total}}",
       "wizardBack": "Vorige",
       "wizardNext": "Volgende",
-      "wizardFinish": "Voltooien"
+      "wizardFinish": "Voltooien",
+      "instantPreviewHint": "Directe preview — synchroon gematerialiseerd bij elke opslag, onafhankelijk van de Airflow-build."
     },
     "publish": {
       "tab": "Publiceren",

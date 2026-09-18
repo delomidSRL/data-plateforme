@@ -13,7 +13,7 @@ const LIMIT_OPTIONS = [25, 50, 100];
 // upstream table, never the project's own materialized output, regardless of build state.
 // `dataset` is passed only from DatasetPanel — it unlocks the Module 11 extension "Exporter
 // en CSV" action, shown only for a materialized gold table.
-export default function DataPreviewPanel({ project, datasetId, dataset = null, forceSource = false }) {
+export default function DataPreviewPanel({ project, datasetId, dataset = null, forceSource = false, fetchPreview = null }) {
   const { t } = useTranslation();
   const showToast = useToast();
   const [limit, setLimit] = useState(50);
@@ -24,10 +24,15 @@ export default function DataPreviewPanel({ project, datasetId, dataset = null, f
   const [exportsKey, setExportsKey] = useState(0); // bump to refresh the recent-exports list
   const [expandedCell, setExpandedCell] = useState(null); // `${rowIdx}:${colName}` | null
 
+  // Module 18 §7 UX — `fetchPreview` lets a caller with no real MedallionDataset (the instant
+  // silver.typed_<name>/silver.structured_<name> preview) reuse this whole panel — same
+  // DataSampleOut shape, just a different endpoint — instead of duplicating the table/paging UI.
   const load = async () => {
     setLoading(true);
     try {
-      const res = await medallionApi.getDatasetPreview(project.id, datasetId, { limit, offset, source: forceSource });
+      const res = fetchPreview
+        ? await fetchPreview({ limit, offset })
+        : await medallionApi.getDatasetPreview(project.id, datasetId, { limit, offset, source: forceSource });
       setData(res);
     } catch {
       setData({ status: "unreachable", columns: [], rows: [], truncated: false, target: null });

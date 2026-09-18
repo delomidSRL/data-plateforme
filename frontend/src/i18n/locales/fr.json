@@ -1149,7 +1149,8 @@
       "wizardStep": "Étape {{current}}/{{total}}",
       "wizardBack": "Précédent",
       "wizardNext": "Suivant",
-      "wizardFinish": "Terminer"
+      "wizardFinish": "Terminer",
+      "instantPreviewHint": "Aperçu instantané — matérialisé de manière synchrone à chaque sauvegarde, indépendamment du build Airflow."
     },
     "publish": {
       "tab": "Publier",

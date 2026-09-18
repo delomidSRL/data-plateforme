@@ -1149,7 +1149,8 @@
       "wizardStep": "Step {{current}}/{{total}}",
       "wizardBack": "Back",
       "wizardNext": "Next",
-      "wizardFinish": "Finish"
+      "wizardFinish": "Finish",
+      "instantPreviewHint": "Instant preview — materialized synchronously on every save, independent of the Airflow build."
     },
     "publish": {
       "tab": "Publish",

@@ -15,6 +15,7 @@ import ThreeColumnView from "./ThreeColumnView.jsx";
 import DatasetPanel from "./DatasetPanel.jsx";
 import OriginPanel from "./OriginPanel.jsx";
 import StructurationPopup from "./StructurationPopup.jsx";
+import SilverPreviewPopup from "./SilverPreviewPopup.jsx";
 import PromotionDrawer from "./PromotionDrawer.jsx";
 import RunsTab from "./RunsTab.jsx";
 import QualityTab from "./QualityTab.jsx";
@@ -71,6 +72,7 @@ export default function ProjectDetail({ readOnly = false }) {
     setStructurationStage(stage);
     setStructurationGuided(guided);
   };
+  const [silverPreviewTarget, setSilverPreviewTarget] = useState(null); // Module 18 §7 UX — {datasetId, stage} | null
   const [hasProdEnvironment, setHasProdEnvironment] = useState(false); // Module 17 §5.3.1
   const [hasProdBinding, setHasProdBinding] = useState(false);
   const [promotionOpen, setPromotionOpen] = useState(false);
@@ -480,6 +482,7 @@ export default function ProjectDetail({ readOnly = false }) {
             <LineageCanvas
               nodes={lineage.nodes} edges={lineage.edges} selectedId={selectedDataset?.id} onSelect={handleSelectNode}
               projectId={project.id} onOpenStructuration={openStructuration}
+              onOpenSilverPreview={(datasetId, stage) => setSilverPreviewTarget({ datasetId, stage })}
               qualityByDataset={qualityByDataset} publishedByDataset={publishedByDataset} dashboardByDataset={dashboardByDataset}
             />
           ) : (
@@ -567,6 +570,16 @@ export default function ProjectDetail({ readOnly = false }) {
           <StructurationPopup
             project={project} dataset={structurationDataset} stage={structurationStage} guided={structurationGuided}
             onClose={() => { setStructurationTargetId(null); setStructurationStage(null); setStructurationGuided(false); }}
+          />
+        ) : null;
+      })()}
+
+      {silverPreviewTarget != null && (() => {
+        const bronzeDataset = datasets.find((d) => d.id === silverPreviewTarget.datasetId);
+        return bronzeDataset ? (
+          <SilverPreviewPopup
+            project={project} bronzeDatasetId={bronzeDataset.id} bronzeName={bronzeDataset.name} stage={silverPreviewTarget.stage}
+            onClose={() => setSilverPreviewTarget(null)}
           />
         ) : null;
       })()}

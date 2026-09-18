@@ -345,6 +345,35 @@ def get_dataset_preview(
     )
 
 
+@router.get("/{pid}/datasets/{did}/structuration/preview", response_model=DataSampleOut)
+def preview_structuration_silver_table(
+    did: int, stage: str, limit: int = preview.PREVIEW_DEFAULT_LIMIT, offset: int = 0,
+    db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project),
+):
+    """UX ask — silver.typed_<name>/silver.structured_<name> (materialize_typed_structured_sync)
+    aren't MedallionDataset rows, so get_dataset_preview can't resolve them. Reuses the exact
+    same low-level sampler (preview.attempt_sample) against a schema+table derived server-side
+    from the bronze dataset's own name — never a client-supplied table string — restricted to
+    the two literal stages that mechanism ever creates."""
+    if stage not in ("typed", "structured"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Étape invalide.")
+    dataset = _get_dataset(db, project.id, did)
+    warehouse = db.get(DataSource, project.warehouse_source_id)
+    limit = max(1, min(limit, preview.PREVIEW_MAX_ROWS))
+    outcome = preview.attempt_sample(warehouse, "silver", f"{stage}_{dataset.name}", "materialized", limit, offset) if warehouse else None
+    if outcome is None:
+        outcome = (
+            preview.PreviewOutcome(status="not_found", message="Aucun warehouse configuré pour ce projet.")
+            if warehouse is None else preview.PreviewOutcome(status="not_materialized")
+        )
+    return DataSampleOut(
+        status=outcome.status, message=outcome.message,
+        columns=[DataSampleColumnOut(**c) for c in (outcome.columns or [])],
+        rows=outcome.rows or [], truncated=outcome.truncated,
+        target=DataSampleTargetOut(kind=outcome.target.kind, schema_name=outcome.target.schema_name, table=outcome.target.table, source_name=outcome.target.source_name) if outcome.target else None,
+    )
+
+
 def _structuration_out(row: PayloadStructuration) -> StructurationOut:
     return StructurationOut(
         dataset_id=row.dataset_id, payload_column=row.payload_column, column_mapping=row.column_mapping,

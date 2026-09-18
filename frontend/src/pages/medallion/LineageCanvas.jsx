@@ -60,6 +60,7 @@ function OriginNode({ data }) {
 }
 
 function DatasetNode({ data }) {
+  const { t } = useTranslation();
   return (
     <div
       className="card"
@@ -91,6 +92,17 @@ function DatasetNode({ data }) {
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontFamily: "var(--font-m)" }}>{data.layer}</div>
+        {data.previewStageLabel && (
+          // Module 18 §7 UX — silver.typed_<name>/silver.structured_<name>
+          // (materialize_typed_structured_sync): a real silver node, same design as any other,
+          // just flagged ember/orange since it's an instant preview, not a registered dataset.
+          <span
+            className="badge" title={t("medallion.structuration.instantPreviewHint")}
+            style={{ fontSize: 9.5, padding: "1px 6px", border: "1px solid var(--ember)", color: "var(--ember)", background: "var(--ember-soft)" }}
+          >
+            {data.previewStageLabel}
+          </span>
+        )}
         {data.transformType === "python" && (
           <span className="badge badge-accent" style={{ fontSize: 9.5, padding: "1px 6px" }}>{data.mlObjectiveLabel}</span>
         )}
@@ -104,7 +116,7 @@ function DatasetNode({ data }) {
       <div style={{ fontWeight: 600, fontSize: 13.5, marginTop: 2 }}>{data.name}</div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
         <span>{data.lastRowCount != null ? data.rowsLabel : "—"}</span>
-        {data.layer !== "bronze" && (
+        {data.layer !== "bronze" && !data.isInstantPreview && (
           <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <StatusDot color={TEST_COLOR[data.testStatus] || TEST_COLOR.none} /> {data.testsLabel}
           </span>
@@ -198,7 +210,7 @@ const nodeTypes = {
   structurationStage: StructurationStageNode, structurationQuarantine: StructurationQuarantineNode,
 };
 
-export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSelect, selectedId, projectId, onOpenStructuration, qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {} }) {
+export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSelect, selectedId, projectId, onOpenStructuration, onOpenSilverPreview, qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {} }) {
   const { t, i18n } = useTranslation();
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
   const publishedLabel = t("medallion.publish.badge");
@@ -311,6 +323,38 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
           }
           flowEdges.push({ id: `${stageIds[stageIds.length - 1]}-${quarantineId}`, source: stageIds[stageIds.length - 1], target: quarantineId, animated: false, style: edgeStyle(false, true) });
 
+          // Module 18 §7 UX — materialize_typed_structured_sync's instant preview: real silver
+          // nodes (same DatasetNode design, just ember-badged), hanging off "02 typed"/
+          // "03 standardized" since that's exactly what each one is a synchronous copy of.
+          // Never a MedallionDataset — clicking opens a live sample straight from the
+          // warehouse (structuration/preview), not anything read from rawNodes/rawEdges.
+          const typedStageId = stageIds[1];
+          const standardizedStageId = stageIds[2];
+          const silverTypedId = `silver-typed-${e.source}`;
+          const silverStructuredId = `silver-structured-${e.source}`;
+          flowNodes.push({
+            id: silverTypedId,
+            type: "dataset",
+            position: { x: STAGE_X.typed, y: y + QUARANTINE_Y_OFFSET },
+            data: {
+              layer: "silver", name: `typed_${source.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
+              previewStageLabel: "typed", isInstantPreview: true,
+              selected: false, onClick: () => onOpenSilverPreview?.(e.source, "typed"),
+            },
+          });
+          flowNodes.push({
+            id: silverStructuredId,
+            type: "dataset",
+            position: { x: STAGE_X.standardized, y: y + QUARANTINE_Y_OFFSET },
+            data: {
+              layer: "silver", name: `structured_${source.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
+              previewStageLabel: "structured", isInstantPreview: true,
+              selected: false, onClick: () => onOpenSilverPreview?.(e.source, "structured"),
+            },
+          });
+          flowEdges.push({ id: `${typedStageId}-${silverTypedId}`, source: typedStageId, target: silverTypedId, animated: false, style: edgeStyle(true) });
+          flowEdges.push({ id: `${standardizedStageId}-${silverStructuredId}`, source: standardizedStageId, target: silverStructuredId, animated: false, style: edgeStyle(true) });
+
           structurationChainByBronze.set(e.source, validatedId);
         }
         flowEdges.push({ id: `${validatedId}-${e.target}`, source: validatedId, target: String(e.target), animated: false, style: edgeStyle(false) });
@@ -322,7 +366,7 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
       });
     });
     return { nodes: flowNodes, edges: flowEdges };
-  }, [rawNodes, rawEdges, selectedId, projectId, onOpenStructuration, qualityByDataset, publishedByDataset, dashboardByDataset, publishedLabel, dashboardLabel, i18n.language, t]);
+  }, [rawNodes, rawEdges, selectedId, projectId, onOpenStructuration, onOpenSilverPreview, qualityByDataset, publishedByDataset, dashboardByDataset, publishedLabel, dashboardLabel, i18n.language, t]);
 
   return (
     <div style={{ height: 480, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>

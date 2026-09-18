@@ -61,10 +61,12 @@ def _source_target(db: Session, dataset: MedallionDataset) -> tuple[DataSource |
     return source, schema_name, table
 
 
-def _attempt(source: DataSource | None, schema_name: str | None, table: str | None, kind: str, limit: int, offset: int) -> PreviewOutcome | None:
+def attempt_sample(source: DataSource | None, schema_name: str | None, table: str | None, kind: str, limit: int, offset: int) -> PreviewOutcome | None:
     """Try to sample one candidate target. Returns None (not an error) when the table simply
     doesn't exist yet there — the caller decides whether to fall back to another candidate or
-    report `not_materialized`."""
+    report `not_materialized`. Public (not dataset-scoped): also reused by the structuration
+    preview route to sample silver.typed_<name>/silver.structured_<name>, which aren't
+    MedallionDataset rows and so never go through resolve_and_sample below."""
     if source is None or not schema_name or not table:
         return None
     try:
@@ -98,7 +100,7 @@ def resolve_and_sample(db: Session, project: MedallionProject, dataset: Medallio
 
     if prefer_source:
         source, schema_name, table = _source_target(db, dataset)
-        outcome = _attempt(source, schema_name, table, "source", limit, offset)
+        outcome = attempt_sample(source, schema_name, table, "source", limit, offset)
         if outcome is not None:
             return outcome
         if source is None:
@@ -108,7 +110,7 @@ def resolve_and_sample(db: Session, project: MedallionProject, dataset: Medallio
     schema_name = SCHEMA_BY_LAYER[dataset.layer]
     table = table_name(dataset)
     warehouse = db.get(DataSource, project.warehouse_source_id)
-    outcome = _attempt(warehouse, schema_name, table, "materialized", limit, offset)
+    outcome = attempt_sample(warehouse, schema_name, table, "materialized", limit, offset)
     if outcome is not None:
         return outcome
     if warehouse is None:
@@ -117,7 +119,7 @@ def resolve_and_sample(db: Session, project: MedallionProject, dataset: Medallio
     # Not materialized yet — for bronze, the upstream source is still worth showing (étape 2).
     if dataset.layer == MedallionLayer.bronze and dataset.source_id:
         source, src_schema, src_table = _source_target(db, dataset)
-        source_outcome = _attempt(source, src_schema, src_table, "source", limit, offset)
+        source_outcome = attempt_sample(source, src_schema, src_table, "source", limit, offset)
         if source_outcome is not None:
             return source_outcome
 

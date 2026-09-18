@@ -13,3 +13,10 @@ export const listQuarantine = (pid, did, { column, limit = 50, offset = 0 } = {}
   return apiFetch(`${base}/${pid}/datasets/${did}/structuration/quarantine?${params.toString()}`);
 };
 export const getQuarantineSummary = (pid, did) => apiFetch(`${base}/${pid}/datasets/${did}/structuration/quarantine/summary`);
+
+// Module 18 §7 UX — instant preview of silver.typed_<name>/silver.structured_<name>
+// (materialize_typed_structured_sync), same response shape as medallionApi.getDatasetPreview.
+export const previewStructurationTable = (pid, did, stage, { limit = 50, offset = 0 } = {}) => {
+  const params = new URLSearchParams({ stage, limit: String(limit), offset: String(offset) });
+  return apiFetch(`${base}/${pid}/datasets/${did}/structuration/preview?${params.toString()}`);
+};
