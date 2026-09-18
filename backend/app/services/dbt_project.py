@@ -200,9 +200,12 @@ def generate_project_files(
     table, PK/NOT NULL enforced, not bronze's own "never exclude a row" surface), the first
     reading `{{ source('bronze', name) }}` (the same, unchanged bronze ingestion — §11.1), the
     second `ref()`-ing the first. 03_standardized onward stay in `bronze`, `ref()`-ing 02_typed
-    across that schema boundary transparently. A dataset absent from this map (no contract yet,
-    or not payload-backed) gets nothing extra — additive only, zero regression for every
-    project that doesn't use this feature.
+    across that schema boundary transparently — unless a real, hand-written silver dataset
+    already claims the `03_standardized_<name>` model name (the "+" on 02_typed's custom SQL
+    editor), in which case that one wins and the no-code bronze version is skipped entirely
+    (two dbt models can't share a name). A dataset absent from this map (no contract yet, or
+    not payload-backed) gets nothing extra — additive only, zero regression for every project
+    that doesn't use this feature.
 
     Module 16 extension §4 — `dbt_test_renderer.render()` is replayed on EVERY generation
     (build, preview, export alike), never a separate write path: a project that materializes
@@ -227,6 +230,16 @@ def generate_project_files(
     # unconditionally (not opt-in per stage): an empty standardize/quality_flags list is a
     # no-op passthrough at each stage, so this is additive for every contract that predates
     # Module 18, zero regression for 01/02-only projects.
+    # UX ask — the "+" on a 02_typed canvas node (DatasetPanel) lets an engineer author their
+    # own 03_standardized_<name> as a real, hand-written silver dataset instead of the no-code,
+    # per-field "standardize" ops. When one exists, it must WIN outright: dbt rejects two
+    # models sharing one name ("change the name of one of these resources") — a real bug an
+    # engineer hit as soon as they used the custom-SQL path on a bronze that still had its
+    # auto-rendered bronze version too. Checked by dbt_model_name (silver/gold_dbt's own
+    # uniqueness key), not by MedallionDataset.name, since dbt_model_name is what actually
+    # determines the generated file/model name.
+    custom_model_names = {d.dbt_model_name for d in (silver + gold_dbt) if d.dbt_model_name}
+
     structuration_vars: dict[str, list] = {}
     structuration_models: dict[str, str] = {}
     all_quality_flags: list[dict] = []
@@ -234,11 +247,14 @@ def generate_project_files(
         structuration = structurations.get(ds.id)
         if structuration is None:
             continue
+        standardized_model_name = f"03_standardized_{ds.name}"
+        has_custom_standardized = standardized_model_name in custom_model_names
         try:
             rendered = payload_structure.render_unpacked_typed_models(structuration.column_mapping, ds.name)
-            standardized_sql = payload_structure.render_standardized_model(structuration.column_mapping, ds.name)
             annotated_sql = payload_structure.render_annotated_model(structuration.quality_flags, ds.name)
             validated_quarantine = payload_structure.render_validated_quarantine_models(ds.name)
+            if not has_custom_standardized:
+                standardized_sql = payload_structure.render_standardized_model(structuration.column_mapping, ds.name)
         except payload_structure.PayloadStructureError as exc:
             # A contract that fails to re-render at build time (e.g. a field removed from the
             # payload since it was written) must not silently skip structuration nor crash the
@@ -254,7 +270,11 @@ def generate_project_files(
         # pulls its now-silver upstream (01/02) in first, same task, correct order.
         structuration_models[f"models/silver/01_unpacked_{ds.name}.sql"] = rendered["unpacked_sql"]
         structuration_models[f"models/silver/02_typed_{ds.name}.sql"] = rendered["typed_sql"]
-        structuration_models[f"models/bronze/03_standardized_{ds.name}.sql"] = standardized_sql
+        if not has_custom_standardized:
+            structuration_models[f"models/bronze/03_standardized_{ds.name}.sql"] = standardized_sql
+        # 04_annotated keeps reading {{ ref('03_standardized_<name>') }} regardless of which one
+        # exists — ref() resolves by model name, so it transparently picks up the custom silver
+        # version when there is one, the auto-rendered bronze version otherwise.
         structuration_models[f"models/bronze/04_annotated_{ds.name}.sql"] = annotated_sql
         structuration_models[f"models/bronze/05_validated_{ds.name}.sql"] = validated_quarantine["validated_sql"]
         structuration_models[f"models/bronze/05_quarantine_{ds.name}.sql"] = validated_quarantine["quarantine_sql"]
