@@ -444,6 +444,10 @@ class LineageNode(BaseModel):
     # Module 6 extension (payload & structuration) — bronze dataset nodes only; drives the
     # canvas's synthetic "structuration" node between this bronze and any silver reading it.
     payload_backed: bool = False
+    # Module 18 §7 UX — true once this bronze has an actually-saved contract (not merely
+    # payload-backed): the canvas only shows the 01..05 chain / instant unpacked+typed preview
+    # once this is true, never just because the bronze happens to be payload-backed.
+    structured: bool = False
 
 
 class LineageEdge(BaseModel):

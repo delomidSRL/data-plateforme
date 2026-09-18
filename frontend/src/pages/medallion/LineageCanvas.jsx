@@ -1,34 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { ReactFlow, Background, Controls, Handle, Position } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { StatusDot } from "../../components/ui/Badge.jsx";
-import { Icon } from "../../components/icons.jsx";
-import * as structurationApi from "../../api/structuration.js";
 
 const ORIGIN_X = -320;
 const LAYER_X = { bronze: 40, silver: 760, gold: 1100 };
 const LAYER_COLOR = { bronze: "#a9702f", silver: "#5b7a94", gold: "#c98a1c" };
 const TEST_COLOR = { passed: "#2f9e6e", failed: "#c53d3d", none: "#c7cdd3" };
 const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "Oracle", minio: "MinIO" };
-
-// Module 18 §7 — the 01..05 declarative refinement chain, spliced client-side (never
-// persisted) between a payload-backed bronze and each silver reading it. Same "derived,
-// computed client-side" spirit as OriginNode / the old single structuration node it replaces.
-// Names/order mirror the actual model files (01_unpacked_.. through 04_annotated_..); 04
-// fans out into the two mirror-predicate terminals (05_validated_.., which silver reads, and
-// 05_quarantine_.., a dead end kept for review — see render_validated_quarantine_models).
-// `key` doubles as the stage id passed to onOpenStructuration — StructurationPanel uses it
-// both to jump to the right popup block and to progressively reveal only the contract
-// columns that stage has actually decided by then (see its STAGE_LEVEL).
-const STRUCTURATION_STAGES = [
-  { key: "unpacked", num: "01" },
-  { key: "typed", num: "02" },
-  { key: "standardized", num: "03" },
-  { key: "annotated", num: "04" },
-];
-const STAGE_X = { unpacked: 160, typed: 280, standardized: 400, annotated: 520, validated: 640 };
-const QUARANTINE_Y_OFFSET = 46;
+// Module 18 §7 UX — deliberately reduced (for now) to just the two stages the guided "+"
+// popup actually configures (see StructurationPanel's WIZARD_STAGES). 03/04/05
+// (standardized/annotated/validated/quarantine) are dropped from the canvas, not the
+// platform: still fully configurable from the bronze dataset's own "Structuration" tab
+// (DatasetPanel, unconditional full view) — this only trims what shows up here.
+const PREVIEW_X = { unpacked: 220, typed: 460 };
 
 function OriginNode({ data }) {
   return (
@@ -73,9 +59,8 @@ function DatasetNode({ data }) {
     >
       {data.layer === "bronze" && data.payloadBacked && (
         // Module 6 extension (payload & structuration) — a shortcut straight to profiling,
-        // available the moment the bronze node exists (unlike the 01..05 chain spliced into
-        // a bronze->silver edge below, which needs a silver to already reference this bronze
-        // as upstream).
+        // available the moment the bronze node exists. Module 18 §7 UX — its guided popup is
+        // what actually produces the "unpacked"/"typed" preview nodes below, once saved.
         <button
           type="button"
           title="Application data quality"
@@ -93,8 +78,8 @@ function DatasetNode({ data }) {
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontFamily: "var(--font-m)" }}>{data.layer}</div>
         {data.previewStageLabel && (
-          // Module 18 §7 UX — silver.typed_<name>/silver.structured_<name>
-          // (materialize_typed_structured_sync): a real silver node, same design as any other,
+          // Module 18 §7 UX — silver.unpacked_<name>/silver.typed_<name>
+          // (materialize_unpacked_typed_sync): a real silver node, same design as any other,
           // just flagged ember/orange since it's an instant preview, not a registered dataset.
           <span
             className="badge" title={t("medallion.structuration.instantPreviewHint")}
@@ -135,82 +120,9 @@ function DatasetNode({ data }) {
   );
 }
 
-// Module 18 §7 — one pill per 01..04 stage, plus the "05 validated" terminal that feeds
-// silver (tone "success"). Static: no fetch, just a label and an explanatory tooltip: every
-// stage in the chain opens the same structuration popup on click, so there's nothing stage-
-// specific to load here.
-function StructurationStageNode({ data }) {
-  const success = data.tone === "success";
-  const color = success ? TEST_COLOR.passed : "var(--ember)";
-  return (
-    <div
-      className="card"
-      style={{
-        padding: "6px 10px", minWidth: 100, textAlign: "center", cursor: "pointer",
-        border: `1.5px solid ${color}`, background: success ? "rgba(47,158,110,.08)" : "var(--ember-soft)",
-        boxShadow: data.selected ? "0 0 0 2px var(--ember)" : "none",
-      }}
-      onClick={data.onClick}
-      title={data.hint}
-    >
-      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, color }}>
-        {data.icon}
-        <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "var(--font-m)" }}>{data.label}</span>
-      </div>
-      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
-    </div>
-  );
-}
+const nodeTypes = { dataset: DatasetNode, origin: OriginNode };
 
-// Module 18 §7 — the "05 quarantine" terminal: the one dead end in the chain (no outgoing
-// edge, rows just sit here for review/repair), and the only stage node that still fetches
-// anything — the quarantine badge, lazily, straight from the endpoint the popup itself uses.
-function StructurationQuarantineNode({ data }) {
-  const { t } = useTranslation();
-  const [quarantineCount, setQuarantineCount] = useState(null);
-
-  useEffect(() => {
-    let alive = true;
-    structurationApi.getQuarantineSummary(data.projectId, data.bronzeId)
-      .then((s) => { if (alive) setQuarantineCount(s.total_quarantined); })
-      .catch(() => { if (alive) setQuarantineCount(null); });
-    return () => { alive = false; };
-  }, [data.projectId, data.bronzeId]);
-
-  const flagged = quarantineCount > 0;
-  return (
-    <div
-      className="card"
-      style={{
-        padding: "6px 10px", minWidth: 100, textAlign: "center", cursor: "pointer",
-        border: `1.5px solid ${flagged ? "var(--danger)" : "var(--border)"}`,
-        background: flagged ? "rgba(197,61,61,.07)" : "var(--bg)",
-        boxShadow: data.selected ? "0 0 0 2px var(--ember)" : "none",
-      }}
-      onClick={data.onClick}
-      title={data.hint}
-    >
-      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, color: flagged ? "var(--danger)" : "var(--text-muted)" }}>
-        {Icon.warn({ width: 12, height: 12 })}
-        <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "var(--font-m)" }}>{data.label}</span>
-      </div>
-      {flagged && (
-        <span className="badge badge-danger" style={{ fontSize: 9.5, padding: "1px 6px", marginTop: 4, display: "inline-block" }}>
-          {t("medallion.structuration.quarantineBadge", { count: quarantineCount })}
-        </span>
-      )}
-    </div>
-  );
-}
-
-const nodeTypes = {
-  dataset: DatasetNode, origin: OriginNode,
-  structurationStage: StructurationStageNode, structurationQuarantine: StructurationQuarantineNode,
-};
-
-export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSelect, selectedId, projectId, onOpenStructuration, onOpenSilverPreview, qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {} }) {
+export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSelect, selectedId, onOpenStructuration, onOpenSilverPreview, qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {} }) {
   const { t, i18n } = useTranslation();
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
   const publishedLabel = t("medallion.publish.badge");
@@ -259,82 +171,27 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
         });
       });
     }
-    const edgeStyle = (dashed, danger) => (danger
-      ? { stroke: "var(--danger)", strokeWidth: 1.5, strokeDasharray: "4 3", opacity: 0.8 }
-      : dashed
-        ? { stroke: "var(--text-muted)", strokeWidth: 1.5, strokeDasharray: "4 3" }
-        : { stroke: "var(--border)", strokeWidth: 1.5 });
+    const edgeStyle = (dashed) => (dashed
+      ? { stroke: "var(--text-muted)", strokeWidth: 1.5, strokeDasharray: "4 3" }
+      : { stroke: "var(--border)", strokeWidth: 1.5 });
     const flowEdges = [];
 
-    // Module 18 §7 — every payload-backed bronze gets the full 01..05 chain spliced onto it
-    // directly (never persisted, derived purely client-side — same spirit as origin nodes),
-    // regardless of whether any silver dataset references it yet: configuring/saving a
-    // contract (materialize_unpacked_typed_sync) doesn't wait for a downstream silver to
-    // exist, so the canvas shouldn't hide the result behind one either. A bronze feeding
-    // several silvers gets exactly one such chain, its "05 validated" terminal reused as the
-    // source for every one of those edges.
-    const structurationChainByBronze = new Map();
+    // Module 18 §7 UX — nothing shows up here until a contract is actually saved (n.structured,
+    // set once materialize_unpacked_typed_sync has run at least once) — never merely because
+    // the bronze happens to be payload-backed, and never gated on a downstream silver existing
+    // either: the "+" popup's own save is what creates silver.unpacked_<name>/silver.typed_<name>,
+    // so that's the only thing this waits on. Purely additive, client-side only — doesn't
+    // touch or replace the real bronze->silver edges below.
     for (const n of byLayer.bronze) {
-      if (!n.payload_backed) continue;
+      if (!n.structured) continue;
       const bronzeNode = flowNodes.find((fn) => fn.id === String(n.id));
       const y = bronzeNode.position.y;
-      const openPopup = (stageId) => () => onOpenStructuration?.(n.id, stageId);
-
-      const stageIds = STRUCTURATION_STAGES.map((stage) => `structuration-${stage.key}-${n.id}`);
-      STRUCTURATION_STAGES.forEach((stage, idx) => {
-        flowNodes.push({
-          id: stageIds[idx],
-          type: "structurationStage",
-          position: { x: STAGE_X[stage.key], y },
-          data: {
-            label: `${stage.num} ${stage.key}`, hint: t(`medallion.structuration.stageHint_${stage.key}`),
-            selected: false, onClick: openPopup(stage.key),
-          },
-        });
-      });
-
-      const validatedId = `structuration-validated-${n.id}`;
-      flowNodes.push({
-        id: validatedId,
-        type: "structurationStage",
-        position: { x: STAGE_X.validated, y },
-        data: {
-          label: "05 validated", hint: t("medallion.structuration.stageHint_validated"), tone: "success",
-          icon: Icon.check({ width: 11, height: 11 }), selected: false, onClick: openPopup("validated"),
-        },
-      });
-
-      const quarantineId = `structuration-quarantine-${n.id}`;
-      flowNodes.push({
-        id: quarantineId,
-        type: "structurationQuarantine",
-        position: { x: STAGE_X.validated, y: y + QUARANTINE_Y_OFFSET },
-        data: {
-          label: "05 quarantine", hint: t("medallion.structuration.stageHint_quarantine"),
-          projectId, bronzeId: n.id, selected: false, onClick: openPopup("quarantine"),
-        },
-      });
-
-      const chainIds = [String(n.id), ...stageIds, validatedId];
-      for (let k = 0; k < chainIds.length - 1; k++) {
-        flowEdges.push({ id: `${chainIds[k]}-${chainIds[k + 1]}`, source: chainIds[k], target: chainIds[k + 1], animated: false, style: edgeStyle(false) });
-      }
-      flowEdges.push({ id: `${stageIds[stageIds.length - 1]}-${quarantineId}`, source: stageIds[stageIds.length - 1], target: quarantineId, animated: false, style: edgeStyle(false, true) });
-
-      // Module 18 §7 UX — materialize_unpacked_typed_sync's instant preview: real silver
-      // nodes (same DatasetNode design, just ember-badged), hanging off "01 unpacked"/
-      // "02 typed" since that's exactly what each one is a synchronous copy of — created the
-      // moment the guided "+" popup's 2-step contract is saved, no build/DAG run required.
-      // Never a MedallionDataset — clicking opens a live sample straight from the warehouse
-      // (structuration/preview), not anything read from rawNodes/rawEdges.
-      const unpackedStageId = stageIds[0];
-      const typedStageId = stageIds[1];
       const silverUnpackedId = `silver-unpacked-${n.id}`;
       const silverTypedId = `silver-typed-${n.id}`;
       flowNodes.push({
         id: silverUnpackedId,
         type: "dataset",
-        position: { x: STAGE_X.unpacked, y: y + QUARANTINE_Y_OFFSET },
+        position: { x: PREVIEW_X.unpacked, y },
         data: {
           layer: "silver", name: `unpacked_${n.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
           previewStageLabel: "unpacked", isInstantPreview: true,
@@ -344,34 +201,25 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
       flowNodes.push({
         id: silverTypedId,
         type: "dataset",
-        position: { x: STAGE_X.typed, y: y + QUARANTINE_Y_OFFSET },
+        position: { x: PREVIEW_X.typed, y },
         data: {
           layer: "silver", name: `typed_${n.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
           previewStageLabel: "typed", isInstantPreview: true,
           selected: false, onClick: () => onOpenSilverPreview?.(n.id, "typed"),
         },
       });
-      flowEdges.push({ id: `${unpackedStageId}-${silverUnpackedId}`, source: unpackedStageId, target: silverUnpackedId, animated: false, style: edgeStyle(true) });
-      flowEdges.push({ id: `${typedStageId}-${silverTypedId}`, source: typedStageId, target: silverTypedId, animated: false, style: edgeStyle(true) });
-
-      structurationChainByBronze.set(n.id, validatedId);
+      flowEdges.push({ id: `${n.id}-${silverUnpackedId}`, source: String(n.id), target: silverUnpackedId, animated: false, style: edgeStyle(true) });
+      flowEdges.push({ id: `${silverUnpackedId}-${silverTypedId}`, source: silverUnpackedId, target: silverTypedId, animated: false, style: edgeStyle(true) });
     }
 
-    const byId = new Map(rawNodes.map((n) => [n.id, n]));
     rawEdges.forEach((e) => {
-      const validatedId = structurationChainByBronze.get(e.source);
-      const target = byId.get(e.target);
-      if (validatedId && target?.layer === "silver") {
-        flowEdges.push({ id: `${validatedId}-${e.target}`, source: validatedId, target: String(e.target), animated: false, style: edgeStyle(false) });
-        return;
-      }
       flowEdges.push({
         id: `${e.source}-${e.target}`, source: String(e.source), target: String(e.target),
         animated: false, style: edgeStyle(e.source < 0),
       });
     });
     return { nodes: flowNodes, edges: flowEdges };
-  }, [rawNodes, rawEdges, selectedId, projectId, onOpenStructuration, onOpenSilverPreview, qualityByDataset, publishedByDataset, dashboardByDataset, publishedLabel, dashboardLabel, i18n.language, t]);
+  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, qualityByDataset, publishedByDataset, dashboardByDataset, publishedLabel, dashboardLabel, i18n.language, t]);
 
   return (
     <div style={{ height: 480, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>

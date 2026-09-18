@@ -1099,12 +1099,13 @@ def build_lineage_graph(db: Session, datasets: list[MedallionDataset]) -> Lineag
     # here rather than per-node; drives the canvas's synthetic structuration node (§ the
     # extension's own canvas-UX addition, not in the original spec text).
     payload_backed = payload_structure.bulk_payload_backed(db, datasets)
+    structured = payload_structure.bulk_structured(db, datasets)
 
     nodes = [
         LineageNode(
             id=d.id, name=d.name, node_type="dataset", layer=d.layer, transform_type=d.transform_type, ml_objective=d.ml_objective,
             last_row_count=d.last_row_count, last_loaded_at=d.last_loaded_at, last_test_status=d.last_test_status,
-            payload_backed=payload_backed.get(d.id, False),
+            payload_backed=payload_backed.get(d.id, False), structured=structured.get(d.id, False),
         )
         for d in datasets
     ]

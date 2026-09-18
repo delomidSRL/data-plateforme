@@ -34,6 +34,7 @@ from app.core.security import decrypt_secret
 from app.models.data_source import DataSource, DataSourceType
 from app.models.file_import import FileImport, FileImportStatus, ImportMode
 from app.models.medallion import MedallionDataset, MedallionLayer
+from app.models.payload_structuration import PayloadStructuration
 from app.services import connections, schema_infer
 
 logger = logging.getLogger("app.payload_structure")
@@ -117,6 +118,23 @@ def bulk_payload_backed(db: Session, datasets: list[MedallionDataset]) -> dict[i
         schema_name, table = d.source_object.split(".", 1)
         result[d.id] = (d.source_id, schema_name, table) in payload_keys
     return result
+
+
+def bulk_structured(db: Session, datasets: list[MedallionDataset]) -> dict[int, bool]:
+    """Which of these datasets have an actually-saved (not just profiled) structuration
+    contract — same batched-query shape as bulk_payload_backed, driving the canvas's decision
+    to show the 01..05 chain / instant unpacked+typed preview at all (§7 UX: nothing shows
+    until a contract exists, not merely because the bronze happens to be payload-backed)."""
+    ids = [d.id for d in datasets]
+    if not ids:
+        return {}
+    rows = (
+        db.query(PayloadStructuration.dataset_id)
+        .filter(PayloadStructuration.dataset_id.in_(ids), PayloadStructuration.contract_hash.isnot(None))
+        .all()
+    )
+    structured_ids = {r[0] for r in rows}
+    return {d.id: d.id in structured_ids for d in datasets}
 
 
 def _connect_warehouse(warehouse: DataSource) -> "psycopg.Connection":
