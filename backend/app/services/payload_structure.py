@@ -507,10 +507,14 @@ _STANDARDIZE_EXPR = {
     "upper": lambda col: f"upper({col})",
     "lower": lambda col: f"lower({col})",
     "title_case": lambda col: f"initcap({col})",
-    "trim_collapse": lambda col: f"{{{{ clean_string({col}) }}}}",
-    "normalize_matching": lambda col: f"{{{{ normalize_for_matching({col}) }}}}",
-    "clean_vat": lambda col: f"{{{{ clean_vat({col}) }}}}",
-    "clean_phone": lambda col: f"{{{{ clean_phone({col}) }}}}",
+    # These four route through a Jinja macro (see STRUCTURATION_MACROS), so `col` must be
+    # quoted as a Jinja string literal — an unquoted `{{ clean_string(fax) }}` makes Jinja
+    # treat `fax` as an undefined *variable* (not the column name), which renders as an
+    # empty string and produces invalid SQL like `btrim()` (matches _flag_expr's `f'"{field}"'`).
+    "trim_collapse": lambda col: f'{{{{ clean_string("{col}") }}}}',
+    "normalize_matching": lambda col: f'{{{{ normalize_for_matching("{col}") }}}}',
+    "clean_vat": lambda col: f'{{{{ clean_vat("{col}") }}}}',
+    "clean_phone": lambda col: f'{{{{ clean_phone("{col}") }}}}',
     "url_prefix": lambda col: f"(CASE WHEN {col} IS NOT NULL AND {col} !~* '^https?://' THEN 'https://' || {col} ELSE {col} END)",
 }
 
