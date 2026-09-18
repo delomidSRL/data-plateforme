@@ -1139,7 +1139,12 @@
       "categoryElimination": "Bloquant (quarantaine)",
       "categoryInformative": "Informatif (validé quand même)",
       "removeFlag": "Supprimer cette règle",
-      "canvasHint": "Application data quality — profiler, standardiser, définir des règles de qualité et corriger les anomalies"
+      "stageHint_unpacked": "01 · Unpacked — chaque clé JSONB éclatée en une colonne texte brute, rien n'est encore interprété.",
+      "stageHint_typed": "02 · Typed — cast défensif vers le type cible ; les échecs sont tagués dans cast_issues, aucune ligne n'est exclue.",
+      "stageHint_standardized": "03 · Standardized — nettoyage de casse, d'espaces et de format (TVA, téléphone, URL…) appliqué champ par champ.",
+      "stageHint_annotated": "04 · Annotated — règles de qualité évaluées et taguées dans data_quality_flags.",
+      "stageHint_validated": "05 · Validated — lignes sans flag bloquant ; c'est ce que lit le silver.",
+      "stageHint_quarantine": "05 · Quarantine — lignes avec un flag bloquant, conservées ici pour être analysées et corrigées."
     },
     "publish": {
       "tab": "Publier",

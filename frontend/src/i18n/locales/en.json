@@ -1139,7 +1139,12 @@
       "categoryElimination": "Blocking (quarantine)",
       "categoryInformative": "Informational (still validated)",
       "removeFlag": "Remove this rule",
-      "canvasHint": "Application data quality — profile, standardize, define quality rules and fix anomalies"
+      "stageHint_unpacked": "01 · Unpacked — each JSONB key exploded into one raw text column, nothing parsed yet.",
+      "stageHint_typed": "02 · Typed — defensive cast to the target type; failures are tagged in cast_issues, no row is dropped.",
+      "stageHint_standardized": "03 · Standardized — casing, whitespace and format cleanup (VAT, phone, URL…) applied per field.",
+      "stageHint_annotated": "04 · Annotated — quality-flag rules evaluated and tagged in data_quality_flags.",
+      "stageHint_validated": "05 · Validated — rows with no blocking flag; this is what silver reads.",
+      "stageHint_quarantine": "05 · Quarantine — rows with a blocking flag, kept here for review and repair."
     },
     "publish": {
       "tab": "Publish",

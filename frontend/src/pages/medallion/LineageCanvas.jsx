@@ -7,11 +7,25 @@ import { Icon } from "../../components/icons.jsx";
 import * as structurationApi from "../../api/structuration.js";
 
 const ORIGIN_X = -320;
-const LAYER_X = { bronze: 40, silver: 380, gold: 720 };
-const STRUCTURATION_X = (LAYER_X.bronze + LAYER_X.silver) / 2;
+const LAYER_X = { bronze: 40, silver: 760, gold: 1100 };
 const LAYER_COLOR = { bronze: "#a9702f", silver: "#5b7a94", gold: "#c98a1c" };
 const TEST_COLOR = { passed: "#2f9e6e", failed: "#c53d3d", none: "#c7cdd3" };
 const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "Oracle", minio: "MinIO" };
+
+// Module 18 §7 — the 01..05 declarative refinement chain, spliced client-side (never
+// persisted) between a payload-backed bronze and each silver reading it. Same "derived,
+// computed client-side" spirit as OriginNode / the old single structuration node it replaces.
+// Names/order mirror the actual model files (01_unpacked_.. through 04_annotated_..); 04
+// fans out into the two mirror-predicate terminals (05_validated_.., which silver reads, and
+// 05_quarantine_.., a dead end kept for review — see render_validated_quarantine_models).
+const STRUCTURATION_STAGES = [
+  { key: "unpacked", num: "01" },
+  { key: "typed", num: "02" },
+  { key: "standardized", num: "03" },
+  { key: "annotated", num: "04" },
+];
+const STAGE_X = { unpacked: 160, typed: 280, standardized: 400, annotated: 520, validated: 640 };
+const QUARANTINE_Y_OFFSET = 46;
 
 function OriginNode({ data }) {
   return (
@@ -55,9 +69,9 @@ function DatasetNode({ data }) {
     >
       {data.layer === "bronze" && data.payloadBacked && (
         // Module 6 extension (payload & structuration) — a shortcut straight to profiling,
-        // available the moment the bronze node exists (unlike the synthetic "structuration"
-        // node spliced into a bronze->silver edge below, which needs a silver to already
-        // reference this bronze as upstream).
+        // available the moment the bronze node exists (unlike the 01..05 chain spliced into
+        // a bronze->silver edge below, which needs a silver to already reference this bronze
+        // as upstream).
         <button
           type="button"
           title="Application data quality"
@@ -106,12 +120,38 @@ function DatasetNode({ data }) {
   );
 }
 
-// Module 6 extension (payload & structuration) — a small synthetic node the canvas inserts
-// between a payload-backed bronze and any silver reading it (never persisted — same "derived,
-// computed client-side" spirit as OriginNode). Opens the profiling/quarantine popup on click;
-// the quarantine badge is fetched lazily, once, straight from the endpoint the panel itself
-// uses — best-effort, never blocks rendering the node.
-function StructurationNode({ data }) {
+// Module 18 §7 — one pill per 01..04 stage, plus the "05 validated" terminal that feeds
+// silver (tone "success"). Static: no fetch, just a label and an explanatory tooltip: every
+// stage in the chain opens the same structuration popup on click, so there's nothing stage-
+// specific to load here.
+function StructurationStageNode({ data }) {
+  const success = data.tone === "success";
+  const color = success ? TEST_COLOR.passed : "var(--ember)";
+  return (
+    <div
+      className="card"
+      style={{
+        padding: "6px 10px", minWidth: 100, textAlign: "center", cursor: "pointer",
+        border: `1.5px solid ${color}`, background: success ? "rgba(47,158,110,.08)" : "var(--ember-soft)",
+        boxShadow: data.selected ? "0 0 0 2px var(--ember)" : "none",
+      }}
+      onClick={data.onClick}
+      title={data.hint}
+    >
+      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, color }}>
+        {data.icon}
+        <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "var(--font-m)" }}>{data.label}</span>
+      </div>
+      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+    </div>
+  );
+}
+
+// Module 18 §7 — the "05 quarantine" terminal: the one dead end in the chain (no outgoing
+// edge, rows just sit here for review/repair), and the only stage node that still fetches
+// anything — the quarantine badge, lazily, straight from the endpoint the popup itself uses.
+function StructurationQuarantineNode({ data }) {
   const { t } = useTranslation();
   const [quarantineCount, setQuarantineCount] = useState(null);
 
@@ -123,33 +163,37 @@ function StructurationNode({ data }) {
     return () => { alive = false; };
   }, [data.projectId, data.bronzeId]);
 
+  const flagged = quarantineCount > 0;
   return (
     <div
       className="card"
       style={{
-        padding: "8px 12px", minWidth: 130, textAlign: "center", cursor: "pointer",
-        border: "1.5px solid var(--ember)", background: "var(--ember-soft)",
+        padding: "6px 10px", minWidth: 100, textAlign: "center", cursor: "pointer",
+        border: `1.5px solid ${flagged ? "var(--danger)" : "var(--border)"}`,
+        background: flagged ? "rgba(197,61,61,.07)" : "var(--bg)",
         boxShadow: data.selected ? "0 0 0 2px var(--ember)" : "none",
       }}
       onClick={data.onClick}
-      title={t("medallion.structuration.canvasHint")}
+      title={data.hint}
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, color: "var(--ember)" }}>
-        {Icon.wand({ width: 13, height: 13 })}
-        <span style={{ fontSize: 11.5, fontWeight: 600 }}>{data.label}</span>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, color: flagged ? "var(--danger)" : "var(--text-muted)" }}>
+        {Icon.warn({ width: 12, height: 12 })}
+        <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "var(--font-m)" }}>{data.label}</span>
       </div>
-      {quarantineCount > 0 && (
+      {flagged && (
         <span className="badge badge-danger" style={{ fontSize: 9.5, padding: "1px 6px", marginTop: 4, display: "inline-block" }}>
           {t("medallion.structuration.quarantineBadge", { count: quarantineCount })}
         </span>
       )}
-      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
     </div>
   );
 }
 
-const nodeTypes = { dataset: DatasetNode, origin: OriginNode, structuration: StructurationNode };
+const nodeTypes = {
+  dataset: DatasetNode, origin: OriginNode,
+  structurationStage: StructurationStageNode, structurationQuarantine: StructurationQuarantineNode,
+};
 
 export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSelect, selectedId, projectId, onOpenStructuration, qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {} }) {
   const { t, i18n } = useTranslation();
@@ -200,38 +244,73 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
         });
       });
     }
-    // Module 6 extension (payload & structuration) — every bronze->silver edge whose bronze
-    // is payload-backed gets a small synthetic "structuration" node spliced in between (never
-    // persisted, derived purely client-side — same spirit as origin nodes). A bronze feeding
-    // several silvers gets exactly one such node, reused for every one of those edges.
+    // Module 18 §7 — every bronze->silver edge whose bronze is payload-backed gets the full
+    // 01..05 chain spliced in between (never persisted, derived purely client-side — same
+    // spirit as origin nodes). A bronze feeding several silvers gets exactly one such chain,
+    // its "05 validated" terminal reused as the source for every one of those edges.
     const byId = new Map(rawNodes.map((n) => [n.id, n]));
-    const structurationNodeIdByBronze = new Map();
-    const edgeStyle = (dashed) => (dashed
-      ? { stroke: "var(--text-muted)", strokeWidth: 1.5, strokeDasharray: "4 3" }
-      : { stroke: "var(--border)", strokeWidth: 1.5 });
+    const structurationChainByBronze = new Map();
+    const edgeStyle = (dashed, danger) => (danger
+      ? { stroke: "var(--danger)", strokeWidth: 1.5, strokeDasharray: "4 3", opacity: 0.8 }
+      : dashed
+        ? { stroke: "var(--text-muted)", strokeWidth: 1.5, strokeDasharray: "4 3" }
+        : { stroke: "var(--border)", strokeWidth: 1.5 });
 
     const flowEdges = [];
     rawEdges.forEach((e, i) => {
       const source = byId.get(e.source);
       const target = byId.get(e.target);
       if (source?.node_type === "dataset" && source.layer === "bronze" && source.payload_backed && target?.layer === "silver") {
-        let structId = structurationNodeIdByBronze.get(e.source);
-        if (!structId) {
-          structId = `structuration-${e.source}`;
-          structurationNodeIdByBronze.set(e.source, structId);
+        let validatedId = structurationChainByBronze.get(e.source);
+        if (!validatedId) {
           const bronzeNode = flowNodes.find((n) => n.id === String(e.source));
+          const y = bronzeNode ? bronzeNode.position.y : 20 + i * 100;
+          const openPopup = () => onOpenStructuration?.(e.source);
+
+          const stageIds = STRUCTURATION_STAGES.map((stage) => `structuration-${stage.key}-${e.source}`);
+          STRUCTURATION_STAGES.forEach((stage, idx) => {
+            flowNodes.push({
+              id: stageIds[idx],
+              type: "structurationStage",
+              position: { x: STAGE_X[stage.key], y },
+              data: {
+                label: `${stage.num} ${stage.key}`, hint: t(`medallion.structuration.stageHint_${stage.key}`),
+                selected: false, onClick: openPopup,
+              },
+            });
+          });
+
+          validatedId = `structuration-validated-${e.source}`;
           flowNodes.push({
-            id: structId,
-            type: "structuration",
-            position: { x: STRUCTURATION_X, y: bronzeNode ? bronzeNode.position.y : 20 + i * 100 },
+            id: validatedId,
+            type: "structurationStage",
+            position: { x: STAGE_X.validated, y },
             data: {
-              label: t("medallion.structuration.tab"), projectId, bronzeId: e.source,
-              selected: false, onClick: () => onOpenStructuration?.(e.source),
+              label: "05 validated", hint: t("medallion.structuration.stageHint_validated"), tone: "success",
+              icon: Icon.check({ width: 11, height: 11 }), selected: false, onClick: openPopup,
             },
           });
+
+          const quarantineId = `structuration-quarantine-${e.source}`;
+          flowNodes.push({
+            id: quarantineId,
+            type: "structurationQuarantine",
+            position: { x: STAGE_X.validated, y: y + QUARANTINE_Y_OFFSET },
+            data: {
+              label: "05 quarantine", hint: t("medallion.structuration.stageHint_quarantine"),
+              projectId, bronzeId: e.source, selected: false, onClick: openPopup,
+            },
+          });
+
+          const chainIds = [String(e.source), ...stageIds, validatedId];
+          for (let k = 0; k < chainIds.length - 1; k++) {
+            flowEdges.push({ id: `${chainIds[k]}-${chainIds[k + 1]}`, source: chainIds[k], target: chainIds[k + 1], animated: false, style: edgeStyle(false) });
+          }
+          flowEdges.push({ id: `${stageIds[stageIds.length - 1]}-${quarantineId}`, source: stageIds[stageIds.length - 1], target: quarantineId, animated: false, style: edgeStyle(false, true) });
+
+          structurationChainByBronze.set(e.source, validatedId);
         }
-        flowEdges.push({ id: `${e.source}-${structId}`, source: String(e.source), target: structId, animated: false, style: edgeStyle(false) });
-        flowEdges.push({ id: `${structId}-${e.target}`, source: structId, target: String(e.target), animated: false, style: edgeStyle(false) });
+        flowEdges.push({ id: `${validatedId}-${e.target}`, source: validatedId, target: String(e.target), animated: false, style: edgeStyle(false) });
         return;
       }
       flowEdges.push({

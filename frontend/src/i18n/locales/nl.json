@@ -1139,7 +1139,12 @@
       "categoryElimination": "Blokkerend (quarantaine)",
       "categoryInformative": "Informatief (toch gevalideerd)",
       "removeFlag": "Deze regel verwijderen",
-      "canvasHint": "Application data quality — profileren, standaardiseren, kwaliteitsregels definiëren en afwijkingen oplossen"
+      "stageHint_unpacked": "01 · Unpacked — elke JSONB-sleutel uitgepakt naar één ruwe tekstkolom, nog niets geïnterpreteerd.",
+      "stageHint_typed": "02 · Typed — defensieve cast naar het doeltype; mislukkingen worden getagd in cast_issues, geen enkele rij wordt verwijderd.",
+      "stageHint_standardized": "03 · Standardized — opschoning van hoofdletters, spaties en formaat (btw, telefoon, URL…) per veld.",
+      "stageHint_annotated": "04 · Annotated — kwaliteitsregels geëvalueerd en getagd in data_quality_flags.",
+      "stageHint_validated": "05 · Validated — rijen zonder blokkerende flag; dit leest de silver-laag.",
+      "stageHint_quarantine": "05 · Quarantine — rijen met een blokkerende flag, hier bewaard om te controleren en te herstellen."
     },
     "publish": {
       "tab": "Publiceren",
