@@ -882,7 +882,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
               {upstreamCandidates.length === 0 ? (
                 <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{t("medallion.panel.noUpstreamsLower")}</div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   {upstreamCandidates.map((d) => {
                     const colState = columnsByDataset[d.id];
                     const activeStage = detectUpstreamStage(d);
@@ -893,34 +893,31 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                           <span style={{ fontSize: 12.5 }}>{d.name} <span style={{ color: "var(--text-muted)" }}>({d.layer})</span></span>
                         </label>
                         {d.layer === "bronze" && colState?.structured && (
-                          // UX ask — 02_typed (and 01_unpacked) shown as their own visible,
-                          // clickable rows right here, not just a bare bronze checkbox: a
-                          // custom 03_standardized reads a specific stage, not the bronze
-                          // directly, so that stage needs to actually appear in Upstreams
-                          // itself, same idea as the "Tables disponibles" sub-block above,
-                          // highlighted when it's the one this SQL currently reads.
-                          <div style={{ marginLeft: 22, marginTop: 2, display: "flex", flexDirection: "column", gap: 1 }}>
-                            {[["01_unpacked", "unpacked"], ["02_typed", "typed"]].map(([prefix, stageKey]) => {
-                              const modelName = `${prefix}_${d.name}`;
-                              const active = activeStage === prefix;
-                              return (
-                                <button
-                                  key={stageKey} type="button"
-                                  onClick={() => insertStageReference(d, modelName)}
+                          // UX ask — a full checkbox row per stage, same visual weight as the
+                          // bronze row above (not a smaller sub-detail): a custom
+                          // 03_standardized reads a specific stage, never the bronze directly,
+                          // so that stage needs its own real checkbox here, checked by default
+                          // whenever the SQL already reads it (e.g. the "+" on 02_typed
+                          // pre-seeds exactly that reference). Checking one inserts its
+                          // reference (same as "Tables disponibles" above) and marks the
+                          // bronze itself as upstream; unchecking is a no-op — pulling a
+                          // {{ ref(...) }} back out of free-form SQL isn't safe to automate.
+                          [["01_unpacked", "unpacked"], ["02_typed", "typed"]].map(([prefix, stageKey]) => {
+                            const modelName = `${prefix}_${d.name}`;
+                            const checked = activeStage === prefix;
+                            return (
+                              <label key={stageKey} className="service-tile-checkline">
+                                <input
+                                  type="checkbox" checked={checked}
+                                  onChange={() => { if (!checked) insertStageReference(d, modelName); }}
                                   title={t("medallion.structuration.instantPreviewHint")}
-                                  style={{
-                                    display: "flex", alignItems: "center", gap: 6, textAlign: "left", padding: "1px 0",
-                                    border: "none", background: "transparent", cursor: "pointer",
-                                  }}
-                                >
-                                  <span style={{ fontSize: 10.5, fontFamily: "var(--font-m)", color: active ? "var(--ember)" : "var(--text-muted)", fontWeight: active ? 600 : 400 }}>
-                                    {modelName}
-                                  </span>
-                                  {active && <span style={{ fontSize: 9.5, color: "var(--ember)" }}>{Icon.check({ width: 10, height: 10 })}</span>}
-                                </button>
-                              );
-                            })}
-                          </div>
+                                />
+                                <span style={{ fontSize: 12.5 }}>
+                                  {modelName} <span style={{ color: "var(--text-muted)" }}>({t("medallion.panel.instantPreviewBadge")})</span>
+                                </span>
+                              </label>
+                            );
+                          })
                         )}
                       </div>
                     );
