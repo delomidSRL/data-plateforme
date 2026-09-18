@@ -20,7 +20,7 @@ const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // Any {{ ref('01_unpacked_<name>') }} / '02_typed_<name>' / '05_validated_<name>' for one
 // bronze — the set of refs a "which stage does this SQL read" selector treats as mutually
 // exclusive alternatives to the SAME upstream, never several at once.
-const stageRefPattern = (bronzeName) => new RegExp(`\\{\\{\\s*ref\\(['"](01_unpacked|02_typed|05_validated)_${escapeRegExp(bronzeName)}['"]\\)\\s*\\}\\}`);
+const stageRefPattern = (bronzeName, flags = "") => new RegExp(`\\{\\{\\s*ref\\(['"](01_unpacked|02_typed|05_validated)_${escapeRegExp(bronzeName)}['"]\\)\\s*\\}\\}`, flags);
 const TEST_TYPES = ["not_null", "unique", "accepted_values", "relationships"];
 const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "Oracle", minio: "MinIO" };
 
@@ -350,8 +350,12 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   // inserts at cursor only when there's nothing to replace yet (a fresh/empty SQL box).
   const selectUpstreamStage = (d, stageModelName) => {
     const newRef = `{{ ref('${stageModelName}') }}`;
-    const pattern = stageRefPattern(d.name);
-    if (pattern.test(sql)) setSql((s) => s.replace(pattern, newRef));
+    // Global replace — collapses EVERY stage reference to this bronze down to the one just
+    // picked, not just the first: self-heals a SQL box that already has more than one (e.g.
+    // saved before this replace-based selection existed, when clicking a second stage could
+    // leave the first one's ref still sitting in the text instead of removing it).
+    const pattern = stageRefPattern(d.name, "g");
+    if (pattern.test(sql)) setSql((s) => s.replace(stageRefPattern(d.name, "g"), newRef));
     else insertAtCursor(newRef);
     setUpstreamIds((s) => (s.has(d.id) ? s : new Set(s).add(d.id)));
   };
