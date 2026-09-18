@@ -53,10 +53,15 @@ PROFILE_SAMPLE_SIZE = schema_infer.SAMPLE_SIZE  # 1000, same bound as M6's own i
 _THOUSANDS_CHARS = schema_infer._THOUSANDS_CHARS
 
 # Postgres to_char/to_date format tokens are all digit-only fields here, so a straight token
-# substitution from the M6 contract's Python strptime-style format is unambiguous.
+# substitution from the M6 contract's Python strptime-style format is unambiguous. %f (Python's
+# fractional-seconds directive, schema_infer.py's generic "any timestamp format may carry an
+# optional .%f tail") maps to Postgres's own microsecond token (US) — without this, a contract
+# whose inferred format carries %f would leave it untranslated, a literal "%f" the real
+# to_timestamp() call could never match, turning every row into a cast_issue instead of the
+# working cast this format was inferred to produce.
 _PY_TO_PG_DATE_TOKENS = [
     ("%Y", "YYYY"), ("%y", "YY"), ("%m", "MM"), ("%d", "DD"),
-    ("%H", "HH24"), ("%M", "MI"), ("%S", "SS"),
+    ("%H", "HH24"), ("%M", "MI"), ("%S", "SS"), ("%f", "US"),
 ]
 _DEFAULT_DATE_FORMAT = "%d/%m/%Y"
 _DEFAULT_TIMESTAMP_FORMAT = "%d/%m/%Y %H:%M:%S"
@@ -372,7 +377,10 @@ STRUCTURATION_MACROS = {
 # per-field concern.
 _TRACEABILITY_COLUMNS = ["load_id", "source_file", "source_pk", "source_system", "row_number"]
 
-_DATE_TOKEN_DIGITS = [("YYYY", "[0-9]{4}"), ("HH24", "[0-9]{2}"), ("MI", "[0-9]{2}"), ("SS", "[0-9]{2}"), ("MM", "[0-9]{2}"), ("DD", "[0-9]{2}"), ("YY", "[0-9]{2}")]
+# US (microseconds, from %f — see _PY_TO_PG_DATE_TOKENS) is 1-6 digits, not a fixed width:
+# Python's %f itself accepts 1-6 digits when parsing, so the validity check has to accept the
+# same range inference did, or a value inference just approved would still get tagged invalid.
+_DATE_TOKEN_DIGITS = [("YYYY", "[0-9]{4}"), ("HH24", "[0-9]{2}"), ("MI", "[0-9]{2}"), ("SS", "[0-9]{2}"), ("MM", "[0-9]{2}"), ("DD", "[0-9]{2}"), ("YY", "[0-9]{2}"), ("US", "[0-9]{1,6}")]
 
 
 def _cast_pattern(target_type: str, pg_format: str | None) -> str:

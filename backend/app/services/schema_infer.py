@@ -40,10 +40,20 @@ _SQL_RESERVED = {
 
 _DATE_FORMATS_SLASH_DAY_FIRST = ["%d/%m/%Y", "%d/%m/%y", "%d-%m-%Y", "%d-%m-%y"]
 _DATE_FORMATS_ISO = ["%Y-%m-%d", "%Y/%m/%d"]
-_TIMESTAMP_FORMATS = [
+_TIMESTAMP_FORMATS_BASE = [
     "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d-%m-%Y %H:%M:%S",
     "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S",
 ]
+# A source export's fractional-seconds precision varies by system (milliseconds, microseconds,
+# ...) — rather than hand-listing one literal format per precision seen so far, every base
+# format that has a seconds component also gets tried with an optional ".%f" tail (Python's
+# %f accepts 1-6 digits), so any fractional-seconds timestamp is recognized generically,
+# not just the exact precision of whichever file prompted this.
+_TIMESTAMP_FORMATS = []
+for _fmt in _TIMESTAMP_FORMATS_BASE:
+    _TIMESTAMP_FORMATS.append(_fmt)
+    if _fmt.endswith("%S"):
+        _TIMESTAMP_FORMATS.append(_fmt + ".%f")
 
 
 def normalize_column_name(name: str, existing: set[str]) -> str:
@@ -70,6 +80,14 @@ def normalize_column_name(name: str, existing: set[str]) -> str:
 def _parse_number(raw: str) -> Decimal | None:
     text = raw.strip()
     if not text:
+        return None
+    # Decimal() accepts a leading '+' as valid sign syntax, but no real-world numeric column
+    # writes a positive number that way (accounting/business exports use '-' for negative and
+    # nothing at all for positive) — a "+digits" string is virtually always something else
+    # wearing a plus sign: a phone number, a dial code, an identifier. Rejecting it here is
+    # generic to every column, not a special case for any one of them — '-' is still a real
+    # sign and stays accepted below.
+    if text.startswith("+"):
         return None
     # try as-is first (plain international format: period decimal, no separators)
     try:
