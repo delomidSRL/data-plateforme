@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ReactFlow, Background, Controls, Handle, Position } from "@xyflow/react";
+import { ReactFlow, Background, Controls, Panel, Handle, Position } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { StatusDot } from "../../components/ui/Badge.jsx";
 
@@ -122,11 +122,50 @@ function DatasetNode({ data }) {
 
 const nodeTypes = { dataset: DatasetNode, origin: OriginNode };
 
-export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSelect, selectedId, onOpenStructuration, onOpenSilverPreview, qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {} }) {
+// UX ask — the auto-layout (fixed columns per layer) gets cramped once a project has more
+// than a couple of datasets per layer; dragging a node now sticks (previously any re-render —
+// e.g. just selecting a different node — recomputed every position from scratch and snapped
+// dragged nodes right back). Kept per-project in localStorage, a per-viewer convenience: never
+// synced, never read by anything else, safe to lose (private window, cleared storage, …).
+const positionsStorageKey = (projectId) => `medallion.canvasPositions.${projectId}`;
+function loadPositionOverrides(projectId) {
+  if (!projectId) return {};
+  try {
+    const raw = localStorage.getItem(positionsStorageKey(projectId));
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+function savePositionOverrides(projectId, overrides) {
+  if (!projectId) return;
+  try {
+    localStorage.setItem(positionsStorageKey(projectId), JSON.stringify(overrides));
+  } catch {
+    // private window, quota exceeded, etc. — a lost manual layout tweak is harmless
+  }
+}
+
+export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSelect, selectedId, projectId, onOpenStructuration, onOpenSilverPreview, qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {} }) {
   const { t, i18n } = useTranslation();
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
   const publishedLabel = t("medallion.publish.badge");
   const dashboardLabel = t("medallion.suggest.dashboardBadge");
+
+  const [positionOverrides, setPositionOverrides] = useState(() => loadPositionOverrides(projectId));
+  useEffect(() => { setPositionOverrides(loadPositionOverrides(projectId)); }, [projectId]);
+
+  const handleNodeDragStop = (_evt, node) => {
+    setPositionOverrides((prev) => {
+      const next = { ...prev, [node.id]: { x: node.position.x, y: node.position.y } };
+      savePositionOverrides(projectId, next);
+      return next;
+    });
+  };
+  const resetLayout = () => {
+    setPositionOverrides({});
+    savePositionOverrides(projectId, {});
+  };
 
   const { nodes, edges } = useMemo(() => {
     const origins = rawNodes.filter((n) => n.node_type === "origin");
@@ -218,14 +257,27 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
         animated: false, style: edgeStyle(e.source < 0),
       });
     });
-    return { nodes: flowNodes, edges: flowEdges };
-  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, qualityByDataset, publishedByDataset, dashboardByDataset, publishedLabel, dashboardLabel, i18n.language, t]);
+
+    // Manually-dragged positions win over the computed layout, applied as a final pass so
+    // every node-pushing branch above stays oblivious to it.
+    const positionedNodes = flowNodes.map((n) => (positionOverrides[n.id] ? { ...n, position: positionOverrides[n.id] } : n));
+    return { nodes: positionedNodes, edges: flowEdges };
+  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, qualityByDataset, publishedByDataset, dashboardByDataset, publishedLabel, dashboardLabel, i18n.language, t, positionOverrides]);
+
+  const hasCustomLayout = Object.keys(positionOverrides).length > 0;
 
   return (
     <div style={{ height: 480, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>
-      <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView proOptions={{ hideAttribution: true }}>
+      <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView proOptions={{ hideAttribution: true }} onNodeDragStop={handleNodeDragStop}>
         <Background color="var(--border)" gap={18} />
         <Controls showInteractive={false} />
+        {hasCustomLayout && (
+          <Panel position="top-right">
+            <button type="button" className="btn-ghost" style={{ padding: "5px 10px", fontSize: 11.5, background: "var(--surface)" }} onClick={resetLayout}>
+              {t("medallion.canvasResetLayout")}
+            </button>
+          </Panel>
+        )}
       </ReactFlow>
     </div>
   );

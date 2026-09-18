@@ -877,6 +877,7 @@
       }
     },
     "canvas": "Canvas",
+    "canvasResetLayout": "Reset layout",
     "threeColumns": "3 columns",
     "generatedPreview": "Generated preview",
     "mlNode": "ML node — {{name}}",

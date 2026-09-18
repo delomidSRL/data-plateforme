@@ -877,6 +877,7 @@
       }
     },
     "canvas": "Canvas",
+    "canvasResetLayout": "Lay-out resetten",
     "threeColumns": "3 kolommen",
     "generatedPreview": "Gegenereerd voorbeeld",
     "mlNode": "ML-node — {{name}}",
