@@ -1079,6 +1079,7 @@
       "sqlValidateOk": "Valid syntax — checked without running anything (EXPLAIN).",
       "sqlValidateFailed": "Validation failed.",
       "createStandardizedHint": "Create 03_standardized — a silver dataset off this typed table",
+      "instantPreviewBadge": "instant preview",
       "availableTables": "Available tables — click to insert the reference",
       "insertReferenceHint": "Insert this reference into the SQL",
       "columnsLoading": "Loading columns…",

@@ -1079,6 +1079,7 @@
       "sqlValidateOk": "Syntax geldig — gecontroleerd zonder iets uit te voeren (EXPLAIN).",
       "sqlValidateFailed": "Validatie mislukt.",
       "createStandardizedHint": "03_standardized maken — een silver-dataset vanaf deze typed-tabel",
+      "instantPreviewBadge": "directe preview",
       "availableTables": "Beschikbare tabellen — klik om de referentie in te voegen",
       "insertReferenceHint": "Deze referentie in de SQL invoegen",
       "columnsLoading": "Kolommen laden…",

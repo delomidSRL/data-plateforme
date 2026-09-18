@@ -305,6 +305,15 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
     insertAtCursor(referenceSnippetFor(d));
     setUpstreamIds((s) => (s.has(d.id) ? s : new Set(s).add(d.id)));
   };
+  // UX ask — a structured bronze's "Tables disponibles" entry only ever offered
+  // 05_validated_<name> (the clean, routed output — the right default). Earlier stages
+  // (01_unpacked/02_typed, §7's instant preview) are real, useful upstream shapes too — this
+  // inserts one of those instead, same "clicking a reference marks the dependency" convention
+  // as insertReference, just for a stage instead of the dataset's own default reference.
+  const insertStageReference = (d, stageModelName) => {
+    insertAtCursor(`{{ ref('${stageModelName}') }}`);
+    setUpstreamIds((s) => (s.has(d.id) ? s : new Set(s).add(d.id)));
+  };
   const insertColumn = (columnName) => insertAtCursor(columnName);
 
   // Live column lookup per candidate upstream table/model, to help write the SELECT list
@@ -735,6 +744,48 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                         ) : colState ? (
                           <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 4, fontStyle: "italic" }}>{t("medallion.panel.columnsUnavailable")}</div>
                         ) : null}
+                        {d.layer === "bronze" && colState?.structured && (
+                          // UX ask — 05_validated_<name> above is the recommended default, but
+                          // the instant-preview stages (§7) are real, buildable upstreams too —
+                          // same columns (target_name is stable across 01/02/05), just a
+                          // different reference to insert. Reuses colState's columns as-is
+                          // rather than a second fetch: names don't change stage to stage.
+                          <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--border)", display: "flex", flexDirection: "column", gap: 6 }}>
+                            {[["01_unpacked", "unpacked"], ["02_typed", "typed"]].map(([prefix, stageKey]) => {
+                              const modelName = `${prefix}_${d.name}`;
+                              return (
+                                <div key={stageKey}>
+                                  <button
+                                    type="button"
+                                    style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", textAlign: "left", width: "100%", padding: 0, border: "none", background: "transparent", cursor: "pointer" }}
+                                    onClick={() => insertStageReference(d, modelName)}
+                                    title={t("medallion.structuration.instantPreviewHint")}
+                                  >
+                                    <span style={{ fontSize: 11.5, whiteSpace: "nowrap", color: "var(--text-muted)" }}>
+                                      {modelName} <span>({t("medallion.panel.instantPreviewBadge")})</span>
+                                    </span>
+                                    <code style={{ fontSize: 10.5, color: "var(--ember)", overflow: "hidden", textOverflow: "ellipsis" }}>{`{{ ref('${modelName}') }}`}</code>
+                                  </button>
+                                  {colState.columns.length > 0 && (
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                                      {colState.columns.map((c) => (
+                                        <button
+                                          key={c.column} type="button"
+                                          className="badge badge-neutral"
+                                          style={{ cursor: "pointer", border: "none", fontSize: 10.5, fontFamily: "var(--font-m)" }}
+                                          onClick={() => insertColumn(c.column)}
+                                          title={c.type}
+                                        >
+                                          {c.column}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
