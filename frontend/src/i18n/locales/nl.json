@@ -1148,7 +1148,8 @@
       "wizardBack": "Vorige",
       "wizardNext": "Volgende",
       "wizardFinish": "Voltooien",
-      "instantPreviewHint": "Directe preview — synchroon gematerialiseerd bij elke opslag, onafhankelijk van de Airflow-build."
+      "instantPreviewHint": "Directe preview — synchroon gematerialiseerd bij elke opslag, onafhankelijk van de Airflow-build.",
+      "standardizedBadgeHint": "03 · Standardized — een aangepaste silver dataset, met de hand geschreven SQL (de \"+\" op het 02_typed-knooppunt)."
     },
     "macros": {
       "builtin_clean_string": "Maakt tekst schoon: trim + overtollige aanhalingstekens verwijderd, leeg → NULL.",

@@ -1148,7 +1148,8 @@
       "wizardBack": "Précédent",
       "wizardNext": "Suivant",
       "wizardFinish": "Terminer",
-      "instantPreviewHint": "Aperçu instantané — matérialisé de manière synchrone à chaque sauvegarde, indépendamment du build Airflow."
+      "instantPreviewHint": "Aperçu instantané — matérialisé de manière synchrone à chaque sauvegarde, indépendamment du build Airflow.",
+      "standardizedBadgeHint": "03 · Standardized — dataset silver personnalisé, SQL écrit à la main (le \"+\" sur le nœud 02_typed)."
     },
     "macros": {
       "builtin_clean_string": "Nettoie un texte : trim + guillemets superflus retirés, vide → NULL.",

@@ -100,8 +100,12 @@ function DatasetNode({ data }) {
           // Module 18 §7 UX — silver.01_unpacked_<name>/silver.02_typed_<name>
           // (materialize_unpacked_typed_sync): a real silver node, same design as any other,
           // just flagged ember/orange since it's an instant preview, not a registered dataset.
+          // "standardized" is the one exception — a real, registered 03_standardized_<name>
+          // dataset (built normally, never synchronously previewed), tagged the same way purely
+          // for visual continuity along the 01->02->03 chain, so it gets its own tooltip text.
           <span
-            className="badge" title={t("medallion.structuration.instantPreviewHint")}
+            className="badge"
+            title={t(data.previewStageLabel === "standardized" ? "medallion.structuration.standardizedBadgeHint" : "medallion.structuration.instantPreviewHint")}
             style={{ fontSize: 9.5, padding: "1px 6px", border: "1px solid var(--ember)", color: "var(--ember)", background: "var(--ember-soft)" }}
           >
             {data.previewStageLabel}
@@ -243,6 +247,12 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
             dashboardTitle: dashboardByDataset[n.id]?.last_generated_at ? new Date(dashboardByDataset[n.id].last_generated_at).toLocaleString(i18n.language) : undefined,
             dashboardDate: dashboardByDataset[n.id]?.last_generated_at ? new Date(dashboardByDataset[n.id].last_generated_at).toLocaleDateString(i18n.language) : "",
             payloadBacked: n.payload_backed, onOpenStructuration: () => onOpenStructuration?.(n.id, null, true),
+            // UX ask — same orange "stage" badge as the 01_unpacked/02_typed synthetic preview
+            // nodes, for visual continuity along the whole 01->02->03 chain: unlike those two,
+            // this is a real, registered silver dataset (the "+" on 02_typed), not an instant
+            // preview — detected by name, the same "03_standardized_<bronze>" convention
+            // dbt_project.py itself keys off to resolve which model 04_annotated reads.
+            previewStageLabel: n.layer === "silver" && n.name.startsWith("03_standardized_") ? "standardized" : undefined,
             selected: selectedId === n.id, onClick: () => onSelect(n.id),
           },
         });

@@ -1148,7 +1148,8 @@
       "wizardBack": "Back",
       "wizardNext": "Next",
       "wizardFinish": "Finish",
-      "instantPreviewHint": "Instant preview — materialized synchronously on every save, independent of the Airflow build."
+      "instantPreviewHint": "Instant preview — materialized synchronously on every save, independent of the Airflow build.",
+      "standardizedBadgeHint": "03 · Standardized — a custom silver dataset, hand-written SQL (the \"+\" on the 02_typed node)."
     },
     "macros": {
       "builtin_clean_string": "Cleans a text value: trims + strips stray quotes, blank → NULL.",
