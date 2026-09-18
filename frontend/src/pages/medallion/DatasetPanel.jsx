@@ -882,21 +882,47 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
               {upstreamCandidates.length === 0 ? (
                 <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{t("medallion.panel.noUpstreamsLower")}</div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {upstreamCandidates.map((d) => {
-                    const stage = detectUpstreamStage(d);
+                    const colState = columnsByDataset[d.id];
+                    const activeStage = detectUpstreamStage(d);
                     return (
-                      <label key={d.id} className="service-tile-checkline" style={{ flexDirection: "column", alignItems: "flex-start" }}>
-                        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div key={d.id}>
+                        <label className="service-tile-checkline">
                           <input type="checkbox" checked={upstreamIds.has(d.id)} onChange={() => toggleUpstream(d.id)} />
                           <span style={{ fontSize: 12.5 }}>{d.name} <span style={{ color: "var(--text-muted)" }}>({d.layer})</span></span>
-                        </span>
-                        {stage && (
-                          <span style={{ fontSize: 10.5, color: "var(--ember)", marginLeft: 22, fontFamily: "var(--font-m)" }}>
-                            {t("medallion.panel.upstreamViaStage", { stage })}
-                          </span>
+                        </label>
+                        {d.layer === "bronze" && colState?.structured && (
+                          // UX ask — 02_typed (and 01_unpacked) shown as their own visible,
+                          // clickable rows right here, not just a bare bronze checkbox: a
+                          // custom 03_standardized reads a specific stage, not the bronze
+                          // directly, so that stage needs to actually appear in Upstreams
+                          // itself, same idea as the "Tables disponibles" sub-block above,
+                          // highlighted when it's the one this SQL currently reads.
+                          <div style={{ marginLeft: 22, marginTop: 2, display: "flex", flexDirection: "column", gap: 1 }}>
+                            {[["01_unpacked", "unpacked"], ["02_typed", "typed"]].map(([prefix, stageKey]) => {
+                              const modelName = `${prefix}_${d.name}`;
+                              const active = activeStage === prefix;
+                              return (
+                                <button
+                                  key={stageKey} type="button"
+                                  onClick={() => insertStageReference(d, modelName)}
+                                  title={t("medallion.structuration.instantPreviewHint")}
+                                  style={{
+                                    display: "flex", alignItems: "center", gap: 6, textAlign: "left", padding: "1px 0",
+                                    border: "none", background: "transparent", cursor: "pointer",
+                                  }}
+                                >
+                                  <span style={{ fontSize: 10.5, fontFamily: "var(--font-m)", color: active ? "var(--ember)" : "var(--text-muted)", fontWeight: active ? 600 : 400 }}>
+                                    {modelName}
+                                  </span>
+                                  {active && <span style={{ fontSize: 9.5, color: "var(--ember)" }}>{Icon.check({ width: 10, height: 10 })}</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
                         )}
-                      </label>
+                      </div>
                     );
                   })}
                 </div>

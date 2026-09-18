@@ -1067,7 +1067,6 @@
       "codeContractMid": "leest een upstream-tabel,",
       "codeContractPost": "schrijft de uitvoertabel naar het gold-schema. Geen verbinding te beheren.",
       "upstreams": "Upstreams (lineage)",
-      "upstreamViaStage": "de SQL leest {{stage}}",
       "noUpstreamsEqual": "Geen dataset op een lagere of gelijke laag beschikbaar.",
       "noUpstreamsLower": "Geen dataset op een lagere laag beschikbaar.",
       "testsOnOutput": "Tests (toegepast op de geproduceerde tabel)",
