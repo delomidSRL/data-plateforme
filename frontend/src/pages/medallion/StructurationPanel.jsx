@@ -229,7 +229,7 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
               {showTyped && <th>{t("imports.modal.colType")}</th>}
               {showTyped && <th>{t("medallion.structuration.colNullable")}</th>}
               {showStandardize && <th>{t("medallion.structuration.colStandardize")}</th>}
-              {showTyped && <th>{t("imports.modal.colConfidence")}</th>}
+              {/* Confidence column hidden on request — data still flows through (f.confidence), just not displayed here. */}
             </tr>
           </thead>
           <tbody>
@@ -298,7 +298,6 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
                       </select>
                     </td>
                   )}
-                  {showTyped && <td><Badge tone={(f.confidence ?? 1) >= 0.95 ? "accent" : "danger"}>{Math.round((f.confidence ?? 1) * 100)}%</Badge></td>}
                 </tr>
               );
             })}
