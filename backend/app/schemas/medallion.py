@@ -237,6 +237,19 @@ class DataSampleOut(BaseModel):
     target: DataSampleTargetOut | None = None
 
 
+# UX ask — the dataset editor's "Valider la syntaxe" button: ad-hoc dbt SQL, checked without
+# saving anything or touching a real dbt build (payload_structure.compile_adhoc_sql +
+# explain_sql).
+class SqlValidationRequest(BaseModel):
+    sql: str
+
+
+class SqlValidationOut(BaseModel):
+    valid: bool
+    message: str | None = None
+    compiled_sql: str | None = None
+
+
 class PublishRequest(BaseModel):
     superset_instance_id: int | None = None
 

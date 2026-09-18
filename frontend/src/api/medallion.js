@@ -28,6 +28,9 @@ export const exportDatasetCsv = (pid, did) => apiDownload(`${base}/${pid}/datase
 export const listProjectExports = (pid, limit = 20) => apiFetch(`${base}/${pid}/exports?limit=${limit}`);
 
 export const previewProject = (pid) => apiFetch(`${base}/${pid}/preview`, { method: "POST" });
+// UX ask — dataset editor's "Valider la syntaxe": checks ad-hoc dbt SQL (ref()/source() +
+// a real EXPLAIN) without saving anything.
+export const validateSql = (pid, sql) => apiFetch(`${base}/${pid}/validate-sql`, { method: "POST", body: { sql } });
 export const buildProject = (pid) => apiFetch(`${base}/${pid}/build`, { method: "POST" });
 export const getDeployStatus = (pid) => apiFetch(`${base}/${pid}/deploy-status`);
 export const runProject = (pid, payload = {}) => apiFetch(`${base}/${pid}/run`, { method: "POST", body: payload });

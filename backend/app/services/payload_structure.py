@@ -693,6 +693,61 @@ def _compile_stage_sql(body: str, *, var_entries: list[dict], ref_map: dict[str,
     ).strip()
 
 
+# ---------------------------------------------------------------------------
+# UX ask — the dataset editor's "Valider la syntaxe" button (e.g. authoring a 03_standardized_
+# <name> from the "02 typed" node's "+"): catch a typo'd {{ ref(...) }} or a real SQL mistake
+# before it ever reaches an actual dbt build, without saving anything or touching a real model.
+# ---------------------------------------------------------------------------
+
+def compile_adhoc_sql(sql: str, ref_map: dict[str, str]) -> str:
+    """A dataset's free-form dbt SQL -> plain Postgres SQL, same standalone-Jinja mechanism as
+    _compile_stage_sql, generalized to arbitrary user text: `source()` resolves any
+    schema/table generically (bronze is always reachable that way, by construction), but
+    `ref()` only resolves a name actually present in `ref_map` (medallion_stats.build_ref_map)
+    — a ref to something that doesn't exist project-wide is rejected here, the same mistake a
+    real dbt compile would catch, just without needing one."""
+    if not sql.strip():
+        raise PayloadStructureError("Requête vide.")
+
+    def _ref(model_name: str) -> str:
+        if model_name not in ref_map:
+            raise PayloadStructureError(f"Référence inconnue : {{{{ ref('{model_name}') }}}} — aucun dataset ni modèle « {model_name} » dans ce projet.")
+        return ref_map[model_name]
+
+    try:
+        template = jinja2.Environment().from_string(sql)
+        return template.render(
+            config=lambda **_kwargs: "",
+            source=lambda schema_name, table_name: f'"{schema_name}"."{table_name}"',
+            ref=_ref,
+        ).strip()
+    except jinja2.TemplateSyntaxError as exc:
+        raise PayloadStructureError(f"Erreur de syntaxe Jinja/dbt : {exc.message} (ligne {exc.lineno}).") from exc
+    except jinja2.UndefinedError as exc:
+        raise PayloadStructureError(f"Variable Jinja non définie : {exc.message}") from exc
+
+
+def explain_sql(warehouse: DataSource, sql: str) -> None:
+    """Runs EXPLAIN (COSTS FALSE) — never ANALYZE, never executes the query — against the
+    warehouse: validates real SQL syntax, table/column existence and type compatibility,
+    without writing or running anything. Single statement only (EXPLAIN itself only accepts
+    one query anyway; the explicit check here is a clearer error than whatever the driver
+    would raise on a stacked/second statement). Raises PayloadStructureError with Postgres's
+    own message on failure."""
+    body = sql.strip().rstrip(";")
+    if ";" in body:
+        raise PayloadStructureError("Une seule instruction SQL à la fois (pas de « ; » au milieu de la requête).")
+    conn = _connect_warehouse(warehouse)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"EXPLAIN (COSTS FALSE) {body}")
+    except Exception as exc:
+        raise PayloadStructureError(connections.clean_error(exc)) from exc
+    finally:
+        conn.rollback()
+        conn.close()
+
+
 def materialize_unpacked_typed_sync(warehouse: DataSource, column_mapping: list[dict], bronze_name: str) -> None:
     """Creates `silver.01_unpacked_<name>` and, reading that real (still empty) table,
     `silver.02_typed_<name>` — the right columns/types/constraints, zero rows (`WITH NO DATA`):

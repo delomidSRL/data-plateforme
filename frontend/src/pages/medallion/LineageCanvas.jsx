@@ -74,6 +74,25 @@ function DatasetNode({ data }) {
           +
         </button>
       )}
+      {data.onCreateStandardized && (
+        // UX ask — a shortcut straight from "02 typed" into authoring 03_standardized_<name>
+        // as a real silver dataset (DatasetPanel, pre-seeded: upstream = this bronze, a
+        // starter SELECT off {{ ref('02_typed_<name>') }}) — the SQL editor's own "Tables
+        // disponibles" column-click-to-insert already works the moment that upstream is
+        // checked, no extra wiring needed here.
+        <button
+          type="button"
+          title={t("medallion.panel.createStandardizedHint")}
+          onClick={(e) => { e.stopPropagation(); data.onCreateStandardized(); }}
+          style={{
+            position: "absolute", top: -9, right: -9, width: 20, height: 20, borderRadius: "50%",
+            border: "1.5px solid var(--ember)", background: "var(--ember-soft)", color: "var(--ember)",
+            fontSize: 14, lineHeight: "17px", fontWeight: 700, cursor: "pointer", padding: 0,
+          }}
+        >
+          +
+        </button>
+      )}
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontFamily: "var(--font-m)" }}>{data.layer}</div>
@@ -146,7 +165,7 @@ function savePositionOverrides(projectId, overrides) {
   }
 }
 
-export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSelect, selectedId, projectId, onOpenStructuration, onOpenSilverPreview, qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {} }) {
+export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSelect, selectedId, projectId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {} }) {
   const { t, i18n } = useTranslation();
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
   const publishedLabel = t("medallion.publish.badge");
@@ -245,6 +264,7 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
           layer: "silver", name: `02_typed_${n.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
           previewStageLabel: "typed", isInstantPreview: true,
           selected: false, onClick: () => onOpenSilverPreview?.(n.id, "typed"),
+          onCreateStandardized: onCreateStandardized ? () => onCreateStandardized(n.id, n.name) : undefined,
         },
       });
       flowEdges.push({ id: `${n.id}-${silverUnpackedId}`, source: String(n.id), target: silverUnpackedId, animated: false, style: edgeStyle(true) });
@@ -262,7 +282,7 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
     // every node-pushing branch above stays oblivious to it.
     const positionedNodes = flowNodes.map((n) => (positionOverrides[n.id] ? { ...n, position: positionOverrides[n.id] } : n));
     return { nodes: positionedNodes, edges: flowEdges };
-  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, qualityByDataset, publishedByDataset, dashboardByDataset, publishedLabel, dashboardLabel, i18n.language, t, positionOverrides]);
+  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, qualityByDataset, publishedByDataset, dashboardByDataset, publishedLabel, dashboardLabel, i18n.language, t, positionOverrides]);
 
   const hasCustomLayout = Object.keys(positionOverrides).length > 0;
 

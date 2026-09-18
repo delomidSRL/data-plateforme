@@ -65,6 +65,8 @@ from app.schemas.medallion import (
     RestoreRequest,
     RunOut,
     RunTriggerRequest,
+    SqlValidationOut,
+    SqlValidationRequest,
     SuggestedIndicatorOut,
     SuggestIndicatorsOut,
     VersionDetailOut,
@@ -93,7 +95,7 @@ from app.services.ai_config import get_ai_config
 from app.services.superset_instances import get_superset_config
 from app.services.medallion_crud import create_dataset_internal, validate_lineage
 from app.services.medallion_deploy import build_project
-from app.services.medallion_stats import list_columns
+from app.services.medallion_stats import build_ref_map, list_columns
 from app.services import run_status
 
 logger = logging.getLogger("app.medallion")
@@ -772,6 +774,41 @@ def preview_project(db: Session = Depends(get_db), project: MedallionProject = D
         if d.layer == MedallionLayer.gold and d.transform_type == TransformType.python
     }
     return PreviewResult(dbt_sql=dbt_sql, python_tasks=python_tasks, dag_py=dag_py, warnings=warnings)
+
+
+@router.post("/{pid}/validate-sql", response_model=SqlValidationOut)
+def validate_dataset_sql(
+    payload: SqlValidationRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project),
+):
+    """UX ask — the dataset editor's "Valider la syntaxe" button: resolves every {{ ref(...) }}
+    in the draft SQL against everything actually buildable project-wide (build_ref_map — real
+    silver/gold datasets, plus the structuration stages of any bronze with a saved contract),
+    then runs the compiled result through Postgres's EXPLAIN — real syntax/column/type
+    validation, without saving anything or touching a real dbt build."""
+    datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
+    bronze_ids = [d.id for d in datasets if d.layer == MedallionLayer.bronze]
+    structured_ids = (
+        {r[0] for r in db.query(PayloadStructuration.dataset_id).filter(
+            PayloadStructuration.dataset_id.in_(bronze_ids), PayloadStructuration.contract_hash.isnot(None),
+        ).all()}
+        if bronze_ids else set()
+    )
+    structured_bronze_names = {d.name for d in datasets if d.id in structured_ids}
+    ref_map = build_ref_map(datasets, structured_bronze_names)
+
+    try:
+        compiled = payload_structure.compile_adhoc_sql(payload.sql, ref_map)
+    except payload_structure.PayloadStructureError as exc:
+        return SqlValidationOut(valid=False, message=str(exc))
+
+    warehouse = db.get(DataSource, project.warehouse_source_id)
+    if warehouse is None:
+        return SqlValidationOut(valid=False, message="Warehouse introuvable.")
+    try:
+        payload_structure.explain_sql(warehouse, compiled)
+    except payload_structure.PayloadStructureError as exc:
+        return SqlValidationOut(valid=False, message=str(exc), compiled_sql=compiled)
+    return SqlValidationOut(valid=True, compiled_sql=compiled)
 
 
 def _resolve_binding_deploy_target(db: Session, project: MedallionProject, binding: ProjectEnvironmentBinding) -> airflow_instances.DeployTarget:

@@ -21,6 +21,35 @@ def table_name(ds: MedallionDataset) -> str:
     return ds.dbt_model_name
 
 
+# UX ask — the dataset editor's "Valider la syntaxe" button (payload_structure.compile_adhoc_sql)
+# needs to know, for an arbitrary {{ ref('x') }} in ad-hoc SQL, whether "x" is actually a real
+# model somewhere in this project — every real silver/gold dataset by its own dbt_model_name,
+# plus the auto-generated structuration stages (01_unpacked..05_quarantine) for every bronze
+# dataset that has a saved contract. Bronze itself is reached via {{ source(...) }}, not this
+# map — compile_adhoc_sql stubs that generically, it never needs to be "known" here.
+_STRUCTURATION_STAGE_SCHEMA = {
+    "01_unpacked": "silver", "02_typed": "silver",
+    "03_standardized": "bronze", "04_annotated": "bronze",
+    "05_validated": "bronze", "05_quarantine": "bronze",
+}
+
+
+def build_ref_map(datasets: list[MedallionDataset], structured_bronze_names: set[str]) -> dict[str, str]:
+    ref_map: dict[str, str] = {}
+    for ds in datasets:
+        if ds.layer == MedallionLayer.bronze:
+            continue
+        name = table_name(ds)
+        if not name:
+            continue
+        ref_map[name] = f'"{SCHEMA_BY_LAYER[ds.layer]}"."{name}"'
+    for bronze_name in structured_bronze_names:
+        for stage, schema in _STRUCTURATION_STAGE_SCHEMA.items():
+            model_name = f"{stage}_{bronze_name}"
+            ref_map[model_name] = f'"{schema}"."{model_name}"'
+    return ref_map
+
+
 def list_columns(warehouse: DataSource, ds: MedallionDataset) -> list[dict]:
     """On-demand column list for a single dataset's physical table — used by the dataset
     editor to help authoring dbt SQL. Empty (not an error) if the table doesn't exist yet,

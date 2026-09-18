@@ -41,7 +41,7 @@ function substitutePlaceholders(code, expectedInputs, values) {
   return result;
 }
 
-export default function DatasetPanel({ project, datasets, dataset, defaultLayer, sources, onClose, onSaved, onDeleted, onStructurationSaved, readOnly = false, initialTab }) {
+export default function DatasetPanel({ project, datasets, dataset, defaultLayer, sources, onClose, onSaved, onDeleted, onStructurationSaved, readOnly = false, initialTab, prefill = null }) {
   const { t } = useTranslation();
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
   const ML_OBJECTIVES = [
@@ -56,7 +56,10 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   const isEdit = !!dataset;
   const [panelTab, setPanelTab] = useState(initialTab || "config"); // "config" | "preview" (Module 10) | "publish" (Module 11, gold only) | "indicators" (Module 12)
   const [layer, setLayer] = useState(dataset?.layer || defaultLayer || "bronze");
-  const [name, setName] = useState(dataset?.name || "");
+  // UX ask — the "02 typed" node's "+" opens this same panel pre-seeded (name, upstream, a
+  // starter SELECT) via `prefill`, so it only ever applies to a brand-new dataset — an
+  // existing one's own saved values always win.
+  const [name, setName] = useState(dataset?.name || prefill?.name || "");
   const [description, setDescription] = useState(dataset?.description || "");
 
   // Sources span 4 unrelated types (PostgreSQL/MySQL/Oracle/MinIO) — picking the type first
@@ -70,11 +73,12 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   const [loadMode, setLoadMode] = useState(dataset?.load_mode || "full");
   const [incrementalKey, setIncrementalKey] = useState(dataset?.incremental_key || "");
 
-  const [dbtModelName, setDbtModelName] = useState(dataset?.dbt_model_name || "");
+  const [dbtModelName, setDbtModelName] = useState(dataset?.dbt_model_name || prefill?.dbtModelName || "");
   const [materialization, setMaterialization] = useState(dataset?.materialization || "view");
   // A new silver dataset starts its query pre-filled with "SELECT * " rather than empty —
-  // one less thing to type before picking the FROM/upstream reference.
-  const [sql, setSql] = useState(dataset?.sql || ((dataset?.layer || defaultLayer) === "silver" ? "SELECT * " : ""));
+  // one less thing to type before picking the FROM/upstream reference. `prefill.sql` (the
+  // "02 typed" node's "+") overrides that default with a real starter FROM already in place.
+  const [sql, setSql] = useState(dataset?.sql || prefill?.sql || ((dataset?.layer || defaultLayer) === "silver" ? "SELECT * " : ""));
 
   const [transformType, setTransformType] = useState(dataset?.transform_type || "dbt");
   const [mlObjective, setMlObjective] = useState(dataset?.ml_objective || "none");
@@ -86,12 +90,27 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   const [templateValues, setTemplateValues] = useState({});
   const [lastAutoCode, setLastAutoCode] = useState(dataset?.python_code || "");
 
-  const [upstreamIds, setUpstreamIds] = useState(new Set(dataset?.upstream_dataset_ids || []));
+  const [upstreamIds, setUpstreamIds] = useState(new Set(dataset?.upstream_dataset_ids || prefill?.upstreamIds || []));
   const [tests, setTests] = useState(dataset?.tests || []);
   const [structurationPopupDataset, setStructurationPopupDataset] = useState(null); // Module 6 extension
 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // UX ask — "Valider la syntaxe": resolves ref()/source() project-wide + a real EXPLAIN
+  // against the warehouse, without saving anything. null = not checked yet since the last edit.
+  const [sqlValidation, setSqlValidation] = useState(null);
+  const [validatingSql, setValidatingSql] = useState(false);
+  const validateSql = async () => {
+    setValidatingSql(true);
+    setSqlValidation(null);
+    try {
+      setSqlValidation(await medallionApi.validateSql(project.id, sql));
+    } catch (err) {
+      setSqlValidation({ valid: false, message: err.message || t("medallion.panel.sqlValidateFailed") });
+    } finally {
+      setValidatingSql(false);
+    }
+  };
 
   useEffect(() => { mlTemplatesApi.listTemplates().then(setTemplates).catch(() => {}); }, []);
 
@@ -724,9 +743,28 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
               <textarea
                 ref={sqlRef}
                 className="input" style={{ fontFamily: "var(--font-m)", fontSize: 12.5, minHeight: 140, resize: "vertical" }}
-                value={sql} onChange={(e) => setSql(e.target.value)}
+                value={sql} onChange={(e) => { setSql(e.target.value); setSqlValidation(null); }}
                 placeholder={`SELECT * FROM {{ source('bronze', 'table') }}`}
               />
+              {!readOnly && (
+                <div style={{ marginTop: 8 }}>
+                  <button type="button" className="btn-ghost" style={{ padding: "5px 10px", fontSize: 12 }} disabled={validatingSql || !sql.trim()} onClick={validateSql}>
+                    {Icon.check({ width: 13, height: 13 })} {validatingSql ? t("medallion.panel.sqlValidating") : t("medallion.panel.sqlValidate")}
+                  </button>
+                  {sqlValidation && (
+                    <div
+                      className="error-banner"
+                      style={{
+                        marginTop: 8, background: sqlValidation.valid ? "rgba(47,158,110,.08)" : undefined,
+                        borderColor: sqlValidation.valid ? "rgba(47,158,110,.3)" : undefined, color: sqlValidation.valid ? "#2f9e6e" : undefined,
+                      }}
+                    >
+                      {sqlValidation.valid ? Icon.check() : Icon.warn()}
+                      <span>{sqlValidation.valid ? t("medallion.panel.sqlValidateOk") : sqlValidation.message}</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </Field>
 
             <Field label={t("medallion.panel.upstreams")}>

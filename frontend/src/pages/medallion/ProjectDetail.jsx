@@ -292,6 +292,22 @@ export default function ProjectDetail({ readOnly = false }) {
     setPanel({ selectedId: nid });
   };
 
+  // UX ask — the "02 typed" node's "+": straight into authoring 03_standardized_<name> as a
+  // real silver dataset, upstream already checked and a starter SELECT already pointed at
+  // this exact typed table (not 05_validated like referenceSnippetFor elsewhere — the
+  // engineer explicitly wants 02_typed, the pre-standardization shape, here).
+  const openStandardizedDataset = (bronzeId, bronzeName) => {
+    setPanel({
+      defaultLayer: "silver",
+      prefill: {
+        name: `03_standardized_${bronzeName}`,
+        dbtModelName: `03_standardized_${bronzeName}`,
+        upstreamIds: [bronzeId],
+        sql: `SELECT *\nFROM {{ ref('02_typed_${bronzeName}') }}\n`,
+      },
+    });
+  };
+
   // Module 13's Agent tab manages its own execution/plan state independently of this
   // component's own datasets/lineage/publications/dashboards (fetched once on mount, §load
   // effect below) — without this, a project built/run/published/dashboarded entirely from the
@@ -493,6 +509,7 @@ export default function ProjectDetail({ readOnly = false }) {
               nodes={lineage.nodes} edges={lineage.edges} selectedId={selectedDataset?.id} onSelect={handleSelectNode}
               projectId={project.id} onOpenStructuration={openStructuration}
               onOpenSilverPreview={(datasetId, stage) => setSilverPreviewTarget({ datasetId, stage })}
+              onCreateStandardized={openStandardizedDataset}
               qualityByDataset={qualityByDataset} publishedByDataset={publishedByDataset} dashboardByDataset={dashboardByDataset}
             />
           ) : (
@@ -546,6 +563,7 @@ export default function ProjectDetail({ readOnly = false }) {
           dataset={selectedDataset}
           defaultLayer={panel.defaultLayer}
           initialTab={panel.openTab}
+          prefill={panel.prefill}
           sources={sources}
           onClose={() => { setPanel(null); loadPublications(); loadDashboards(); }}
           onSaved={onDatasetSaved}
