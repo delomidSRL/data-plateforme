@@ -395,13 +395,19 @@ def update_dataset_structuration(
 ):
     """§4.4 — persists the validated contract: identifiers checked before anything is written.
     Marks the project as needing a redeploy (a changed contract re-renders the
-    01_unpacked ... 05_validated/05_quarantine dbt models, Module 18, at next build)."""
+    01_unpacked ... 05_validated/05_quarantine dbt models, Module 18, at next build) — but
+    doesn't make the engineer wait for that build to see anything real: every save also
+    materializes silver.typed_<name>/silver.structured_<name> synchronously, right here (see
+    materialize_typed_structured_sync), so a failure there fails the save too."""
     dataset = _get_dataset(db, project.id, did)
     if payload_structure.resolve_import(db, dataset) is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ce dataset bronze n'est pas adossé à un import en mode payload.")
 
     column_mapping = [f.model_dump() for f in payload.column_mapping]
     quality_flags = [f.model_dump() for f in payload.quality_flags]
+    warehouse = db.get(DataSource, project.warehouse_source_id)
+    if warehouse is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse introuvable.")
     try:
         payload_structure.validate_column_mapping(column_mapping)
         payload_structure.validate_standardize_ops(column_mapping)
@@ -410,6 +416,10 @@ def update_dataset_structuration(
         payload_structure.render_unpacked_typed_models(column_mapping, dataset.name)
         payload_structure.render_standardized_model(column_mapping, dataset.name)
         payload_structure.render_annotated_model(quality_flags, dataset.name)
+        # UX ask — don't just prove it renders: materialize silver.typed_<name> and
+        # silver.structured_<name> for real, right now, with real data, instead of making the
+        # engineer wait for the next Airflow run. A save only succeeds if this actually works.
+        payload_structure.materialize_typed_structured_sync(warehouse, column_mapping, dataset.name)
     except payload_structure.PayloadStructureError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
