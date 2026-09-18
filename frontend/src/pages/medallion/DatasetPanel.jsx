@@ -298,6 +298,20 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
     return `{{ ref('${d.dbt_model_name || d.name}') }}`;
   };
 
+  // UX ask — "Upstreams (lignée)" only ever showed the bare bronze checkbox, even when the SQL
+  // actually reads a specific stage (02_typed, 01_unpacked) rather than the bronze directly —
+  // this reads that back out of the live SQL text so the section shows the real relationship,
+  // not just "this bronze is involved somehow". Same detection LineageCanvas.jsx's
+  // rerouteThroughStage uses to draw the canvas edge through that same stage node.
+  const detectUpstreamStage = (d) => {
+    if (d.layer !== "bronze" || !columnsByDataset[d.id]?.structured) return null;
+    const name = d.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`ref\\(['"]02_typed_${name}['"]\\)`).test(sql)) return "02_typed";
+    if (new RegExp(`ref\\(['"]01_unpacked_${name}['"]\\)`).test(sql)) return "01_unpacked";
+    if (new RegExp(`ref\\(['"]05_validated_${name}['"]\\)`).test(sql)) return "05_validated";
+    return null;
+  };
+
   const sqlRef = useRef(null);
   const insertAtCursor = (text) => {
     const el = sqlRef.current;
@@ -869,12 +883,22 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                 <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{t("medallion.panel.noUpstreamsLower")}</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {upstreamCandidates.map((d) => (
-                    <label key={d.id} className="service-tile-checkline">
-                      <input type="checkbox" checked={upstreamIds.has(d.id)} onChange={() => toggleUpstream(d.id)} />
-                      <span style={{ fontSize: 12.5 }}>{d.name} <span style={{ color: "var(--text-muted)" }}>({d.layer})</span></span>
-                    </label>
-                  ))}
+                  {upstreamCandidates.map((d) => {
+                    const stage = detectUpstreamStage(d);
+                    return (
+                      <label key={d.id} className="service-tile-checkline" style={{ flexDirection: "column", alignItems: "flex-start" }}>
+                        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <input type="checkbox" checked={upstreamIds.has(d.id)} onChange={() => toggleUpstream(d.id)} />
+                          <span style={{ fontSize: 12.5 }}>{d.name} <span style={{ color: "var(--text-muted)" }}>({d.layer})</span></span>
+                        </span>
+                        {stage && (
+                          <span style={{ fontSize: 10.5, color: "var(--ember)", marginLeft: 22, fontFamily: "var(--font-m)" }}>
+                            {t("medallion.panel.upstreamViaStage", { stage })}
+                          </span>
+                        )}
+                      </label>
+                    );
+                  })}
                 </div>
               )}
             </Field>

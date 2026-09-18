@@ -187,6 +187,13 @@ export default function ProjectDetail({ readOnly = false }) {
   );
   const publishedByDataset = Object.fromEntries(publications.map((p) => [p.dataset_id, p]));
   const dashboardByDataset = Object.fromEntries(dashboards.map((d) => [d.dataset_id, d]));
+  // UX ask — a silver/gold dataset's real upstream_dataset_ids can only ever point to another
+  // MedallionDataset row, never a synthetic 01_unpacked/02_typed preview node (it has no real
+  // id) — so a hand-written 03_standardized whose SQL actually reads {{ ref('02_typed_<name>') }}
+  // still only records its bronze as the upstream, and the canvas edge would draw straight from
+  // bronze, skipping the stage it actually builds on. LineageCanvas reroutes that one edge using
+  // this SQL text, purely for display — the real upstream_dataset_ids never changes.
+  const sqlByDataset = Object.fromEntries(datasets.filter((d) => d.sql).map((d) => [d.id, d.sql]));
 
   const handlePreview = async () => {
     setPreviewing(true);
@@ -511,6 +518,7 @@ export default function ProjectDetail({ readOnly = false }) {
               onOpenSilverPreview={(datasetId, stage) => setSilverPreviewTarget({ datasetId, stage })}
               onCreateStandardized={openStandardizedDataset}
               qualityByDataset={qualityByDataset} publishedByDataset={publishedByDataset} dashboardByDataset={dashboardByDataset}
+              sqlByDataset={sqlByDataset}
             />
           ) : (
             <ThreeColumnView nodes={lineage.nodes} selectedId={selectedDataset?.id} onSelect={handleSelectNode} qualityByDataset={qualityByDataset} />

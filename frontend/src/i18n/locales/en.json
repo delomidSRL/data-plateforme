@@ -1067,6 +1067,7 @@
       "codeContractMid": "reads an upstream table,",
       "codeContractPost": "writes the output table to the gold schema. No connection to manage.",
       "upstreams": "Upstreams (lineage)",
+      "upstreamViaStage": "the SQL reads {{stage}}",
       "noUpstreamsEqual": "No dataset at a lower or equal layer available.",
       "noUpstreamsLower": "No dataset at a lower layer available.",
       "testsOnOutput": "Tests (applied to the produced table)",

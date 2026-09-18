@@ -165,7 +165,26 @@ function savePositionOverrides(projectId, overrides) {
   }
 }
 
-export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSelect, selectedId, projectId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {} }) {
+// A real edge's source can only ever be another MedallionDataset's id (upstream_dataset_ids),
+// never a synthetic 01_unpacked/02_typed preview node — so a hand-written silver dataset whose
+// SQL actually reads {{ ref('02_typed_<name>') }} still only records its bronze as upstream.
+// Purely for display, an edge from a structured bronze is rerouted through whichever synthetic
+// stage node the target's own SQL text references, closest stage first — the real
+// upstream_dataset_ids this reads from (sqlByDataset, passed down from ProjectDetail) never
+// changes; a target with no match (e.g. reading `source('bronze', ...)` or `05_validated_...`
+// directly) keeps the plain bronze->target edge exactly as before.
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function rerouteThroughStage(bronzeNode, targetSql) {
+  if (!targetSql) return null;
+  const name = escapeRegExp(bronzeNode.name);
+  if (new RegExp(`ref\\(['"]02_typed_${name}['"]\\)`).test(targetSql)) return `silver-typed-${bronzeNode.id}`;
+  if (new RegExp(`ref\\(['"]01_unpacked_${name}['"]\\)`).test(targetSql)) return `silver-unpacked-${bronzeNode.id}`;
+  return null;
+}
+
+export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSelect, selectedId, projectId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {}, sqlByDataset = {} }) {
   const { t, i18n } = useTranslation();
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
   const publishedLabel = t("medallion.publish.badge");
@@ -240,8 +259,10 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
     // either: the "+" popup's own save is what creates silver.01_unpacked_<name>/silver.02_typed_<name>,
     // so that's the only thing this waits on. Purely additive, client-side only — doesn't
     // touch or replace the real bronze->silver edges below.
+    const structuredBronzeById = {};
     for (const n of byLayer.bronze) {
       if (!n.structured) continue;
+      structuredBronzeById[n.id] = n;
       const bronzeNode = flowNodes.find((fn) => fn.id === String(n.id));
       const y = bronzeNode.position.y;
       const silverUnpackedId = `silver-unpacked-${n.id}`;
@@ -272,8 +293,10 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
     }
 
     rawEdges.forEach((e) => {
+      const structuredBronze = structuredBronzeById[e.source];
+      const reroutedSource = structuredBronze ? rerouteThroughStage(structuredBronze, sqlByDataset[e.target]) : null;
       flowEdges.push({
-        id: `${e.source}-${e.target}`, source: String(e.source), target: String(e.target),
+        id: `${e.source}-${e.target}`, source: reroutedSource || String(e.source), target: String(e.target),
         animated: false, style: edgeStyle(e.source < 0),
       });
     });
@@ -282,7 +305,7 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
     // every node-pushing branch above stays oblivious to it.
     const positionedNodes = flowNodes.map((n) => (positionOverrides[n.id] ? { ...n, position: positionOverrides[n.id] } : n));
     return { nodes: positionedNodes, edges: flowEdges };
-  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, qualityByDataset, publishedByDataset, dashboardByDataset, publishedLabel, dashboardLabel, i18n.language, t, positionOverrides]);
+  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, qualityByDataset, publishedByDataset, dashboardByDataset, sqlByDataset, publishedLabel, dashboardLabel, i18n.language, t, positionOverrides]);
 
   const hasCustomLayout = Object.keys(positionOverrides).length > 0;
 

@@ -1067,6 +1067,7 @@
       "codeContractMid": "lit une table amont,",
       "codeContractPost": "écrit la table de sortie dans le schéma gold. Aucune connexion à gérer.",
       "upstreams": "Upstreams (lignée)",
+      "upstreamViaStage": "le SQL lit {{stage}}",
       "noUpstreamsEqual": "Aucun dataset de couche inférieure ou égale disponible.",
       "noUpstreamsLower": "Aucun dataset de couche inférieure disponible.",
       "testsOnOutput": "Tests (appliqués à la table produite)",
