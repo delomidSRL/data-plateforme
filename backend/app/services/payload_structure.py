@@ -638,7 +638,23 @@ def materialize_unpacked_typed_sync(warehouse: DataSource, column_mapping: list[
     per project via dbt's on-run-start, (re)created here too since a first save can land before
     any dbt build ever has. Deliberately stops at 02 (matches the guided "+" popup's 2-step
     scope, §7 UX) — standardization/flags/quarantine stay whatever a real dbt build produces
-    in bronze, reachable from the canvas's 03/04/05 nodes once this bronze has a chain."""
+    in bronze, reachable from the canvas's 03/04/05 nodes once this bronze has a chain.
+
+    Unlike the real 02_typed (a CTAS carries no constraints, and bronze deliberately never
+    excludes a row — cast_issues tags a problem instead), `silver.typed_<name>` is meant to be
+    a directly-usable preview: the contract's own is_primary_key/nullable are applied as real
+    PRIMARY KEY / NOT NULL constraints right after it's built. If the actual data doesn't
+    support them (a "required" field with an absent value, a "key" field with a duplicate —
+    both of which 02_typed would only ever have tagged, never rejected), the ALTER TABLE fails
+    and the whole save is rejected via the same PayloadStructureError path below — surfacing
+    exactly that mismatch instead of silently building a table that doesn't honor its contract."""
+    included = [f for f in column_mapping if f.get("include", True)]
+    pk_columns = [f["target_name"] for f in included if f.get("is_primary_key")]
+    # A primary key column is implicitly NOT NULL in Postgres regardless of what `nullable`
+    # says — included here so the ALTER TABLE order below (NOT NULL, then the PK constraint)
+    # never fails on that account alone.
+    not_null_columns = sorted({f["target_name"] for f in included if not f.get("nullable", True)} | set(pk_columns))
+
     rendered = render_unpacked_typed_models(column_mapping, bronze_name)
 
     unpacked_select = _compile_stage_sql(rendered["unpacked_sql"], var_entries=rendered["vars_entries"], ref_map={})
@@ -659,6 +675,20 @@ def materialize_unpacked_typed_sync(warehouse: DataSource, column_mapping: list[
             cur.execute(pgsql.SQL("CREATE TABLE {} AS {}").format(pgsql.Identifier("silver", unpacked_table), pgsql.SQL(unpacked_select)))
             cur.execute(pgsql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(pgsql.Identifier("silver", typed_table)))
             cur.execute(pgsql.SQL("CREATE TABLE {} AS {}").format(pgsql.Identifier("silver", typed_table), pgsql.SQL(typed_select)))
+            for col in not_null_columns:
+                cur.execute(
+                    pgsql.SQL("ALTER TABLE {} ALTER COLUMN {} SET NOT NULL")
+                    .format(pgsql.Identifier("silver", typed_table), pgsql.Identifier(col))
+                )
+            if pk_columns:
+                cur.execute(
+                    pgsql.SQL("ALTER TABLE {} ADD CONSTRAINT {} PRIMARY KEY ({})")
+                    .format(
+                        pgsql.Identifier("silver", typed_table),
+                        pgsql.Identifier(f"{typed_table}_pkey"),
+                        pgsql.SQL(", ").join(pgsql.Identifier(c) for c in pk_columns),
+                    )
+                )
         conn.commit()
     except Exception as exc:
         conn.rollback()
