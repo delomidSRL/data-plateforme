@@ -64,6 +64,11 @@ export default function ProjectDetail({ readOnly = false }) {
   const [importWizardOpen, setImportWizardOpen] = useState(false);
   const [importValidating, setImportValidating] = useState(null);
   const [structurationTargetId, setStructurationTargetId] = useState(null); // Module 6 extension — canvas node click
+  const [structurationFocusSection, setStructurationFocusSection] = useState(null); // Module 18 §7 — which stage node was clicked
+  const openStructuration = (datasetId, section = null) => {
+    setStructurationTargetId(datasetId);
+    setStructurationFocusSection(section);
+  };
   const [hasProdEnvironment, setHasProdEnvironment] = useState(false); // Module 17 §5.3.1
   const [hasProdBinding, setHasProdBinding] = useState(false);
   const [promotionOpen, setPromotionOpen] = useState(false);
@@ -472,7 +477,7 @@ export default function ProjectDetail({ readOnly = false }) {
           {view === "canvas" ? (
             <LineageCanvas
               nodes={lineage.nodes} edges={lineage.edges} selectedId={selectedDataset?.id} onSelect={handleSelectNode}
-              projectId={project.id} onOpenStructuration={setStructurationTargetId}
+              projectId={project.id} onOpenStructuration={openStructuration}
               qualityByDataset={qualityByDataset} publishedByDataset={publishedByDataset} dashboardByDataset={dashboardByDataset}
             />
           ) : (
@@ -557,7 +562,10 @@ export default function ProjectDetail({ readOnly = false }) {
       {structurationTargetId != null && (() => {
         const structurationDataset = datasets.find((d) => d.id === structurationTargetId);
         return structurationDataset ? (
-          <StructurationPopup project={project} dataset={structurationDataset} onClose={() => setStructurationTargetId(null)} />
+          <StructurationPopup
+            project={project} dataset={structurationDataset} focusSection={structurationFocusSection}
+            onClose={() => { setStructurationTargetId(null); setStructurationFocusSection(null); }}
+          />
         ) : null;
       })()}
     </>

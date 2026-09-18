@@ -8,10 +8,10 @@ import StructurationPanel from "./StructurationPanel.jsx";
 // toggleUpstream) — same panel every time, just not buried behind the bronze dataset's own
 // edit drawer. Titled literally "Application data quality" (kept in English on purpose,
 // same convention as the import wizard's Schema-on-Read/Schema-on-Write).
-export default function StructurationPopup({ project, dataset, onClose }) {
+export default function StructurationPopup({ project, dataset, onClose, focusSection = null }) {
   return (
     <Modal title="Application data quality" description={dataset.name} onClose={onClose} maxWidth={880}>
-      <StructurationPanel project={project} dataset={dataset} />
+      <StructurationPanel project={project} dataset={dataset} focusSection={focusSection} />
     </Modal>
   );
 }

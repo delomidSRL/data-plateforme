@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as structurationApi from "../../api/structuration.js";
 import { ApiError } from "../../api/client.js";
@@ -23,7 +23,7 @@ const RULE_TYPES = ["format", "placeholder", "garbage", "date_range"];
 // save (renders 01_unpacked..05_validated/05_quarantine at next build) → inspect rows already
 // routed to quarantine and repair the contract or a rule from what it shows. No quarantine
 // relation before 05: every row reaches 04_annotated, diagnosed, never excluded there.
-export default function StructurationPanel({ project, dataset, readOnly = false }) {
+export default function StructurationPanel({ project, dataset, readOnly = false, focusSection = null }) {
   const { t } = useTranslation();
   const showToast = useToast();
   const [state, setState] = useState("loading"); // loading | none | notApplicable | ready
@@ -33,6 +33,31 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
   const [contractHash, setContractHash] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  // Canvas lineage chain (01..05) — each stage node opens this same popup but jumps to the
+  // block that stage actually corresponds to, so the click isn't a no-op: 01/02/03 land on
+  // the contract table (they ARE that table, unpacked/typed/standardized are all edited
+  // together), 04 lands on the quality-flag rules, and 05 quarantine lands on the rows those
+  // rules actually caught. 05 validated has no block of its own — it's just "the contract
+  // minus whatever quarantine shows" — so it reuses the contract table too.
+  const [highlighted, setHighlighted] = useState(null);
+  const fieldsRef = useRef(null);
+  const flagsRef = useRef(null);
+  const quarantineRef = useRef(null);
+
+  useEffect(() => {
+    if (state !== "ready" || !focusSection) return;
+    const targetRef = { fields: fieldsRef, flags: flagsRef, quarantine: quarantineRef }[focusSection];
+    if (!targetRef?.current) return;
+    targetRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    setHighlighted(focusSection);
+    const timer = setTimeout(() => setHighlighted(null), 1600);
+    return () => clearTimeout(timer);
+  }, [state, focusSection, dataset.id]);
+
+  const highlightStyle = (key) => (highlighted === key
+    ? { boxShadow: "0 0 0 2px var(--ember)", borderRadius: "var(--radius)", transition: "box-shadow .3s" }
+    : { transition: "box-shadow .3s" });
 
   const load = async () => {
     setState("loading");
@@ -129,7 +154,7 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
         </div>
       )}
 
-      <div className="table-wrap" style={{ marginBottom: 16 }}>
+      <div ref={fieldsRef} className="table-wrap" style={{ marginBottom: 16, ...highlightStyle("fields") }}>
         <table className="table">
           <thead>
             <tr>
@@ -208,7 +233,9 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
         </table>
       </div>
 
-      <QualityFlagsEditor flags={qualityFlags} setFlags={setQualityFlags} fields={fields} readOnly={readOnly} t={t} />
+      <div ref={flagsRef} style={{ ...highlightStyle("flags") }}>
+        <QualityFlagsEditor flags={qualityFlags} setFlags={setQualityFlags} fields={fields} readOnly={readOnly} t={t} />
+      </div>
 
       {!readOnly && (
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
@@ -217,10 +244,14 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
         </div>
       )}
 
-      {contractHash && <QuarantineSection project={project} dataset={dataset} t={t} onFieldFix={(sourceName, patch) => {
-        const idx = fields.findIndex((f) => f.source_name === sourceName);
-        if (idx >= 0) updateField(idx, patch);
-      }} />}
+      {contractHash && (
+        <div ref={quarantineRef} style={{ ...highlightStyle("quarantine") }}>
+          <QuarantineSection project={project} dataset={dataset} t={t} onFieldFix={(sourceName, patch) => {
+            const idx = fields.findIndex((f) => f.source_name === sourceName);
+            if (idx >= 0) updateField(idx, patch);
+          }} />
+        </div>
+      )}
     </div>
   );
 }
