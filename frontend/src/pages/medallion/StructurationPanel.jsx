@@ -10,18 +10,26 @@ import { useToast } from "../../context/ToastContext.jsx";
 
 const TYPES = ["text", "integer", "bigint", "numeric", "boolean", "date", "timestamp", "jsonb"];
 const IDENTIFIER_RE = /^[a-z_][a-z0-9_]{0,62}$/;
+const FLAG_NAME_RE = /^[a-z][a-z0-9_]*$/;
+
+// Module 18 §5.3 — closed catalog of no-code standardization ops (03), text fields only.
+const STANDARDIZE_OPS = ["upper", "lower", "title_case", "trim_collapse", "normalize_matching", "clean_vat", "clean_phone", "url_prefix"];
+// Module 18 §6.3 — closed catalog of no-code quality-flag rule types (04).
+const RULE_TYPES = ["format", "placeholder", "garbage", "date_range"];
 
 // Module 6 extension (payload & structuration) — étapes 2/3/4, §5 rewrite (unpacked/typed
-// convention). Profile → edit the contract (types, names, required/PK) → save (renders
-// 01_unpacked/02_typed at next build) → inspect rows with a cast issue and repair the
-// contract from what it shows. No quarantine relation: every row from bronze reaches
-// 02_typed, diagnosed via cast_issues, never excluded.
+// convention), Module 18 (standardisation + flags qualité no-code). Profile → edit the
+// contract (types, names, required/PK, standardisation) → configure quality-flag rules →
+// save (renders 01_unpacked..05_validated/05_quarantine at next build) → inspect rows already
+// routed to quarantine and repair the contract or a rule from what it shows. No quarantine
+// relation before 05: every row reaches 04_annotated, diagnosed, never excluded there.
 export default function StructurationPanel({ project, dataset, readOnly = false }) {
   const { t } = useTranslation();
   const showToast = useToast();
   const [state, setState] = useState("loading"); // loading | none | notApplicable | ready
   const [notApplicableReason, setNotApplicableReason] = useState("");
   const [fields, setFields] = useState([]);
+  const [qualityFlags, setQualityFlags] = useState([]);
   const [contractHash, setContractHash] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -32,6 +40,7 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
     try {
       const c = await structurationApi.getStructuration(project.id, dataset.id);
       setFields(c.column_mapping);
+      setQualityFlags(c.quality_flags || []);
       setContractHash(c.contract_hash);
       setState("ready");
     } catch (err) {
@@ -52,6 +61,7 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
     try {
       const c = await structurationApi.profileStructuration(project.id, dataset.id);
       setFields(c.column_mapping);
+      setQualityFlags(c.quality_flags || []);
       setContractHash(c.contract_hash);
       setState("ready");
     } catch (err) {
@@ -67,13 +77,18 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
   const includedTargetNames = fields.filter((f) => f.include).map((f) => f.target_name);
   const hasDuplicate = (name) => includedTargetNames.filter((n) => n === name).length > 1;
   const fieldsValid = fields.every((f) => !f.include || (IDENTIFIER_RE.test(f.target_name) && !hasDuplicate(f.target_name)));
-  const canSave = fields.some((f) => f.include) && fieldsValid;
+
+  const flagNames = qualityFlags.map((f) => f.name);
+  const hasDuplicateFlagName = (name) => flagNames.filter((n) => n === name).length > 1;
+  const flagsValid = qualityFlags.every((f) => FLAG_NAME_RE.test(f.name || "") && !hasDuplicateFlagName(f.name) && f.field && (f.rule_type !== "format" || (f.regex || "").trim()));
+
+  const canSave = fields.some((f) => f.include) && fieldsValid && flagsValid;
 
   const save = async () => {
     setBusy(true);
     setError("");
     try {
-      const c = await structurationApi.saveStructuration(project.id, dataset.id, { column_mapping: fields });
+      const c = await structurationApi.saveStructuration(project.id, dataset.id, { column_mapping: fields, quality_flags: qualityFlags });
       setContractHash(c.contract_hash);
       showToast(t("medallion.structuration.saved"));
     } catch (err) {
@@ -123,6 +138,7 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
               <th>{t("imports.modal.colTarget")}</th>
               <th>{t("imports.modal.colType")}</th>
               <th>{t("medallion.structuration.colNullable")}</th>
+              <th>{t("medallion.structuration.colStandardize")}</th>
               <th>{t("imports.modal.colConfidence")}</th>
             </tr>
           </thead>
@@ -157,7 +173,13 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
                     )}
                   </td>
                   <td style={{ minWidth: 110 }}>
-                    <select className="input" value={f.target_type} disabled={readOnly || !f.include} onChange={(e) => updateField(idx, { target_type: e.target.value })}>
+                    <select
+                      className="input" value={f.target_type} disabled={readOnly || !f.include}
+                      onChange={(e) => {
+                        const target_type = e.target.value;
+                        updateField(idx, target_type === "text" ? { target_type } : { target_type, standardize: null });
+                      }}
+                    >
                       {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
                     </select>
                   </td>
@@ -168,6 +190,16 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
                       onChange={(e) => updateField(idx, { nullable: e.target.checked })}
                     />
                   </td>
+                  <td style={{ minWidth: 170 }}>
+                    <select
+                      className="input" value={f.standardize || ""} disabled={readOnly || !f.include || f.target_type !== "text"}
+                      title={f.target_type !== "text" ? t("medallion.structuration.standardizeTextOnly") : undefined}
+                      onChange={(e) => updateField(idx, { standardize: e.target.value || null })}
+                    >
+                      <option value="">{t("medallion.structuration.standardizeNone")}</option>
+                      {STANDARDIZE_OPS.map((op) => <option key={op} value={op}>{t(`medallion.structuration.standardize_${op}`)}</option>)}
+                    </select>
+                  </td>
                   <td><Badge tone={(f.confidence ?? 1) >= 0.95 ? "accent" : "danger"}>{Math.round((f.confidence ?? 1) * 100)}%</Badge></td>
                 </tr>
               );
@@ -175,6 +207,8 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
           </tbody>
         </table>
       </div>
+
+      <QualityFlagsEditor flags={qualityFlags} setFlags={setQualityFlags} fields={fields} readOnly={readOnly} t={t} />
 
       {!readOnly && (
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
@@ -187,6 +221,91 @@ export default function StructurationPanel({ project, dataset, readOnly = false 
         const idx = fields.findIndex((f) => f.source_name === sourceName);
         if (idx >= 0) updateField(idx, patch);
       }} />}
+    </div>
+  );
+}
+
+// Module 18 §6 — 04's flags, configured without SQL: a name, the field it reads, a rule type
+// (each backed by a generic macro server-side), rule-specific params, and the category that's
+// the ONLY thing 05's routing reads. Referencing an excluded field is caught server-side
+// (validate_quality_flags) — the field picker here only ever offers currently-included fields.
+function QualityFlagsEditor({ flags, setFlags, fields, readOnly, t }) {
+  const includedFields = fields.filter((f) => f.include);
+
+  const addFlag = () => setFlags((fs) => [...fs, {
+    name: "", field: includedFields[0]?.target_name || "", rule_type: "format", category: "elimination", regex: "",
+  }]);
+  const updateFlag = (idx, patch) => setFlags((fs) => fs.map((f, i) => (i === idx ? { ...f, ...patch } : f)));
+  const removeFlag = (idx) => setFlags((fs) => fs.filter((_, i) => i !== idx));
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{t("medallion.structuration.qualityFlagsTitle")}</div>
+        {!readOnly && <button type="button" className="btn-ghost" style={{ padding: "4px 8px", fontSize: 11.5 }} onClick={addFlag}>+ {t("medallion.structuration.addFlag")}</button>}
+      </div>
+      {flags.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>{t("medallion.structuration.noFlags")}</div>}
+      {flags.map((rule, idx) => {
+        const invalidName = !FLAG_NAME_RE.test(rule.name || "") || flags.filter((f) => f.name === rule.name).length > 1;
+        return (
+          <div key={idx} className="card" style={{ padding: 10, marginBottom: 8, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end" }}>
+            <div style={{ minWidth: 160 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>{t("medallion.structuration.flagName")}</div>
+              <Input
+                value={rule.name} disabled={readOnly} placeholder="dq_invalid_email"
+                style={{ fontFamily: "var(--font-m)", fontSize: 12, borderColor: invalidName ? "var(--danger)" : undefined }}
+                onChange={(e) => updateFlag(idx, { name: e.target.value })}
+              />
+            </div>
+            <div style={{ minWidth: 150 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>{t("medallion.structuration.flagField")}</div>
+              <select className="input" value={rule.field} disabled={readOnly} onChange={(e) => updateFlag(idx, { field: e.target.value })}>
+                {includedFields.map((f) => <option key={f.target_name} value={f.target_name}>{f.target_name}</option>)}
+              </select>
+            </div>
+            <div style={{ minWidth: 150 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>{t("medallion.structuration.flagRuleType")}</div>
+              <select className="input" value={rule.rule_type} disabled={readOnly} onChange={(e) => updateFlag(idx, { rule_type: e.target.value })}>
+                {RULE_TYPES.map((rt) => <option key={rt} value={rt}>{t(`medallion.structuration.rule_${rt}`)}</option>)}
+              </select>
+            </div>
+            {rule.rule_type === "format" && (
+              <div style={{ minWidth: 200 }}>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>{t("medallion.structuration.flagRegex")}</div>
+                <Input
+                  value={rule.regex || ""} disabled={readOnly} placeholder="^[^@]+@[^@]+\.[^@]+$"
+                  style={{ fontFamily: "var(--font-m)", fontSize: 12 }}
+                  onChange={(e) => updateFlag(idx, { regex: e.target.value })}
+                />
+              </div>
+            )}
+            {rule.rule_type === "date_range" && (
+              <>
+                <div style={{ minWidth: 130 }}>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>{t("medallion.structuration.flagMinDate")}</div>
+                  <Input type="date" value={rule.min_date || ""} disabled={readOnly} onChange={(e) => updateFlag(idx, { min_date: e.target.value || null })} />
+                </div>
+                <div style={{ minWidth: 130 }}>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>{t("medallion.structuration.flagMaxDate")}</div>
+                  <Input type="date" value={rule.max_date || ""} disabled={readOnly} onChange={(e) => updateFlag(idx, { max_date: e.target.value || null })} />
+                </div>
+              </>
+            )}
+            <div style={{ minWidth: 150 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>{t("medallion.structuration.flagCategory")}</div>
+              <select className="input" value={rule.category} disabled={readOnly} onChange={(e) => updateFlag(idx, { category: e.target.value })}>
+                <option value="elimination">{t("medallion.structuration.categoryElimination")}</option>
+                <option value="informative">{t("medallion.structuration.categoryInformative")}</option>
+              </select>
+            </div>
+            {!readOnly && (
+              <button type="button" className="btn-ghost" style={{ padding: "6px 8px", fontSize: 13, color: "var(--danger)" }} onClick={() => removeFlag(idx)} title={t("medallion.structuration.removeFlag")}>
+                ✕
+              </button>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -264,8 +383,8 @@ function QuarantineSection({ project, dataset, t, onFieldFix }) {
                   <tbody>
                     {rows === null && <tr><td colSpan={3} style={{ color: "var(--text-muted)" }}>{t("common.loading")}</td></tr>}
                     {rows?.map((r, i) => {
-                      const issue = r.issues?.find((iss) => iss.startsWith(`${c.column}:`));
-                      const motif = issue ? issue.split(":", 2)[1] : "—";
+                      const issue = r.issues?.find((iss) => iss.startsWith(`${c.column}:`)) || r.issues?.find((iss) => iss === c.column);
+                      const motif = issue && issue.includes(":") ? issue.split(":", 2)[1] : (issue ? c.column : "—");
                       return (
                         <tr key={i}>
                           <td style={{ fontFamily: "var(--font-m)", fontSize: 12 }}>{r.row_number ?? "—"}</td>
