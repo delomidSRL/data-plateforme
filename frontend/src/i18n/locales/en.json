@@ -1144,7 +1144,8 @@
       "stageHint_standardized": "03 · Standardized — casing, whitespace and format cleanup (VAT, phone, URL…) applied per field.",
       "stageHint_annotated": "04 · Annotated — quality-flag rules evaluated and tagged in data_quality_flags.",
       "stageHint_validated": "05 · Validated — rows with no blocking flag; this is what silver reads.",
-      "stageHint_quarantine": "05 · Quarantine — rows with a blocking flag, kept here for review and repair."
+      "stageHint_quarantine": "05 · Quarantine — rows with a blocking flag, kept here for review and repair.",
+      "showFullContract": "Show full contract"
     },
     "publish": {
       "tab": "Publish",

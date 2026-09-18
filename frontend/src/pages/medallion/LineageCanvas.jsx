@@ -18,14 +18,14 @@ const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "O
 // Names/order mirror the actual model files (01_unpacked_.. through 04_annotated_..); 04
 // fans out into the two mirror-predicate terminals (05_validated_.., which silver reads, and
 // 05_quarantine_.., a dead end kept for review — see render_validated_quarantine_models).
-// `section` says which block of the structuration popup this stage's click should jump to
-// (see StructurationPanel's focusSection) — 01/02/03 are all edited together as the one
-// contract table, so they share "fields"; 04 is its own "flags" block.
+// `key` doubles as the stage id passed to onOpenStructuration — StructurationPanel uses it
+// both to jump to the right popup block and to progressively reveal only the contract
+// columns that stage has actually decided by then (see its STAGE_LEVEL).
 const STRUCTURATION_STAGES = [
-  { key: "unpacked", num: "01", section: "fields" },
-  { key: "typed", num: "02", section: "fields" },
-  { key: "standardized", num: "03", section: "fields" },
-  { key: "annotated", num: "04", section: "flags" },
+  { key: "unpacked", num: "01" },
+  { key: "typed", num: "02" },
+  { key: "standardized", num: "03" },
+  { key: "annotated", num: "04" },
 ];
 const STAGE_X = { unpacked: 160, typed: 280, standardized: 400, annotated: 520, validated: 640 };
 const QUARANTINE_Y_OFFSET = 46;
@@ -268,7 +268,7 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
         if (!validatedId) {
           const bronzeNode = flowNodes.find((n) => n.id === String(e.source));
           const y = bronzeNode ? bronzeNode.position.y : 20 + i * 100;
-          const openPopup = (section) => () => onOpenStructuration?.(e.source, section);
+          const openPopup = (stageId) => () => onOpenStructuration?.(e.source, stageId);
 
           const stageIds = STRUCTURATION_STAGES.map((stage) => `structuration-${stage.key}-${e.source}`);
           STRUCTURATION_STAGES.forEach((stage, idx) => {
@@ -278,7 +278,7 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
               position: { x: STAGE_X[stage.key], y },
               data: {
                 label: `${stage.num} ${stage.key}`, hint: t(`medallion.structuration.stageHint_${stage.key}`),
-                selected: false, onClick: openPopup(stage.section),
+                selected: false, onClick: openPopup(stage.key),
               },
             });
           });
@@ -290,7 +290,7 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
             position: { x: STAGE_X.validated, y },
             data: {
               label: "05 validated", hint: t("medallion.structuration.stageHint_validated"), tone: "success",
-              icon: Icon.check({ width: 11, height: 11 }), selected: false, onClick: openPopup("fields"),
+              icon: Icon.check({ width: 11, height: 11 }), selected: false, onClick: openPopup("validated"),
             },
           });
 

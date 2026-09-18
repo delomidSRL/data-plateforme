@@ -17,13 +17,23 @@ const STANDARDIZE_OPS = ["upper", "lower", "title_case", "trim_collapse", "norma
 // Module 18 §6.3 — closed catalog of no-code quality-flag rule types (04).
 const RULE_TYPES = ["format", "placeholder", "garbage", "date_range"];
 
+// Module 18 §7 — how far into the 01..05 chain a stage sits, used to progressively reveal
+// contract columns instead of dumping everything at once: 01 only knows raw fields exist,
+// 02 decides their type/name/nullability, 03 adds standardization, and by 04 every decision
+// (incl. quality flags) is on the table — 05 validated/quarantine are routing outcomes of
+// that same fully-decided contract, so they show everything too.
+const STAGE_LEVEL = { unpacked: 1, typed: 2, standardized: 3, annotated: 4, validated: 4, quarantine: 4 };
+const MAX_LEVEL = 4;
+// Which popup block a stage's click should scroll to / highlight.
+const STAGE_BLOCK = { unpacked: "fields", typed: "fields", standardized: "fields", validated: "fields", annotated: "flags", quarantine: "quarantine" };
+
 // Module 6 extension (payload & structuration) — étapes 2/3/4, §5 rewrite (unpacked/typed
 // convention), Module 18 (standardisation + flags qualité no-code). Profile → edit the
 // contract (types, names, required/PK, standardisation) → configure quality-flag rules →
 // save (renders 01_unpacked..05_validated/05_quarantine at next build) → inspect rows already
 // routed to quarantine and repair the contract or a rule from what it shows. No quarantine
 // relation before 05: every row reaches 04_annotated, diagnosed, never excluded there.
-export default function StructurationPanel({ project, dataset, readOnly = false, focusSection = null }) {
+export default function StructurationPanel({ project, dataset, readOnly = false, stage = null }) {
   const { t } = useTranslation();
   const showToast = useToast();
   const [state, setState] = useState("loading"); // loading | none | notApplicable | ready
@@ -34,28 +44,36 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // Canvas lineage chain (01..05) — each stage node opens this same popup but jumps to the
-  // block that stage actually corresponds to, so the click isn't a no-op: 01/02/03 land on
-  // the contract table (they ARE that table, unpacked/typed/standardized are all edited
-  // together), 04 lands on the quality-flag rules, and 05 quarantine lands on the rows those
-  // rules actually caught. 05 validated has no block of its own — it's just "the contract
-  // minus whatever quarantine shows" — so it reuses the contract table too.
+  // Canvas lineage chain (01..05) — each stage node opens this same popup, but only reveals
+  // the columns/blocks that stage has actually decided by then (see STAGE_LEVEL): 01 shows
+  // only the raw fields, 02 adds naming/typing, 03 adds standardization, 04 adds the quality
+  // flags — nothing left to gate after that, so 05 validated/quarantine both show everything.
+  // "Show full contract" is the escape hatch for anyone who wants the whole picture anyway.
+  const [showAll, setShowAll] = useState(false);
   const [highlighted, setHighlighted] = useState(null);
   const fieldsRef = useRef(null);
   const flagsRef = useRef(null);
   const quarantineRef = useRef(null);
 
+  const level = showAll || !stage ? MAX_LEVEL : (STAGE_LEVEL[stage] ?? MAX_LEVEL);
+  const showTyped = level >= 2;
+  const showStandardize = level >= 3;
+  const showFlags = level >= 4;
+
+  useEffect(() => { setShowAll(false); }, [dataset.id, stage]);
+
   useEffect(() => {
-    if (state !== "ready" || !focusSection) return;
-    const targetRef = { fields: fieldsRef, flags: flagsRef, quarantine: quarantineRef }[focusSection];
+    if (state !== "ready" || !stage) return;
+    const block = STAGE_BLOCK[stage];
+    const targetRef = { fields: fieldsRef, flags: flagsRef, quarantine: quarantineRef }[block];
     if (!targetRef?.current) return;
     targetRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-    setHighlighted(focusSection);
+    setHighlighted(block);
     const timer = setTimeout(() => setHighlighted(null), 1600);
     return () => clearTimeout(timer);
-  }, [state, focusSection, dataset.id]);
+  }, [state, stage, dataset.id]);
 
-  const highlightStyle = (key) => (highlighted === key
+  const highlightStyle = (block) => (highlighted === block
     ? { boxShadow: "0 0 0 2px var(--ember)", borderRadius: "var(--radius)", transition: "box-shadow .3s" }
     : { transition: "box-shadow .3s" });
 
@@ -148,7 +166,19 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
     <div>
       {error && <div className="error-banner">{Icon.warn()}<span>{error}</span></div>}
 
-      {fields.some((f) => f.ambiguous && f.include) && (
+      {stage && level < MAX_LEVEL && (
+        <div className="card" style={{
+          padding: "8px 12px", marginBottom: 12, display: "flex", justifyContent: "space-between",
+          alignItems: "center", gap: 10, background: "var(--ember-soft)", border: "1px solid var(--ember)",
+        }}>
+          <div style={{ fontSize: 12, color: "var(--ember-600)" }}>{t(`medallion.structuration.stageHint_${stage}`)}</div>
+          <button type="button" className="btn-ghost" style={{ padding: "4px 8px", fontSize: 11.5, whiteSpace: "nowrap" }} onClick={() => setShowAll(true)}>
+            {t("medallion.structuration.showFullContract")}
+          </button>
+        </div>
+      )}
+
+      {showTyped && fields.some((f) => f.ambiguous && f.include) && (
         <div className="error-banner" style={{ background: "rgba(229,114,0,.08)", borderColor: "rgba(229,114,0,.3)", color: "var(--ember-600)" }}>
           {Icon.warn()}<span>{t("medallion.structuration.ambiguousWarning")}</span>
         </div>
@@ -160,11 +190,11 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
             <tr>
               <th>{t("imports.modal.colInclude")}</th>
               <th>{t("imports.modal.colSource")}</th>
-              <th>{t("imports.modal.colTarget")}</th>
-              <th>{t("imports.modal.colType")}</th>
-              <th>{t("medallion.structuration.colNullable")}</th>
-              <th>{t("medallion.structuration.colStandardize")}</th>
-              <th>{t("imports.modal.colConfidence")}</th>
+              {showTyped && <th>{t("imports.modal.colTarget")}</th>}
+              {showTyped && <th>{t("imports.modal.colType")}</th>}
+              {showTyped && <th>{t("medallion.structuration.colNullable")}</th>}
+              {showStandardize && <th>{t("medallion.structuration.colStandardize")}</th>}
+              {showTyped && <th>{t("imports.modal.colConfidence")}</th>}
             </tr>
           </thead>
           <tbody>
@@ -182,50 +212,58 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
                       </span>
                     )}
                   </td>
-                  <td style={{ minWidth: 140 }}>
-                    <Input
-                      style={{ fontFamily: "var(--font-m)", fontSize: 12, borderColor: invalidName ? "var(--danger)" : undefined }}
-                      value={f.target_name} disabled={readOnly || !f.include}
-                      onChange={(e) => updateField(idx, { target_name: e.target.value })}
-                    />
-                    {showDateFormat && (
-                      <select className="input" style={{ marginTop: 6, fontSize: 11.5 }} disabled={readOnly}
-                        value={f.format || "%d/%m/%Y"} onChange={(e) => updateField(idx, { format: e.target.value })}>
-                        <option value="%Y-%m-%d">{t("imports.modal.dateFormatISO")}</option>
-                        <option value="%d/%m/%Y">{t("imports.modal.dateFormatDDMM")}</option>
-                        <option value="%m/%d/%Y">{t("imports.modal.dateFormatMMDD")}</option>
+                  {showTyped && (
+                    <td style={{ minWidth: 140 }}>
+                      <Input
+                        style={{ fontFamily: "var(--font-m)", fontSize: 12, borderColor: invalidName ? "var(--danger)" : undefined }}
+                        value={f.target_name} disabled={readOnly || !f.include}
+                        onChange={(e) => updateField(idx, { target_name: e.target.value })}
+                      />
+                      {showDateFormat && (
+                        <select className="input" style={{ marginTop: 6, fontSize: 11.5 }} disabled={readOnly}
+                          value={f.format || "%d/%m/%Y"} onChange={(e) => updateField(idx, { format: e.target.value })}>
+                          <option value="%Y-%m-%d">{t("imports.modal.dateFormatISO")}</option>
+                          <option value="%d/%m/%Y">{t("imports.modal.dateFormatDDMM")}</option>
+                          <option value="%m/%d/%Y">{t("imports.modal.dateFormatMMDD")}</option>
+                        </select>
+                      )}
+                    </td>
+                  )}
+                  {showTyped && (
+                    <td style={{ minWidth: 110 }}>
+                      <select
+                        className="input" value={f.target_type} disabled={readOnly || !f.include}
+                        onChange={(e) => {
+                          const target_type = e.target.value;
+                          updateField(idx, target_type === "text" ? { target_type } : { target_type, standardize: null });
+                        }}
+                      >
+                        {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
                       </select>
-                    )}
-                  </td>
-                  <td style={{ minWidth: 110 }}>
-                    <select
-                      className="input" value={f.target_type} disabled={readOnly || !f.include}
-                      onChange={(e) => {
-                        const target_type = e.target.value;
-                        updateField(idx, target_type === "text" ? { target_type } : { target_type, standardize: null });
-                      }}
-                    >
-                      {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
-                    </select>
-                  </td>
-                  <td style={{ textAlign: "center" }}>
-                    <input
-                      type="checkbox" checked={f.nullable ?? true} disabled={readOnly || !f.include}
-                      title={t("medallion.structuration.nullableHelp")}
-                      onChange={(e) => updateField(idx, { nullable: e.target.checked })}
-                    />
-                  </td>
-                  <td style={{ minWidth: 170 }}>
-                    <select
-                      className="input" value={f.standardize || ""} disabled={readOnly || !f.include || f.target_type !== "text"}
-                      title={f.target_type !== "text" ? t("medallion.structuration.standardizeTextOnly") : undefined}
-                      onChange={(e) => updateField(idx, { standardize: e.target.value || null })}
-                    >
-                      <option value="">{t("medallion.structuration.standardizeNone")}</option>
-                      {STANDARDIZE_OPS.map((op) => <option key={op} value={op}>{t(`medallion.structuration.standardize_${op}`)}</option>)}
-                    </select>
-                  </td>
-                  <td><Badge tone={(f.confidence ?? 1) >= 0.95 ? "accent" : "danger"}>{Math.round((f.confidence ?? 1) * 100)}%</Badge></td>
+                    </td>
+                  )}
+                  {showTyped && (
+                    <td style={{ textAlign: "center" }}>
+                      <input
+                        type="checkbox" checked={f.nullable ?? true} disabled={readOnly || !f.include}
+                        title={t("medallion.structuration.nullableHelp")}
+                        onChange={(e) => updateField(idx, { nullable: e.target.checked })}
+                      />
+                    </td>
+                  )}
+                  {showStandardize && (
+                    <td style={{ minWidth: 170 }}>
+                      <select
+                        className="input" value={f.standardize || ""} disabled={readOnly || !f.include || f.target_type !== "text"}
+                        title={f.target_type !== "text" ? t("medallion.structuration.standardizeTextOnly") : undefined}
+                        onChange={(e) => updateField(idx, { standardize: e.target.value || null })}
+                      >
+                        <option value="">{t("medallion.structuration.standardizeNone")}</option>
+                        {STANDARDIZE_OPS.map((op) => <option key={op} value={op}>{t(`medallion.structuration.standardize_${op}`)}</option>)}
+                      </select>
+                    </td>
+                  )}
+                  {showTyped && <td><Badge tone={(f.confidence ?? 1) >= 0.95 ? "accent" : "danger"}>{Math.round((f.confidence ?? 1) * 100)}%</Badge></td>}
                 </tr>
               );
             })}
@@ -233,9 +271,11 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
         </table>
       </div>
 
-      <div ref={flagsRef} style={{ ...highlightStyle("flags") }}>
-        <QualityFlagsEditor flags={qualityFlags} setFlags={setQualityFlags} fields={fields} readOnly={readOnly} t={t} />
-      </div>
+      {showFlags && (
+        <div ref={flagsRef} style={{ ...highlightStyle("flags") }}>
+          <QualityFlagsEditor flags={qualityFlags} setFlags={setQualityFlags} fields={fields} readOnly={readOnly} t={t} />
+        </div>
+      )}
 
       {!readOnly && (
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
@@ -244,7 +284,7 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
         </div>
       )}
 
-      {contractHash && (
+      {contractHash && showFlags && (
         <div ref={quarantineRef} style={{ ...highlightStyle("quarantine") }}>
           <QuarantineSection project={project} dataset={dataset} t={t} onFieldFix={(sourceName, patch) => {
             const idx = fields.findIndex((f) => f.source_name === sourceName);
