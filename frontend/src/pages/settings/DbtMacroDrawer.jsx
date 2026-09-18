@@ -7,6 +7,13 @@ import { Icon } from "../../components/icons.jsx";
 import * as dbtMacrosApi from "../../api/dbtMacros.js";
 
 const NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+// Mirrors backend app/services/dbt_macros.py's extract_macro_name — used here only to warn
+// early (before submit) if the name typed above doesn't match the { % macro %} declared below.
+const MACRO_DECL_RE = /\{%-?\s*macro\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/;
+
+const DEFINITION_PLACEHOLDER = `{% macro mask_email(col) -%}
+regexp_replace(col, '(^.).*(@.*)$', '\\1***\\2')
+{%- endmacro %}`;
 
 export default function DbtMacroDrawer({ macro, onClose, onSaved, onDeleted }) {
   const { t } = useTranslation();
@@ -14,22 +21,18 @@ export default function DbtMacroDrawer({ macro, onClose, onSaved, onDeleted }) {
 
   const [name, setName] = useState(macro?.name || "");
   const [description, setDescription] = useState(macro?.description || "");
-  const [parameters, setParameters] = useState(macro?.parameters?.length ? macro.parameters : [{ name: "col", default: "" }]);
-  const [sqlBody, setSqlBody] = useState(macro?.sql_body || "");
+  const [definition, setDefinition] = useState(macro?.definition || "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const addParam = () => setParameters((ps) => [...ps, { name: "", default: "" }]);
-  const updateParam = (i, patch) => setParameters((ps) => ps.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
-  const removeParam = (i) => setParameters((ps) => ps.filter((_, idx) => idx !== i));
-
-  const valid = NAME_RE.test(name.trim()) && sqlBody.trim() && parameters.every((p) => NAME_RE.test((p.name || "").trim()));
+  const declaredName = definition.trim() ? MACRO_DECL_RE.exec(definition)?.[1] : null;
+  const nameMismatch = !!(name.trim() && definition.trim() && declaredName && declaredName !== name.trim());
+  const valid = NAME_RE.test(name.trim()) && definition.trim() && !nameMismatch;
 
   const buildPayload = () => ({
     name: name.trim(),
     description: description.trim() || null,
-    parameters: parameters.map((p) => ({ name: p.name.trim(), default: (p.default || "").trim() || null })),
-    sql_body: sqlBody,
+    definition,
   });
 
   const submit = async (e) => {
@@ -69,7 +72,7 @@ export default function DbtMacroDrawer({ macro, onClose, onSaved, onDeleted }) {
 
       <form onSubmit={submit}>
         <Field label={t("settings.dbtMacros.drawer.name")}>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="dedup_key" />
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="mask_email" />
           {name && !NAME_RE.test(name.trim()) && (
             <div style={{ fontSize: 11, color: "#b3261e", marginTop: 4 }}>{t("settings.dbtMacros.drawer.nameInvalid")}</div>
           )}
@@ -79,27 +82,18 @@ export default function DbtMacroDrawer({ macro, onClose, onSaved, onDeleted }) {
           <textarea className="input" style={{ minHeight: 50, resize: "vertical" }} value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
 
-        <Field label={t("settings.dbtMacros.drawer.parameters")}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {parameters.map((p, i) => (
-              <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <input className="input" style={{ flex: 1 }} placeholder={t("settings.dbtMacros.drawer.paramName")} value={p.name} onChange={(e) => updateParam(i, { name: e.target.value })} />
-                <input className="input" style={{ flex: 1 }} placeholder={t("settings.dbtMacros.drawer.paramDefault")} value={p.default || ""} onChange={(e) => updateParam(i, { default: e.target.value })} />
-                <button type="button" className="btn-icon" onClick={() => removeParam(i)}>{Icon.trash()}</button>
-              </div>
-            ))}
-            <Button type="button" variant="ghost" className="inline" onClick={addParam}>{Icon.plus()} {t("settings.dbtMacros.drawer.addParam")}</Button>
-          </div>
-          <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>{t("settings.dbtMacros.drawer.paramDefaultHint")}</div>
-        </Field>
-
-        <Field label={t("settings.dbtMacros.drawer.sqlBody")}>
+        <Field label={t("settings.dbtMacros.drawer.definition")}>
           <textarea
-            className="input" style={{ fontFamily: "var(--font-m)", fontSize: 12.5, minHeight: 140, resize: "vertical" }}
-            value={sqlBody} onChange={(e) => setSqlBody(e.target.value)}
-            placeholder={`upper(trim(${parameters[0]?.name || "col"}))`}
+            className="input" style={{ fontFamily: "var(--font-m)", fontSize: 12.5, minHeight: 160, resize: "vertical" }}
+            value={definition} onChange={(e) => setDefinition(e.target.value)}
+            placeholder={DEFINITION_PLACEHOLDER}
           />
-          <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>{t("settings.dbtMacros.drawer.sqlBodyHint")}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>{t("settings.dbtMacros.drawer.definitionHint")}</div>
+          {nameMismatch && (
+            <div style={{ fontSize: 11, color: "#b3261e", marginTop: 4 }}>
+              {t("settings.dbtMacros.drawer.nameMismatch", { declared: declaredName, name: name.trim() })}
+            </div>
+          )}
         </Field>
 
         <div className="modal-actions">

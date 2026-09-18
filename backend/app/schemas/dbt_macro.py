@@ -1,23 +1,21 @@
 import re
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 # dbt/Jinja identifier: letters, digits, underscore, not starting with a digit — mirrors what
 # a {% macro name(...) %} block requires to be callable as {{ name(...) }}.
 _NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
-class DbtMacroParameter(BaseModel):
-    name: str
-    default: str | None = None
-
-
 class DbtMacroBase(BaseModel):
     name: str
     description: str | None = None
-    parameters: list[DbtMacroParameter] = Field(default_factory=list)
-    sql_body: str
+    # UX ask — the complete `{% macro name(...) -%} ... {%- endmacro %}` block, written by
+    # hand. The route layer (not this schema — see app.api.routes.dbt_macros) checks it
+    # actually declares a macro named `name`, so the error surfaces as a clean HTTPException
+    # detail string rather than pydantic's list-of-errors 422 shape.
+    definition: str
 
     @field_validator("name")
     @classmethod

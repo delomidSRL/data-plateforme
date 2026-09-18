@@ -330,7 +330,10 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   // built-in snippet already carries plausible placeholder args; a custom macro's snippet is
   // built from its own declared parameter names, so an author sees exactly what to fill in.
   const insertMacro = (snippet) => insertAtCursor(`{{ ${snippet} }}`);
-  const customMacroSnippet = (m) => `${m.name}(${(m.parameters || []).map((p) => p.name).join(", ")})`;
+  // Admin-authored macros carry their whole { % macro name(...) % } block (no separate
+  // structured parameters) — pull the call signature straight out of it, same regex as
+  // pages/settings/DbtMacros.jsx's own signature() display helper.
+  const customMacroSnippet = (m) => /\{%-?\s*macro\s+([a-zA-Z_][a-zA-Z0-9_]*\([^)]*\))/.exec(m.definition || "")?.[1] || `${m.name}()`;
 
   // Live column lookup per candidate upstream table/model, to help write the SELECT list
   // without leaving the panel. Best-effort: empty for tables never yet loaded by a run.

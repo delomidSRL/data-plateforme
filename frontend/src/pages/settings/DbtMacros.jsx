@@ -6,8 +6,12 @@ import { Icon } from "../../components/icons.jsx";
 import DbtMacroDrawer from "./DbtMacroDrawer.jsx";
 import { BUILTIN_MACROS } from "../medallion/builtinMacros.js";
 
+// The admin writes the whole { % macro name(...) % } block by hand now (no separate
+// structured parameters form) — the signature shown here is just extracted from it for
+// display, assuming no nested parentheses in the argument list (true of every real macro).
+const MACRO_SIGNATURE_RE = /\{%-?\s*macro\s+([a-zA-Z_][a-zA-Z0-9_]*\([^)]*\))/;
 function signature(m) {
-  return `${m.name}(${(m.parameters || []).map((p) => (p.default ? `${p.name}=${p.default}` : p.name)).join(", ")})`;
+  return MACRO_SIGNATURE_RE.exec(m.definition || "")?.[1] || `${m.name}(...)`;
 }
 
 export default function DbtMacros() {
