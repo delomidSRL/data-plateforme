@@ -705,7 +705,11 @@ def compile_adhoc_sql(sql: str, ref_map: dict[str, str]) -> str:
     schema/table generically (bronze is always reachable that way, by construction), but
     `ref()` only resolves a name actually present in `ref_map` (medallion_stats.build_ref_map)
     — a ref to something that doesn't exist project-wide is rejected here, the same mistake a
-    real dbt compile would catch, just without needing one."""
+    real dbt compile would catch, just without needing one. Also prepends STRUCTURATION_MACROS
+    (clean_string, normalize_for_matching, clean_vat, clean_phone, ...): a real dbt build sees
+    these too (dbt_project.py writes them into macros/*.sql project-wide), so a 03_standardized_
+    <name> that calls one isn't actually a mistake — without this, every such call would fail
+    here as "undefined" even though it'd compile fine for real."""
     if not sql.strip():
         raise PayloadStructureError("Requête vide.")
 
@@ -714,8 +718,9 @@ def compile_adhoc_sql(sql: str, ref_map: dict[str, str]) -> str:
             raise PayloadStructureError(f"Référence inconnue : {{{{ ref('{model_name}') }}}} — aucun dataset ni modèle « {model_name} » dans ce projet.")
         return ref_map[model_name]
 
+    macros_src = "".join(STRUCTURATION_MACROS.values())
     try:
-        template = jinja2.Environment().from_string(sql)
+        template = jinja2.Environment().from_string(macros_src + "\n" + sql)
         return template.render(
             config=lambda **_kwargs: "",
             source=lambda schema_name, table_name: f'"{schema_name}"."{table_name}"',
