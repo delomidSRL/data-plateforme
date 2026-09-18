@@ -395,6 +395,21 @@ def _cast_pattern(target_type: str, pg_format: str | None) -> str:
     return ".*"
 
 
+def _jinja_list_literal(items: list) -> str:
+    """Renders a Python list of str/dict (a dbt `post_hook` value — a plain SQL string, or
+    {"sql": ..., "transaction": bool} for a hook that must run outside dbt's wrapping
+    transaction) as Jinja/Python list-literal source text, to embed directly in a
+    `{{ config(...) }}` call. Every string value here is already a validated identifier or SQL
+    text this module built itself (never raw user input), so single-quoting is enough — no
+    apostrophes to escape."""
+    def _one(item):
+        if isinstance(item, dict):
+            fields = ", ".join(f"'{k}': {'True' if v else 'False'}" if isinstance(v, bool) else f"'{k}': '{v}'" for k, v in item.items())
+            return "{" + fields + "}"
+        return f"'{item}'"
+    return "[" + ", ".join(_one(i) for i in items) + "]"
+
+
 def _pk_and_not_null_columns(included: list[dict]) -> tuple[list[str], list[str]]:
     """Shared by every place that needs to enforce the contract's own is_primary_key/nullable
     as real constraints on `02_typed_<name>` — the empty shell (materialize_unpacked_typed_sync)
@@ -459,21 +474,25 @@ def render_unpacked_typed_models(column_mapping: list[dict], bronze_name: str) -
     )
 
     typed_qualified = f'"silver"."02_typed_{bronze_name}"'
-    post_hooks = [f'ALTER TABLE {typed_qualified} ALTER COLUMN "{c}" SET NOT NULL' for c in not_null_columns]
+    post_hooks: list = [f'ALTER TABLE {typed_qualified} ALTER COLUMN "{c}" SET NOT NULL' for c in not_null_columns]
     if pk_columns:
         pk_cols_sql = ", ".join(f'"{c}"' for c in pk_columns)
         pk_name = f"02_typed_{bronze_name}_pkey"
-        # A table materialization is a fresh build every run, but Postgres constraint/index
-        # names live in a schema-wide namespace (not per-table) — a same-named leftover
-        # (materialize_unpacked_typed_sync's own empty shell, or a stray from a swap dbt's
-        # table materialization didn't fully clean up) would otherwise collide with this
-        # ADD CONSTRAINT. DROP IF EXISTS first makes it idempotent regardless of the cause.
-        post_hooks.append(f'ALTER TABLE {typed_qualified} DROP CONSTRAINT IF EXISTS "{pk_name}"')
-        post_hooks.append(f'ALTER TABLE {typed_qualified} ADD CONSTRAINT "{pk_name}" PRIMARY KEY ({pk_cols_sql})')
+        # dbt's default table materialization builds into an intermediate relation, swaps it
+        # in (renaming the pre-existing table — materialize_unpacked_typed_sync's empty shell,
+        # or a previous run's version, PK constraint/index and all, since renaming a table
+        # never renames its constraints) to a *backup* name, THEN runs post_hook, and only
+        # THEN drops that backup — so an ordinary post_hook here races a same-named index that
+        # is still very much alive on the not-yet-dropped backup (Postgres constraint/index
+        # names are schema-wide, not per-table, so it collides regardless of which table
+        # currently holds it). `"transaction": False` defers these two to run after that
+        # backup drop has actually happened, same as dbt's own documented escape hatch for
+        # exactly this class of hook-vs-swap-timing issue.
+        post_hooks.append({"sql": f'ALTER TABLE {typed_qualified} DROP CONSTRAINT IF EXISTS "{pk_name}"', "transaction": False})
+        post_hooks.append({"sql": f'ALTER TABLE {typed_qualified} ADD CONSTRAINT "{pk_name}" PRIMARY KEY ({pk_cols_sql})', "transaction": False})
     typed_config = "materialized='table', schema='silver'"
     if post_hooks:
-        post_hook_literal = "[" + ", ".join(f"'{h}'" for h in post_hooks) + "]"
-        typed_config += f", post_hook={post_hook_literal}"
+        typed_config += f", post_hook={_jinja_list_literal(post_hooks)}"
 
     typed_sql = (
         f"{{{{ config({typed_config}) }}}}\n\n"
