@@ -9,7 +9,7 @@ import * as structurationApi from "../../api/structuration.js";
 // medallionApi.getDatasetPreview — same table + paging UI as every other dataset preview.
 export default function SilverPreviewPopup({ project, bronzeDatasetId, bronzeName, stage, onClose }) {
   const { t } = useTranslation();
-  const hintKey = stage === "typed" ? "medallion.structuration.stageHint_typed" : "medallion.structuration.stageHint_standardized";
+  const hintKey = `medallion.structuration.stageHint_${stage}`;
   return (
     <Modal title={`silver.${stage}_${bronzeName}`} description={t(hintKey)} onClose={onClose} maxWidth={880}>
       <DataPreviewPanel

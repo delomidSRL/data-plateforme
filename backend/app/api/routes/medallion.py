@@ -350,12 +350,12 @@ def preview_structuration_silver_table(
     did: int, stage: str, limit: int = preview.PREVIEW_DEFAULT_LIMIT, offset: int = 0,
     db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project),
 ):
-    """UX ask — silver.typed_<name>/silver.structured_<name> (materialize_typed_structured_sync)
+    """UX ask — silver.unpacked_<name>/silver.typed_<name> (materialize_unpacked_typed_sync)
     aren't MedallionDataset rows, so get_dataset_preview can't resolve them. Reuses the exact
     same low-level sampler (preview.attempt_sample) against a schema+table derived server-side
     from the bronze dataset's own name — never a client-supplied table string — restricted to
     the two literal stages that mechanism ever creates."""
-    if stage not in ("typed", "structured"):
+    if stage not in ("unpacked", "typed"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Étape invalide.")
     dataset = _get_dataset(db, project.id, did)
     warehouse = db.get(DataSource, project.warehouse_source_id)
@@ -426,8 +426,8 @@ def update_dataset_structuration(
     Marks the project as needing a redeploy (a changed contract re-renders the
     01_unpacked ... 05_validated/05_quarantine dbt models, Module 18, at next build) — but
     doesn't make the engineer wait for that build to see anything real: every save also
-    materializes silver.typed_<name>/silver.structured_<name> synchronously, right here (see
-    materialize_typed_structured_sync), so a failure there fails the save too."""
+    materializes silver.unpacked_<name>/silver.typed_<name> synchronously, right here (see
+    materialize_unpacked_typed_sync), so a failure there fails the save too."""
     dataset = _get_dataset(db, project.id, did)
     if payload_structure.resolve_import(db, dataset) is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ce dataset bronze n'est pas adossé à un import en mode payload.")
@@ -445,10 +445,10 @@ def update_dataset_structuration(
         payload_structure.render_unpacked_typed_models(column_mapping, dataset.name)
         payload_structure.render_standardized_model(column_mapping, dataset.name)
         payload_structure.render_annotated_model(quality_flags, dataset.name)
-        # UX ask — don't just prove it renders: materialize silver.typed_<name> and
-        # silver.structured_<name> for real, right now, with real data, instead of making the
+        # UX ask — don't just prove it renders: materialize silver.unpacked_<name> and
+        # silver.typed_<name> for real, right now, with real data, instead of making the
         # engineer wait for the next Airflow run. A save only succeeds if this actually works.
-        payload_structure.materialize_typed_structured_sync(warehouse, column_mapping, dataset.name)
+        payload_structure.materialize_unpacked_typed_sync(warehouse, column_mapping, dataset.name)
     except payload_structure.PayloadStructureError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 

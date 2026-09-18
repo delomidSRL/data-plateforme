@@ -582,13 +582,13 @@ def render_standardized_model(column_mapping: list[dict], bronze_name: str) -> s
 # ---------------------------------------------------------------------------
 # UX ask — the "+" on a payload-backed bronze and "pick this bronze as a new silver's
 # upstream" popups shouldn't just save config and make the engineer wait for the next Airflow
-# run to see anything real. Every save also materializes `silver.typed_<name>` and
-# `silver.structured_<name>` for real, right now, with real rows — by compiling the exact same
-# 01/02/03 templates a dbt build would eventually run (render_unpacked_typed_models /
-# render_standardized_model) through a standalone Jinja pass instead of the dbt compiler, then
-# executing the result directly against the warehouse. This is an instant preview layered on
-# top of the real pipeline, not a replacement for it: the bronze-schema 01..05 chain a real dbt
-# build produces later is untouched and still what Airflow/silver models actually depend on.
+# run to see anything real. Every save also materializes `silver.unpacked_<name>` and
+# `silver.typed_<name>` for real, right now, with real rows — by compiling the exact same
+# 01/02 templates a dbt build would eventually run (render_unpacked_typed_models) through a
+# standalone Jinja pass instead of the dbt compiler, then executing the result directly against
+# the warehouse. This is an instant preview layered on top of the real pipeline, not a
+# replacement for it: the bronze-schema 01..05 chain a real dbt build produces later is
+# untouched and still what Airflow/silver models actually depend on.
 # ---------------------------------------------------------------------------
 
 def _compile_stage_sql(body: str, *, var_entries: list[dict], ref_map: dict[str, str]) -> str:
@@ -612,28 +612,24 @@ def _compile_stage_sql(body: str, *, var_entries: list[dict], ref_map: dict[str,
     ).strip()
 
 
-def materialize_typed_structured_sync(warehouse: DataSource, column_mapping: list[dict], bronze_name: str) -> None:
-    """Compiles 01_unpacked inline as a subquery feeding 02_typed, persists that as
-    `silver.typed_<name>`, then compiles 03_standardized against that real table and persists
-    `silver.structured_<name>` — both DROP+CREATE (never incremental), same "always fresh, no
-    accumulation" convention as file_import.py's _sync_bronze_mirror. dp_try_cast_* must exist
-    before 02_typed's safe_cast calls can run — normally deployed once per project via dbt's
-    on-run-start, (re)created here too since a first save can land before any dbt build ever
-    has."""
+def materialize_unpacked_typed_sync(warehouse: DataSource, column_mapping: list[dict], bronze_name: str) -> None:
+    """Persists `silver.unpacked_<name>` (01, straight from render_unpacked_typed_models) and,
+    reading that real table, `silver.typed_<name>` (02) — both DROP+CREATE (never incremental),
+    same "always fresh, no accumulation" convention as file_import.py's _sync_bronze_mirror.
+    dp_try_cast_* must exist before 02_typed's safe_cast calls can run — normally deployed once
+    per project via dbt's on-run-start, (re)created here too since a first save can land before
+    any dbt build ever has. Deliberately stops at 02 (matches the guided "+" popup's 2-step
+    scope, §7 UX) — standardization/flags/quarantine stay whatever a real dbt build produces
+    in bronze, reachable from the canvas's 03/04/05 nodes once this bronze has a chain."""
     rendered = render_unpacked_typed_models(column_mapping, bronze_name)
-    standardized_sql = render_standardized_model(column_mapping, bronze_name)
 
     unpacked_select = _compile_stage_sql(rendered["unpacked_sql"], var_entries=rendered["vars_entries"], ref_map={})
+    unpacked_table = f"unpacked_{bronze_name}"
     typed_select = _compile_stage_sql(
         rendered["typed_sql"], var_entries=rendered["vars_entries"],
-        ref_map={f"01_unpacked_{bronze_name}": f"( {unpacked_select} ) as u01"},
+        ref_map={f"01_unpacked_{bronze_name}": f'"silver"."{unpacked_table}"'},
     )
     typed_table = f"typed_{bronze_name}"
-    structured_select = _compile_stage_sql(
-        standardized_sql, var_entries=[],
-        ref_map={f"02_typed_{bronze_name}": f'"silver"."{typed_table}"'},
-    )
-    structured_table = f"structured_{bronze_name}"
 
     conn = _connect_warehouse(warehouse)
     try:
@@ -641,10 +637,10 @@ def materialize_typed_structured_sync(warehouse: DataSource, column_mapping: lis
             for statement in TRY_CAST_FUNCTIONS_SQL.strip().split("\n\n"):
                 cur.execute(statement)
             cur.execute(pgsql.SQL("CREATE SCHEMA IF NOT EXISTS silver"))
+            cur.execute(pgsql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(pgsql.Identifier("silver", unpacked_table)))
+            cur.execute(pgsql.SQL("CREATE TABLE {} AS {}").format(pgsql.Identifier("silver", unpacked_table), pgsql.SQL(unpacked_select)))
             cur.execute(pgsql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(pgsql.Identifier("silver", typed_table)))
             cur.execute(pgsql.SQL("CREATE TABLE {} AS {}").format(pgsql.Identifier("silver", typed_table), pgsql.SQL(typed_select)))
-            cur.execute(pgsql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(pgsql.Identifier("silver", structured_table)))
-            cur.execute(pgsql.SQL("CREATE TABLE {} AS {}").format(pgsql.Identifier("silver", structured_table), pgsql.SQL(structured_select)))
         conn.commit()
     except Exception as exc:
         conn.rollback()

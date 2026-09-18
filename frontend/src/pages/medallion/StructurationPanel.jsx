@@ -29,8 +29,11 @@ const STAGE_BLOCK = { unpacked: "fields", typed: "fields", standardized: "fields
 // Module 18 §7 UX — the "+" on a payload-backed bronze and "pick this bronze as a new
 // silver's upstream" both land a first-timer on a blank contract with nothing decided yet;
 // dumping the full editor on them (the canvas-jump behavior) skips explaining what each
-// stage even is. `guided` walks the same 5 real stage names in order instead, one at a time.
-const WIZARD_STAGES = ["unpacked", "typed", "standardized", "annotated", "quarantine"];
+// stage even is. `guided` walks a short, deliberately reduced 2-step version instead — just
+// enough to get a real, browsable silver.typed_<name> table (materialize_unpacked_typed_sync)
+// out the door fast; standardization/quality-flags/quarantine stay reachable the normal way,
+// by clicking a 03/04/05 node directly on the canvas once this bronze has a chain.
+const WIZARD_STAGES = ["unpacked", "typed"];
 
 // Module 6 extension (payload & structuration) — étapes 2/3/4, §5 rewrite (unpacked/typed
 // convention), Module 18 (standardisation + flags qualité no-code). Profile → edit the
@@ -152,13 +155,11 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
     }
   };
 
-  // Module 18 §7 UX — wizard navigation. What blocks leaving the CURRENT step mirrors what
-  // that step actually lets you edit: 01→02 just needs something kept, 02/03 need valid
-  // names (own contract table), and only 04→05 also needs valid flags (04's own block).
+  // Module 18 §7 UX — wizard navigation (01 unpacked -> 02 typed only, see WIZARD_STAGES).
+  // Leaving 01 just needs something kept; 02 (Terminer) needs valid names too, same
+  // fieldsValid the contract table itself is built from.
   const wizardStepIndex = WIZARD_STAGES.indexOf(wizardStage);
-  const wizardCanAdvance = wizardStepIndex === 0 ? fields.some((f) => f.include)
-    : wizardStepIndex === 3 ? fieldsValid && flagsValid
-    : fieldsValid;
+  const wizardCanAdvance = wizardStepIndex === 0 ? fields.some((f) => f.include) : fieldsValid;
   const wizardGoBack = () => setWizardStage(WIZARD_STAGES[Math.max(wizardStepIndex - 1, 0)]);
   const wizardGoNext = () => setWizardStage(WIZARD_STAGES[Math.min(wizardStepIndex + 1, WIZARD_STAGES.length - 1)]);
   const wizardFinish = async () => {

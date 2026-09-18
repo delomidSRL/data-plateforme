@@ -259,104 +259,109 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
         });
       });
     }
-    // Module 18 §7 — every bronze->silver edge whose bronze is payload-backed gets the full
-    // 01..05 chain spliced in between (never persisted, derived purely client-side — same
-    // spirit as origin nodes). A bronze feeding several silvers gets exactly one such chain,
-    // its "05 validated" terminal reused as the source for every one of those edges.
-    const byId = new Map(rawNodes.map((n) => [n.id, n]));
-    const structurationChainByBronze = new Map();
     const edgeStyle = (dashed, danger) => (danger
       ? { stroke: "var(--danger)", strokeWidth: 1.5, strokeDasharray: "4 3", opacity: 0.8 }
       : dashed
         ? { stroke: "var(--text-muted)", strokeWidth: 1.5, strokeDasharray: "4 3" }
         : { stroke: "var(--border)", strokeWidth: 1.5 });
-
     const flowEdges = [];
-    rawEdges.forEach((e, i) => {
-      const source = byId.get(e.source);
+
+    // Module 18 §7 — every payload-backed bronze gets the full 01..05 chain spliced onto it
+    // directly (never persisted, derived purely client-side — same spirit as origin nodes),
+    // regardless of whether any silver dataset references it yet: configuring/saving a
+    // contract (materialize_unpacked_typed_sync) doesn't wait for a downstream silver to
+    // exist, so the canvas shouldn't hide the result behind one either. A bronze feeding
+    // several silvers gets exactly one such chain, its "05 validated" terminal reused as the
+    // source for every one of those edges.
+    const structurationChainByBronze = new Map();
+    for (const n of byLayer.bronze) {
+      if (!n.payload_backed) continue;
+      const bronzeNode = flowNodes.find((fn) => fn.id === String(n.id));
+      const y = bronzeNode.position.y;
+      const openPopup = (stageId) => () => onOpenStructuration?.(n.id, stageId);
+
+      const stageIds = STRUCTURATION_STAGES.map((stage) => `structuration-${stage.key}-${n.id}`);
+      STRUCTURATION_STAGES.forEach((stage, idx) => {
+        flowNodes.push({
+          id: stageIds[idx],
+          type: "structurationStage",
+          position: { x: STAGE_X[stage.key], y },
+          data: {
+            label: `${stage.num} ${stage.key}`, hint: t(`medallion.structuration.stageHint_${stage.key}`),
+            selected: false, onClick: openPopup(stage.key),
+          },
+        });
+      });
+
+      const validatedId = `structuration-validated-${n.id}`;
+      flowNodes.push({
+        id: validatedId,
+        type: "structurationStage",
+        position: { x: STAGE_X.validated, y },
+        data: {
+          label: "05 validated", hint: t("medallion.structuration.stageHint_validated"), tone: "success",
+          icon: Icon.check({ width: 11, height: 11 }), selected: false, onClick: openPopup("validated"),
+        },
+      });
+
+      const quarantineId = `structuration-quarantine-${n.id}`;
+      flowNodes.push({
+        id: quarantineId,
+        type: "structurationQuarantine",
+        position: { x: STAGE_X.validated, y: y + QUARANTINE_Y_OFFSET },
+        data: {
+          label: "05 quarantine", hint: t("medallion.structuration.stageHint_quarantine"),
+          projectId, bronzeId: n.id, selected: false, onClick: openPopup("quarantine"),
+        },
+      });
+
+      const chainIds = [String(n.id), ...stageIds, validatedId];
+      for (let k = 0; k < chainIds.length - 1; k++) {
+        flowEdges.push({ id: `${chainIds[k]}-${chainIds[k + 1]}`, source: chainIds[k], target: chainIds[k + 1], animated: false, style: edgeStyle(false) });
+      }
+      flowEdges.push({ id: `${stageIds[stageIds.length - 1]}-${quarantineId}`, source: stageIds[stageIds.length - 1], target: quarantineId, animated: false, style: edgeStyle(false, true) });
+
+      // Module 18 §7 UX — materialize_unpacked_typed_sync's instant preview: real silver
+      // nodes (same DatasetNode design, just ember-badged), hanging off "01 unpacked"/
+      // "02 typed" since that's exactly what each one is a synchronous copy of — created the
+      // moment the guided "+" popup's 2-step contract is saved, no build/DAG run required.
+      // Never a MedallionDataset — clicking opens a live sample straight from the warehouse
+      // (structuration/preview), not anything read from rawNodes/rawEdges.
+      const unpackedStageId = stageIds[0];
+      const typedStageId = stageIds[1];
+      const silverUnpackedId = `silver-unpacked-${n.id}`;
+      const silverTypedId = `silver-typed-${n.id}`;
+      flowNodes.push({
+        id: silverUnpackedId,
+        type: "dataset",
+        position: { x: STAGE_X.unpacked, y: y + QUARANTINE_Y_OFFSET },
+        data: {
+          layer: "silver", name: `unpacked_${n.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
+          previewStageLabel: "unpacked", isInstantPreview: true,
+          selected: false, onClick: () => onOpenSilverPreview?.(n.id, "unpacked"),
+        },
+      });
+      flowNodes.push({
+        id: silverTypedId,
+        type: "dataset",
+        position: { x: STAGE_X.typed, y: y + QUARANTINE_Y_OFFSET },
+        data: {
+          layer: "silver", name: `typed_${n.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
+          previewStageLabel: "typed", isInstantPreview: true,
+          selected: false, onClick: () => onOpenSilverPreview?.(n.id, "typed"),
+        },
+      });
+      flowEdges.push({ id: `${unpackedStageId}-${silverUnpackedId}`, source: unpackedStageId, target: silverUnpackedId, animated: false, style: edgeStyle(true) });
+      flowEdges.push({ id: `${typedStageId}-${silverTypedId}`, source: typedStageId, target: silverTypedId, animated: false, style: edgeStyle(true) });
+
+      structurationChainByBronze.set(n.id, validatedId);
+    }
+
+    const byId = new Map(rawNodes.map((n) => [n.id, n]));
+    rawEdges.forEach((e) => {
+      const validatedId = structurationChainByBronze.get(e.source);
       const target = byId.get(e.target);
-      if (source?.node_type === "dataset" && source.layer === "bronze" && source.payload_backed && target?.layer === "silver") {
-        let validatedId = structurationChainByBronze.get(e.source);
-        if (!validatedId) {
-          const bronzeNode = flowNodes.find((n) => n.id === String(e.source));
-          const y = bronzeNode ? bronzeNode.position.y : 20 + i * 100;
-          const openPopup = (stageId) => () => onOpenStructuration?.(e.source, stageId);
-
-          const stageIds = STRUCTURATION_STAGES.map((stage) => `structuration-${stage.key}-${e.source}`);
-          STRUCTURATION_STAGES.forEach((stage, idx) => {
-            flowNodes.push({
-              id: stageIds[idx],
-              type: "structurationStage",
-              position: { x: STAGE_X[stage.key], y },
-              data: {
-                label: `${stage.num} ${stage.key}`, hint: t(`medallion.structuration.stageHint_${stage.key}`),
-                selected: false, onClick: openPopup(stage.key),
-              },
-            });
-          });
-
-          validatedId = `structuration-validated-${e.source}`;
-          flowNodes.push({
-            id: validatedId,
-            type: "structurationStage",
-            position: { x: STAGE_X.validated, y },
-            data: {
-              label: "05 validated", hint: t("medallion.structuration.stageHint_validated"), tone: "success",
-              icon: Icon.check({ width: 11, height: 11 }), selected: false, onClick: openPopup("validated"),
-            },
-          });
-
-          const quarantineId = `structuration-quarantine-${e.source}`;
-          flowNodes.push({
-            id: quarantineId,
-            type: "structurationQuarantine",
-            position: { x: STAGE_X.validated, y: y + QUARANTINE_Y_OFFSET },
-            data: {
-              label: "05 quarantine", hint: t("medallion.structuration.stageHint_quarantine"),
-              projectId, bronzeId: e.source, selected: false, onClick: openPopup("quarantine"),
-            },
-          });
-
-          const chainIds = [String(e.source), ...stageIds, validatedId];
-          for (let k = 0; k < chainIds.length - 1; k++) {
-            flowEdges.push({ id: `${chainIds[k]}-${chainIds[k + 1]}`, source: chainIds[k], target: chainIds[k + 1], animated: false, style: edgeStyle(false) });
-          }
-          flowEdges.push({ id: `${stageIds[stageIds.length - 1]}-${quarantineId}`, source: stageIds[stageIds.length - 1], target: quarantineId, animated: false, style: edgeStyle(false, true) });
-
-          // Module 18 §7 UX — materialize_typed_structured_sync's instant preview: real silver
-          // nodes (same DatasetNode design, just ember-badged), hanging off "02 typed"/
-          // "03 standardized" since that's exactly what each one is a synchronous copy of.
-          // Never a MedallionDataset — clicking opens a live sample straight from the
-          // warehouse (structuration/preview), not anything read from rawNodes/rawEdges.
-          const typedStageId = stageIds[1];
-          const standardizedStageId = stageIds[2];
-          const silverTypedId = `silver-typed-${e.source}`;
-          const silverStructuredId = `silver-structured-${e.source}`;
-          flowNodes.push({
-            id: silverTypedId,
-            type: "dataset",
-            position: { x: STAGE_X.typed, y: y + QUARANTINE_Y_OFFSET },
-            data: {
-              layer: "silver", name: `typed_${source.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
-              previewStageLabel: "typed", isInstantPreview: true,
-              selected: false, onClick: () => onOpenSilverPreview?.(e.source, "typed"),
-            },
-          });
-          flowNodes.push({
-            id: silverStructuredId,
-            type: "dataset",
-            position: { x: STAGE_X.standardized, y: y + QUARANTINE_Y_OFFSET },
-            data: {
-              layer: "silver", name: `structured_${source.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
-              previewStageLabel: "structured", isInstantPreview: true,
-              selected: false, onClick: () => onOpenSilverPreview?.(e.source, "structured"),
-            },
-          });
-          flowEdges.push({ id: `${typedStageId}-${silverTypedId}`, source: typedStageId, target: silverTypedId, animated: false, style: edgeStyle(true) });
-          flowEdges.push({ id: `${standardizedStageId}-${silverStructuredId}`, source: standardizedStageId, target: silverStructuredId, animated: false, style: edgeStyle(true) });
-
-          structurationChainByBronze.set(e.source, validatedId);
-        }
+      if (validatedId && target?.layer === "silver") {
         flowEdges.push({ id: `${validatedId}-${e.target}`, source: validatedId, target: String(e.target), animated: false, style: edgeStyle(false) });
         return;
       }
