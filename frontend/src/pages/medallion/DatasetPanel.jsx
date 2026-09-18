@@ -312,25 +312,6 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
     if (d.layer !== "bronze" || !columnsByDataset[d.id]?.structured) return null;
     return stageRefPattern(d.name).exec(sql)?.[1] || null;
   };
-  // UX ask — 01_unpacked -> 02_typed -> 03_standardized is a fixed workflow (the "+" on a
-  // 02_typed canvas node), never a pick-any-upstream situation: once the SQL reads one of
-  // these two instant-preview stages for some bronze, that relationship is locked — "Upstreams"
-  // shows just that one line (checked, disabled) instead of the full candidate list. 05_validated
-  // isn't included here: that's the normal, still-freely-editable default reference every other
-  // silver/gold dataset gets when it depends on a structured bronze.
-  const lockedStageUpstream = (() => {
-    for (const d of upstreamCandidates) {
-      const stage = detectUpstreamStage(d);
-      if (stage === "01_unpacked" || stage === "02_typed") return { modelName: `${stage}_${d.name}`, bronzeId: d.id };
-    }
-    return null;
-  })();
-  // The disabled checkbox above shows checked because the SQL reads this stage — keep
-  // upstreamIds actually true to that (e.g. an existing dataset saved before this locked view
-  // existed might have the right SQL but never got its bronze recorded as upstream).
-  useEffect(() => {
-    if (lockedStageUpstream) setUpstreamIds((s) => (s.has(lockedStageUpstream.bronzeId) ? s : new Set(s).add(lockedStageUpstream.bronzeId)));
-  }, [lockedStageUpstream?.bronzeId]);
 
   const sqlRef = useRef(null);
   const insertAtCursor = (text) => {
@@ -407,6 +388,26 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [upstreamIdsKey]);
+
+  // UX ask — 01_unpacked -> 02_typed -> 03_standardized is a fixed workflow (the "+" on a
+  // 02_typed canvas node), never a pick-any-upstream situation: once the SQL reads one of
+  // these two instant-preview stages for some bronze, that relationship is locked — "Upstreams"
+  // shows just that one line (checked, disabled) instead of the full candidate list. 05_validated
+  // isn't included here: that's the normal, still-freely-editable default reference every other
+  // silver/gold dataset gets when it depends on a structured bronze.
+  const lockedStageUpstream = (() => {
+    for (const d of upstreamCandidates) {
+      const stage = detectUpstreamStage(d);
+      if (stage === "01_unpacked" || stage === "02_typed") return { modelName: `${stage}_${d.name}`, bronzeId: d.id };
+    }
+    return null;
+  })();
+  // The disabled checkbox above shows checked because the SQL reads this stage — keep
+  // upstreamIds actually true to that (e.g. an existing dataset saved before this locked view
+  // existed might have the right SQL but never got its bronze recorded as upstream).
+  useEffect(() => {
+    if (lockedStageUpstream) setUpstreamIds((s) => (s.has(lockedStageUpstream.bronzeId) ? s : new Set(s).add(lockedStageUpstream.bronzeId)));
+  }, [lockedStageUpstream?.bronzeId]);
 
   const addTest = () => setTests((tt) => [...tt, { column: "", test: "not_null" }]);
   const updateTest = (i, patch) => setTests((tt) => tt.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
