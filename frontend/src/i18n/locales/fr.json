@@ -1139,7 +1139,7 @@
       "categoryElimination": "Bloquant (quarantaine)",
       "categoryInformative": "Informatif (validé quand même)",
       "removeFlag": "Supprimer cette règle",
-      "canvasHint": "Structurer le payload — profiler les champs, corriger les anomalies de cast"
+      "canvasHint": "Application data quality — profiler, standardiser, définir des règles de qualité et corriger les anomalies"
     },
     "publish": {
       "tab": "Publier",

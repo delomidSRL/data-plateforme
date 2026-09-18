@@ -1139,7 +1139,7 @@
       "categoryElimination": "Blocking (quarantine)",
       "categoryInformative": "Informational (still validated)",
       "removeFlag": "Remove this rule",
-      "canvasHint": "Structure the payload — profile the fields, fix cast anomalies"
+      "canvasHint": "Application data quality — profile, standardize, define quality rules and fix anomalies"
     },
     "publish": {
       "tab": "Publish",

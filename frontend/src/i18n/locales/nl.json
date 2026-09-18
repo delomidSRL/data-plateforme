@@ -1139,7 +1139,7 @@
       "categoryElimination": "Blokkerend (quarantaine)",
       "categoryInformative": "Informatief (toch gevalideerd)",
       "removeFlag": "Deze regel verwijderen",
-      "canvasHint": "Payload structureren — velden profileren, castafwijkingen oplossen"
+      "canvasHint": "Application data quality — profileren, standaardiseren, kwaliteitsregels definiëren en afwijkingen oplossen"
     },
     "publish": {
       "tab": "Publiceren",
