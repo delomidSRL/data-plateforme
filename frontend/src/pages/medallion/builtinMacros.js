@@ -1,8 +1,7 @@
 // Mirrors backend/app/services/payload_structure.py's STRUCTURATION_MACROS (signatures only,
 // for display + click-to-insert in DatasetPanel / the admin Settings · Macros dbt page — the
-// real SQL stays server-side, same "closed catalog mirrored client-side" convention as
-// StructurationPanel's STANDARDIZE_OPS). `insert` is the snippet DatasetPanel's insertMacro()
-// places at the cursor.
+// real SQL stays server-side. `insert` is the snippet DatasetPanel's insertMacro() places at
+// the cursor.
 export const BUILTIN_MACROS = [
   { name: "clean_string", params: ["expr"], insert: "clean_string(col)", descriptionKey: "clean_string" },
   { name: "safe_cast", params: ["type", "col", "format=none"], insert: "safe_cast('text', col)", descriptionKey: "safe_cast" },

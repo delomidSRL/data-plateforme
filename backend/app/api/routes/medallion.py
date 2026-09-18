@@ -311,8 +311,8 @@ def get_dataset_columns(did: int, db: Session = Depends(get_db), project: Medall
     `05_validated_<name>` model (Module 18 §7.5 — the clean, routed output; never
     `04_annotated` nor the bronze directly) is what silver/gold should reference instead, so
     its *structured* columns (the profiled, included target_name/target_type pairs — column
-    names are stable across 02/03/05, only 03's in-place standardize ops touch values) are
-    returned here in its place."""
+    names are stable across 02/05, a hand-written 03_standardized notwithstanding since that's
+    arbitrary SQL) are returned here in its place."""
     dataset = _get_dataset(db, project.id, did)
     if dataset.layer == MedallionLayer.bronze:
         structuration = db.query(PayloadStructuration).filter(PayloadStructuration.dataset_id == dataset.id).first()
@@ -444,12 +444,12 @@ def update_dataset_structuration(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse introuvable.")
     try:
         payload_structure.validate_column_mapping(column_mapping)
-        payload_structure.validate_standardize_ops(column_mapping)
         payload_structure.validate_quality_flags(quality_flags, column_mapping)
-        # proves the whole chain will actually build, not just 01/02
+        # proves the whole chain will actually build, not just 01/02 — 04_annotated's exact
+        # upstream (02_typed directly, or a custom 03_standardized) depends on datasets this
+        # route doesn't load, but that choice has no bearing on whether this renders at all.
         payload_structure.render_unpacked_typed_models(column_mapping, dataset.name)
-        payload_structure.render_standardized_model(column_mapping, dataset.name)
-        payload_structure.render_annotated_model(quality_flags, dataset.name)
+        payload_structure.render_annotated_model(quality_flags, dataset.name, f"02_typed_{dataset.name}")
         # UX ask — don't just prove it renders: create the empty shape of
         # silver.01_unpacked_<name>/silver.02_typed_<name> right now, so the canvas has
         # something real to show immediately. A save only succeeds if this actually works;

@@ -432,9 +432,10 @@ def render_unpacked_typed_models(column_mapping: list[dict], bronze_name: str) -
     directly-usable table, not bronze's own "never exclude a row, only tag cast_issues"
     surface, so the contract's is_primary_key/nullable are applied as a real PRIMARY KEY/NOT
     NULL via post_hook — if actual data doesn't support them, THIS build fails loudly instead
-    of silently producing a table that doesn't honor its own contract. 03_standardized (still
-    bronze) keeps reading `{{ ref('02_typed_<name>') }}` unchanged — ref() resolves by model
-    name regardless of which schema the referenced model actually lands in.
+    of silently producing a table that doesn't honor its own contract. Whatever reads on from
+    here (a hand-written 03_standardized, or 04_annotated directly) keeps reading
+    `{{ ref('02_typed_<name>') }}` unchanged — ref() resolves by model name regardless of which
+    schema the referenced model actually lands in.
 
     Returns {"vars_key", "vars_entries", "unpacked_sql", "typed_sql"}."""
     included = [f for f in column_mapping if f.get("include", True)]
@@ -523,11 +524,13 @@ def render_unpacked_typed_models(column_mapping: list[dict], bronze_name: str) -
 
 
 # ---------------------------------------------------------------------------
-# Module 18 — no-code raffinage silver: 03 (standardization), 04 (annotation), 05 (routing),
-# and the dq_flag_registry seed. Same "one stage, one question" discipline as 01/02, generic
-# where the platform can be (05, the registry mechanism, every macro below) and per-dataset
-# only where real business knowledge lives (which standardize op applies to which field, which
-# quality-flag rules exist) — configured through the structuration UI, never hand-written SQL.
+# Module 18 — no-code raffinage silver: 04 (annotation), 05 (routing), and the dq_flag_registry
+# seed. Same "one stage, one question" discipline as 01/02, generic where the platform can be
+# (05, the registry mechanism, every macro below) and per-dataset only where real business
+# knowledge lives (which quality-flag rules exist) — configured through the structuration UI,
+# never hand-written SQL. 03_standardized itself is no longer part of this no-code layer — it's
+# either skipped (04 reads 02_typed directly) or hand-written as a real dbt SQL dataset (the "+"
+# on the 02_typed canvas node), never auto-rendered from a per-field choice.
 # ---------------------------------------------------------------------------
 
 NORMALIZE_FOR_MATCHING_MACRO_SQL = """{% macro normalize_for_matching(col) -%}
@@ -581,25 +584,6 @@ STRUCTURATION_MACROS.update({
     "macros/unmapped_boolean_flag.sql": UNMAPPED_BOOLEAN_FLAG_MACRO_SQL,
 })
 
-# Closed catalog (schemas.StandardizeOp) -> the macro/function call each op renders to. Only
-# ever applied to text fields (validated below) — a passthrough (no key here, or None) leaves
-# the field exactly as 02_typed produced it.
-_STANDARDIZE_EXPR = {
-    "upper": lambda col: f"upper({col})",
-    "lower": lambda col: f"lower({col})",
-    "title_case": lambda col: f"initcap({col})",
-    # These four route through a Jinja macro (see STRUCTURATION_MACROS), so `col` must be
-    # quoted as a Jinja string literal — an unquoted `{{ clean_string(fax) }}` makes Jinja
-    # treat `fax` as an undefined *variable* (not the column name), which renders as an
-    # empty string and produces invalid SQL like `btrim()` (matches _flag_expr's `f'"{field}"'`).
-    "trim_collapse": lambda col: f'{{{{ clean_string("{col}") }}}}',
-    "normalize_matching": lambda col: f'{{{{ normalize_for_matching("{col}") }}}}',
-    "clean_vat": lambda col: f'{{{{ clean_vat("{col}") }}}}',
-    "clean_phone": lambda col: f'{{{{ clean_phone("{col}") }}}}',
-    "url_prefix": lambda col: f"(CASE WHEN {col} IS NOT NULL AND {col} !~* '^https?://' THEN 'https://' || {col} ELSE {col} END)",
-}
-
-
 def _jinja_arg(value: str) -> str:
     """A user-supplied string (a regex, a flag name) about to be passed as a macro-call
     argument, safe against BOTH layers it crosses: the macro substitutes it verbatim into a
@@ -610,53 +594,6 @@ def _jinja_arg(value: str) -> str:
     sql_escaped = value.replace("'", "''")
     jinja_escaped = sql_escaped.replace("\\", "\\\\").replace('"', '\\"')
     return '"' + jinja_escaped + '"'
-
-
-def _standardize_expr(op: str, col: str) -> str:
-    builder = _STANDARDIZE_EXPR.get(op)
-    if builder is None:
-        raise PayloadStructureError(f"Opération de standardisation non supportée : « {op} ».")
-    return builder(col)
-
-
-def validate_standardize_ops(column_mapping: list[dict]) -> None:
-    """A standardize op only ever makes sense on text — 02_typed already cast everything else
-    to its real type, and calling e.g. upper() on an integer is a modeling mistake to reject
-    at contract-save time, not a build-time surprise."""
-    for field in column_mapping:
-        op = field.get("standardize")
-        if op and field.get("target_type") != "text":
-            raise PayloadStructureError(
-                f"« {field.get('target_name')} » : la standardisation ne s'applique qu'aux champs texte (type actuel : {field.get('target_type')})."
-            )
-        if op and op not in _STANDARDIZE_EXPR:
-            raise PayloadStructureError(f"Opération de standardisation non supportée : « {op} ».")
-
-
-def render_standardized_model(column_mapping: list[dict], bronze_name: str) -> str:
-    """03 (§5) — the only question: what's this field's canonical form? Never touches
-    validity (04) or type (02). Every column listed explicitly (Postgres has no "select *
-    except this one"): a field with a standardize op gets that expression in place, every
-    other field (and cast_issues, and the audit columns) passes through unchanged."""
-    included = [f for f in column_mapping if f.get("include", True)]
-    if not included:
-        raise PayloadStructureError("Le contrat de structuration n'a aucun champ inclus.")
-    validate_standardize_ops(included)
-
-    cols = []
-    for f in included:
-        target = f["target_name"]
-        op = f.get("standardize")
-        cols.append(f'{_standardize_expr(op, target)} as "{target}"' if op else f'"{target}"')
-    cols.append("cast_issues")
-    cols.extend(_TRACEABILITY_COLUMNS)
-
-    select_list = ",\n    ".join(cols)
-    return (
-        "{{ config(materialized='table', schema='bronze') }}\n\n"
-        "select\n    " + select_list + "\n"
-        f"from {{{{ ref('02_typed_{bronze_name}') }}}}\n"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -883,18 +820,22 @@ def _flag_expr(rule: dict) -> str:
     raise PayloadStructureError(f"Type de règle qualité non supporté : « {rule_type} ».")
 
 
-def render_annotated_model(quality_flags: list[dict], bronze_name: str) -> str:
+def render_annotated_model(quality_flags: list[dict], bronze_name: str, upstream_model_name: str) -> str:
     """04 (§6) — the only question: what problems does this row carry? Stacks every flag,
     informative and blocking alike, into one `data_quality_flags` array — 04 has no authority
     over which are blocking (that's 05, via the registry). `cast_issues` (from 02) is prefixed,
-    never replaced, never lost."""
+    never replaced, never lost. `upstream_model_name` — 03_standardized is no longer a no-code
+    stage: it only exists when an engineer authors one as a real, hand-written silver dataset
+    (the "+" on the 02_typed canvas node). The caller (dbt_project.py) decides which model this
+    reads: that custom `03_standardized_<name>` if one exists, `02_typed_<name>` directly
+    otherwise — this function itself has no opinion, it just wires whatever it's given."""
     flag_exprs = [_flag_expr(rule) for rule in quality_flags]
     flags_array = ("array_remove(array[\n        " + ",\n        ".join(flag_exprs) + "\n    ], null)") if flag_exprs else "'{}'::text[]"
     return (
         "{{ config(materialized='table', schema='bronze') }}\n\n"
         "select *,\n"
         f"    cast_issues || {flags_array} as data_quality_flags\n"
-        f"from {{{{ ref('03_standardized_{bronze_name}') }}}}\n"
+        f"from {{{{ ref('{upstream_model_name}') }}}}\n"
     )
 
 
@@ -1053,8 +994,7 @@ def canonical_contract(column_mapping: list[dict], quality_flags: list[dict] | N
     minimal = {
         "fields": [
             {"source_name": c["source_name"], "target_name": c["target_name"], "target_type": c["target_type"],
-             "format": c.get("format"), "include": c.get("include", True), "nullable": c.get("nullable", True),
-             "standardize": c.get("standardize")}
+             "format": c.get("format"), "include": c.get("include", True), "nullable": c.get("nullable", True)}
             for c in column_mapping
         ],
         # Module 18 — a rule change (regex, category, bounds) alters 04/05's rendered SQL just

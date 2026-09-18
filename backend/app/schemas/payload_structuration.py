@@ -5,13 +5,6 @@ from pydantic import BaseModel, Field
 
 TargetType = Literal["text", "integer", "bigint", "numeric", "boolean", "date", "timestamp", "jsonb"]
 
-# Module 18 §5.3 — the closed catalog of no-code standardization operations (03), each backed
-# by a generic macro (or a short inline expression for the ones not worth macro-ifying, per
-# §5.3's "macro only if reused ≥2x" rule). null/absent means passthrough (field untouched).
-StandardizeOp = Literal[
-    "upper", "lower", "title_case", "trim_collapse", "normalize_matching", "clean_vat", "clean_phone", "url_prefix",
-]
-
 # Module 18 §6.3/§8 — the closed catalog of no-code quality-flag rule types (04), each backed
 # by a generic macro. `category` is the ONLY thing 05_validated/05_quarantine's routing reads —
 # never the rule_type or params — exactly mirroring dq_flag_registry.csv's own schema.
@@ -27,7 +20,6 @@ class StructurationFieldEntry(BaseModel):
     include: bool = True
     nullable: bool = True
     is_primary_key: bool = False
-    standardize: StandardizeOp | None = None
     # produced by inference, kept for traceability — not required on the way back in
     inferred_type: str | None = None
     confidence: float | None = None

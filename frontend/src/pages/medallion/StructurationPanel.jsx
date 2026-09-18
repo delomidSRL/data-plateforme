@@ -12,8 +12,6 @@ const TYPES = ["text", "integer", "bigint", "numeric", "boolean", "date", "times
 const IDENTIFIER_RE = /^[a-z_][a-z0-9_]{0,62}$/;
 const FLAG_NAME_RE = /^[a-z][a-z0-9_]*$/;
 
-// Module 18 §5.3 — closed catalog of no-code standardization ops (03), text fields only.
-const STANDARDIZE_OPS = ["upper", "lower", "title_case", "trim_collapse", "normalize_matching", "clean_vat", "clean_phone", "url_prefix"];
 // Module 18 §6.3 — closed catalog of no-code quality-flag rule types (04).
 const RULE_TYPES = ["format", "placeholder", "garbage", "date_range"];
 
@@ -22,10 +20,10 @@ const RULE_TYPES = ["format", "placeholder", "garbage", "date_range"];
 // 02 decides their type/name/nullability, 03 adds standardization, and by 04 every decision
 // (incl. quality flags) is on the table — 05 validated/quarantine are routing outcomes of
 // that same fully-decided contract, so they show everything too.
-const STAGE_LEVEL = { unpacked: 1, typed: 2, standardized: 3, annotated: 4, validated: 4, quarantine: 4 };
+const STAGE_LEVEL = { unpacked: 1, typed: 2, annotated: 4, validated: 4, quarantine: 4 };
 const MAX_LEVEL = 4;
 // Which popup block a stage's click should scroll to / highlight.
-const STAGE_BLOCK = { unpacked: "fields", typed: "fields", standardized: "fields", validated: "fields", annotated: "flags", quarantine: "quarantine" };
+const STAGE_BLOCK = { unpacked: "fields", typed: "fields", validated: "fields", annotated: "flags", quarantine: "quarantine" };
 // Module 18 §7 UX — the "+" on a payload-backed bronze and "pick this bronze as a new
 // silver's upstream" both land a first-timer on a blank contract with nothing decided yet;
 // dumping the full editor on them (the canvas-jump behavior) skips explaining what each
@@ -55,8 +53,10 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
 
   // Canvas lineage chain (01..05) — each stage node opens this same popup, but only reveals
   // the columns/blocks that stage has actually decided by then (see STAGE_LEVEL): 01 shows
-  // only the raw fields, 02 adds naming/typing, 03 adds standardization, 04 adds the quality
-  // flags — nothing left to gate after that, so 05 validated/quarantine both show everything.
+  // only the raw fields, 02 adds naming/typing, 04 adds the quality flags — nothing left to
+  // gate after that, so 05 validated/quarantine both show everything. Standardization (03) is
+  // no longer a no-code, per-field decision made here — it's authored as real dbt SQL (the "+"
+  // on the 02_typed canvas node), so there's no stage to reveal it at.
   // "Show full contract" is the escape hatch for anyone who wants the whole picture anyway.
   // In `guided` mode there's no jump target from the canvas — the panel drives its own
   // `wizardStage` through the same 5 names instead, via the Back/Next/Finish row below.
@@ -70,7 +70,6 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
   const effectiveStage = guided ? wizardStage : stage;
   const level = showAll || !effectiveStage ? MAX_LEVEL : (STAGE_LEVEL[effectiveStage] ?? MAX_LEVEL);
   const showTyped = level >= 2;
-  const showStandardize = level >= 3;
   const showFlags = level >= 4;
 
   useEffect(() => { setShowAll(false); }, [dataset.id, stage]);
@@ -228,7 +227,6 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
               {showTyped && <th>{t("imports.modal.colTarget")}</th>}
               {showTyped && <th>{t("imports.modal.colType")}</th>}
               {showTyped && <th>{t("medallion.structuration.colNullable")}</th>}
-              {showStandardize && <th>{t("medallion.structuration.colStandardize")}</th>}
               {/* Confidence column hidden on request — data still flows through (f.confidence), just not displayed here. */}
             </tr>
           </thead>
@@ -268,10 +266,7 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
                     <td style={{ minWidth: 110 }}>
                       <select
                         className="input" value={f.target_type} disabled={readOnly || !f.include}
-                        onChange={(e) => {
-                          const target_type = e.target.value;
-                          updateField(idx, target_type === "text" ? { target_type } : { target_type, standardize: null });
-                        }}
+                        onChange={(e) => updateField(idx, { target_type: e.target.value })}
                       >
                         {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
                       </select>
@@ -284,18 +279,6 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
                         title={t("medallion.structuration.nullableHelp")}
                         onChange={(e) => updateField(idx, { nullable: e.target.checked })}
                       />
-                    </td>
-                  )}
-                  {showStandardize && (
-                    <td style={{ minWidth: 170 }}>
-                      <select
-                        className="input" value={f.standardize || ""} disabled={readOnly || !f.include || f.target_type !== "text"}
-                        title={f.target_type !== "text" ? t("medallion.structuration.standardizeTextOnly") : undefined}
-                        onChange={(e) => updateField(idx, { standardize: e.target.value || null })}
-                      >
-                        <option value="">{t("medallion.structuration.standardizeNone")}</option>
-                        {STANDARDIZE_OPS.map((op) => <option key={op} value={op}>{t(`medallion.structuration.standardize_${op}`)}</option>)}
-                      </select>
                     </td>
                   )}
                 </tr>
