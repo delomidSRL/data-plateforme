@@ -21,6 +21,7 @@ import RunsTab from "./RunsTab.jsx";
 import QualityTab from "./QualityTab.jsx";
 import VersionsTab from "./VersionsTab.jsx";
 import AgentTab from "./AgentTab.jsx";
+import MacrosTab from "./MacrosTab.jsx";
 import ScheduleField, { describeSchedule, isValidSchedule } from "./ScheduleField.jsx";
 import ImportWizardDrawer from "../imports/ImportWizardDrawer.jsx";
 import SchemaValidationModal from "../imports/SchemaValidationModal.jsx";
@@ -435,6 +436,7 @@ export default function ProjectDetail({ readOnly = false }) {
           <button className="btn-ghost" style={{ opacity: tab === "quality" ? 1 : 0.6 }} onClick={() => setTab("quality")}>{t("medallion.tabQuality")}</button>
           <button className="btn-ghost" style={{ opacity: tab === "versions" ? 1 : 0.6 }} onClick={() => setTab("versions")}>{t("medallion.tabVersions")}</button>
           <button className="btn-ghost" style={{ opacity: tab === "agent" ? 1 : 0.6 }} onClick={() => setTab("agent")}>{t("medallion.tabAgent")}</button>
+          <button className="btn-ghost" style={{ opacity: tab === "macros" ? 1 : 0.6 }} onClick={() => setTab("macros")}>{Icon.code()} {t("medallion.tabMacros")}</button>
         </div>
       </div>
 
@@ -525,6 +527,7 @@ export default function ProjectDetail({ readOnly = false }) {
         <VersionsTab project={project} readOnly={readOnly} onRestored={(v) => { setRestoredBanner(v.is_restore_of_version_number); load(); }} />
       )}
       {tab === "agent" && <AgentTab project={project} readOnly={readOnly} onExecutionUpdate={handleExecutionUpdate} />}
+      {tab === "macros" && <MacrosTab project={project} readOnly={readOnly} />}
 
       {previewData && (
         <div className="card" style={{ padding: 16, marginTop: 16 }}>

@@ -1,9 +1,10 @@
 import yaml
 from sqlalchemy.orm import Session
 
+from app.models.dbt_macro import DbtMacro
 from app.models.medallion import MedallionDataset, MedallionLayer, MedallionProject, TransformType
 from app.models.payload_structuration import PayloadStructuration
-from app.services import dbt_test_renderer, payload_structure
+from app.services import dbt_macros, dbt_test_renderer, payload_structure
 
 # Module 16 extension §1/§4 — pinned exact (never "latest", §1: reproductibilité de
 # déploiement multi-tenant), validated live on dbt-core 1.8.8 / dbt-postgres 1.8.2 / Postgres
@@ -276,6 +277,13 @@ def generate_project_files(
         # still needs the seed to exist — an empty registry just means every flag routes to
         # quarantine, the documented safe default for anything undeclared).
         files["seeds/dq_flag_registry.csv"] = payload_structure.render_registry_seed(all_quality_flags)
+    # New module — a project's own custom macros (DbtMacro), unconditional (not gated on
+    # `structurations`): any dbt SQL dataset can call one, not just a 03_standardized. A macro
+    # nothing calls is simply unused, never a build error — same additive contract as the
+    # built-ins above.
+    custom_macros = db.query(DbtMacro).filter(DbtMacro.project_id == project.id).all()
+    if custom_macros:
+        files.update(dbt_macros.render_macro_files(custom_macros))
     if for_export or rendered_tests.has_tier_a:
         # §6 — the exported bundle always pins dbt-expectations/dbt-utils, even for a project
         # with zero Tier A checks today: a standalone artifact ready to extend. The live build

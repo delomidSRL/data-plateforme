@@ -10,6 +10,7 @@ from app.api.deps_medallion import get_owned_project, get_project_binding, get_r
 from app.db.session import get_db
 from app.models.airflow_instance import AirflowInstance, AirflowInstanceOrigin
 from app.models.data_source import DataSource, DataSourceType
+from app.models.dbt_macro import DbtMacro
 from app.models.export_log import ExportLog
 from app.models.file_import import FileImport, FileImportStatus
 from app.models.file_watch import FileWatch
@@ -90,7 +91,7 @@ from app.schemas.payload_structuration import (
     StructurationOut,
     StructurationUpdate,
 )
-from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_project, gold_export, gold_profile, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot
+from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, gold_export, gold_profile, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot
 from app.services.ai_config import get_ai_config
 from app.services.superset_instances import get_superset_config
 from app.services.medallion_crud import create_dataset_internal, validate_lineage
@@ -795,9 +796,11 @@ def validate_dataset_sql(
     )
     structured_bronze_names = {d.name for d in datasets if d.id in structured_ids}
     ref_map = build_ref_map(datasets, structured_bronze_names)
+    custom_macros = db.query(DbtMacro).filter(DbtMacro.project_id == project.id).all()
+    extra_macros_src = dbt_macros.macros_source_for_validation(custom_macros)
 
     try:
-        compiled = payload_structure.compile_adhoc_sql(payload.sql, ref_map)
+        compiled = payload_structure.compile_adhoc_sql(payload.sql, ref_map, extra_macros_src)
     except payload_structure.PayloadStructureError as exc:
         return SqlValidationOut(valid=False, message=str(exc))
 

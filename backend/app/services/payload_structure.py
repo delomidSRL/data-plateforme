@@ -699,7 +699,7 @@ def _compile_stage_sql(body: str, *, var_entries: list[dict], ref_map: dict[str,
 # before it ever reaches an actual dbt build, without saving anything or touching a real model.
 # ---------------------------------------------------------------------------
 
-def compile_adhoc_sql(sql: str, ref_map: dict[str, str]) -> str:
+def compile_adhoc_sql(sql: str, ref_map: dict[str, str], extra_macros_src: str = "") -> str:
     """A dataset's free-form dbt SQL -> plain Postgres SQL, same standalone-Jinja mechanism as
     _compile_stage_sql, generalized to arbitrary user text: `source()` resolves any
     schema/table generically (bronze is always reachable that way, by construction), but
@@ -709,7 +709,9 @@ def compile_adhoc_sql(sql: str, ref_map: dict[str, str]) -> str:
     (clean_string, normalize_for_matching, clean_vat, clean_phone, ...): a real dbt build sees
     these too (dbt_project.py writes them into macros/*.sql project-wide), so a 03_standardized_
     <name> that calls one isn't actually a mistake — without this, every such call would fail
-    here as "undefined" even though it'd compile fine for real."""
+    here as "undefined" even though it'd compile fine for real. `extra_macros_src` is the same
+    idea for a project's own custom macros (dbt_macros.macros_source_for_validation) — optional
+    so every existing caller keeps working unchanged."""
     if not sql.strip():
         raise PayloadStructureError("Requête vide.")
 
@@ -718,7 +720,7 @@ def compile_adhoc_sql(sql: str, ref_map: dict[str, str]) -> str:
             raise PayloadStructureError(f"Référence inconnue : {{{{ ref('{model_name}') }}}} — aucun dataset ni modèle « {model_name} » dans ce projet.")
         return ref_map[model_name]
 
-    macros_src = "".join(STRUCTURATION_MACROS.values())
+    macros_src = "".join(STRUCTURATION_MACROS.values()) + extra_macros_src
     try:
         template = jinja2.Environment().from_string(macros_src + "\n" + sql)
         return template.render(

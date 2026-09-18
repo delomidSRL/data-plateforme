@@ -12,6 +12,7 @@ import IndicatorsPanel from "./IndicatorsPanel.jsx";
 import PublishPanel from "./PublishPanel.jsx";
 import StructurationPanel from "./StructurationPanel.jsx";
 import StructurationPopup from "./StructurationPopup.jsx";
+import { BUILTIN_MACROS } from "./builtinMacros.js";
 
 const LAYER_ORDER = { bronze: 0, silver: 1, gold: 2 };
 const TEST_TYPES = ["not_null", "unique", "accepted_values", "relationships"];
@@ -113,6 +114,11 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   };
 
   useEffect(() => { mlTemplatesApi.listTemplates().then(setTemplates).catch(() => {}); }, []);
+
+  // New module — a project's own custom dbt macros, offered alongside BUILTIN_MACROS in the
+  // SQL editor's "Macros disponibles" section (same click-to-insert idea as columns/tables).
+  const [customMacros, setCustomMacros] = useState([]);
+  useEffect(() => { medallionApi.listMacros(project.id).then(setCustomMacros).catch(() => {}); }, [project.id]);
 
   // MinIO/S3 sources: browse actual files instead of typing a path blind — picking a
   // file (not a whole prefix) is what keeps each bronze table's schema clean. A source
@@ -315,6 +321,11 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
     setUpstreamIds((s) => (s.has(d.id) ? s : new Set(s).add(d.id)));
   };
   const insertColumn = (columnName) => insertAtCursor(columnName);
+  // A macro call, unlike a bare reference/column name, needs the {{ }} wrapper itself — the
+  // built-in snippet already carries plausible placeholder args; a custom macro's snippet is
+  // built from its own declared parameter names, so an author sees exactly what to fill in.
+  const insertMacro = (snippet) => insertAtCursor(`{{ ${snippet} }}`);
+  const customMacroSnippet = (m) => `${m.name}(${(m.parameters || []).map((p) => p.name).join(", ")})`;
 
   // Live column lookup per candidate upstream table/model, to help write the SELECT list
   // without leaving the panel. Best-effort: empty for tables never yet loaded by a run.
@@ -791,6 +802,33 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                   })}
                 </div>
               )}
+              <div style={{ marginBottom: 8, display: "flex", flexDirection: "column", gap: 4, maxHeight: 160, overflowY: "auto" }}>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".04em" }}>
+                  {t("medallion.panel.availableMacros")}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {customMacros.map((m) => (
+                    <button
+                      key={`custom-${m.id}`} type="button" className="badge badge-accent"
+                      style={{ cursor: "pointer", border: "none", fontSize: 10.5, fontFamily: "var(--font-m)" }}
+                      onClick={() => insertMacro(customMacroSnippet(m))}
+                      title={m.description || ""}
+                    >
+                      {m.name}
+                    </button>
+                  ))}
+                  {BUILTIN_MACROS.map((m) => (
+                    <button
+                      key={`builtin-${m.name}`} type="button" className="badge badge-neutral"
+                      style={{ cursor: "pointer", border: "none", fontSize: 10.5, fontFamily: "var(--font-m)" }}
+                      onClick={() => insertMacro(m.insert)}
+                      title={t(`medallion.macros.builtin_${m.descriptionKey}`)}
+                    >
+                      {m.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <textarea
                 ref={sqlRef}
                 className="input" style={{ fontFamily: "var(--font-m)", fontSize: 12.5, minHeight: 140, resize: "vertical" }}

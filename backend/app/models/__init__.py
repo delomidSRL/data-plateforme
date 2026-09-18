@@ -31,6 +31,7 @@ from app.models.file_watch import (
 from app.models.payload_structuration import PayloadStructuration, QuarantinePolicy
 from app.models.project_environment_binding import ProjectEnvironmentBinding
 from app.models.binding_source_mapping import BindingSourceMapping
+from app.models.dbt_macro import DbtMacro
 
 __all__ = [
     "User", "UserRole", "UserStatus",
@@ -55,4 +56,5 @@ __all__ = [
     "PayloadStructuration", "QuarantinePolicy",
     "ProjectEnvironmentBinding",
     "BindingSourceMapping",
+    "DbtMacro",
 ]
