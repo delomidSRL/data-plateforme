@@ -212,12 +212,12 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
             <Input placeholder={t("imports.wizard.sourceSystemPlaceholder")} value={sourceSystem} onChange={(e) => setSourceSystem(e.target.value)} />
             <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>{t("imports.wizard.sourceSystemHelp")}</div>
           </Field>
-          <div className="card" style={{ padding: 12, marginBottom: 14, background: "var(--bg)" }}>
-            <div style={{ fontFamily: "var(--font-m)", fontSize: 12.5 }}>
-              {t("imports.wizard.payloadTargetTable", { table: `imports.${previewTableName(name.trim() || file?.name || "")}` })}
+          <Field label={t("imports.wizard.bronzeTableName")}>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={previewTableName(file?.name || "")} />
+            <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6, fontFamily: "var(--font-m)" }}>
+              {previewTableName(name.trim() || file?.name || "")}
             </div>
-            <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>{t("imports.wizard.payloadOrientation")}</div>
-          </div>
+          </Field>
         </>
       )}
 
@@ -276,9 +276,11 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
         </select>
       </Field>
 
-      <Field label={t("imports.wizard.importName")}>
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={file?.name || ""} />
-      </Field>
+      {!isPayload && (
+        <Field label={t("imports.wizard.importName")}>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={file?.name || ""} />
+        </Field>
+      )}
 
       <div className="modal-actions">
         <Button type="button" variant="ghost" onClick={onClose}>{t("imports.wizard.cancel")}</Button>

@@ -270,8 +270,7 @@
       "sourceSystem": "Application source (optionnel)",
       "sourceSystemPlaceholder": "ex. SAP, Salesforce, ERP legacy",
       "sourceSystemHelp": "De quelle application ce fichier a été exporté — informatif, stocké tel quel sur chaque ligne, sans contrainte.",
-      "payloadTargetTable": "Table cible : {{table}}",
-      "payloadOrientation": "La structuration (types, colonnes) se fera depuis le canvas médaillon, sur le dataset bronze — pas ici.",
+      "bronzeTableName": "Nom de la table bronze",
       "importing": "Import…",
       "importAction": "Importer",
       "payloadImportedToast": "Fichier importé en payload."
