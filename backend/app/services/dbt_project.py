@@ -82,6 +82,19 @@ def _dbt_project_yml(project: MedallionProject, needs_try_cast: bool, structurat
         # every structuration model's guarded cast calls (deployed once per run, in `public` —
         # always on the default search_path, idempotent CREATE OR REPLACE).
         config["on-run-start"] = [payload_structure.TRY_CAST_FUNCTIONS_SQL]
+        # Module 18 §8 — dq_flag_registry.csv can legitimately have zero data rows (no quality
+        # flag defined anywhere in the project yet). Left to dbt's default seed type inference
+        # (agate), an all-empty column has nothing to disprove "numeric", so `category` gets
+        # created as integer — and 05's `category = 'informative'` comparison then fails with
+        # "invalid input syntax for type integer" the moment it runs. Pin every column to text
+        # explicitly so the seed's shape never depends on how much sample data it happens to hold.
+        config["seeds"] = {
+            project.dbt_project_name: {
+                "dq_flag_registry": {
+                    "+column_types": {"flag_name": "text", "category": "text", "source_rule": "text", "issue_type": "text"},
+                },
+            },
+        }
     if structuration_vars:
         # §5 rewrite — the field list each bronze payload dataset's 01_unpacked/02_typed pair
         # reads via var(<name>_fields); one key per structured dataset, merged here.
