@@ -1082,6 +1082,7 @@
       "sqlValidateFailed": "Validatie mislukt.",
       "createStandardizedHint": "03_standardized maken — een silver-dataset vanaf deze typed-tabel",
       "instantPreviewBadge": "directe preview",
+      "upstreamLockedHint": "Vastgelegd door de SQL — pas de query rechtstreeks aan om dit te wijzigen.",
       "availableTables": "Beschikbare tabellen — klik om de referentie in te voegen",
       "availableMacros": "Beschikbare macro's — klik om de aanroep in te voegen",
       "insertReferenceHint": "Deze referentie in de SQL invoegen",

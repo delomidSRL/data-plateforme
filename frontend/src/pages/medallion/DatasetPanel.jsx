@@ -312,6 +312,25 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
     if (d.layer !== "bronze" || !columnsByDataset[d.id]?.structured) return null;
     return stageRefPattern(d.name).exec(sql)?.[1] || null;
   };
+  // UX ask — 01_unpacked -> 02_typed -> 03_standardized is a fixed workflow (the "+" on a
+  // 02_typed canvas node), never a pick-any-upstream situation: once the SQL reads one of
+  // these two instant-preview stages for some bronze, that relationship is locked — "Upstreams"
+  // shows just that one line (checked, disabled) instead of the full candidate list. 05_validated
+  // isn't included here: that's the normal, still-freely-editable default reference every other
+  // silver/gold dataset gets when it depends on a structured bronze.
+  const lockedStageUpstream = (() => {
+    for (const d of upstreamCandidates) {
+      const stage = detectUpstreamStage(d);
+      if (stage === "01_unpacked" || stage === "02_typed") return { modelName: `${stage}_${d.name}`, bronzeId: d.id };
+    }
+    return null;
+  })();
+  // The disabled checkbox above shows checked because the SQL reads this stage — keep
+  // upstreamIds actually true to that (e.g. an existing dataset saved before this locked view
+  // existed might have the right SQL but never got its bronze recorded as upstream).
+  useEffect(() => {
+    if (lockedStageUpstream) setUpstreamIds((s) => (s.has(lockedStageUpstream.bronzeId) ? s : new Set(s).add(lockedStageUpstream.bronzeId)));
+  }, [lockedStageUpstream?.bronzeId]);
 
   const sqlRef = useRef(null);
   const insertAtCursor = (text) => {
@@ -899,49 +918,33 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
             </Field>
 
             <Field label={t("medallion.panel.upstreams")}>
-              {upstreamCandidates.length === 0 ? (
+              {lockedStageUpstream ? (
+                // UX ask — 01_unpacked -> 02_typed -> 03_standardized is a fixed workflow: once
+                // this SQL reads one of those two instant-preview stages for some bronze, THAT
+                // is the relationship, full stop — not one candidate among a whole list of
+                // unrelated bronzes/silvers to pick from. Shown checked and disabled (the real
+                // dependency, the underlying bronze's id, is already in upstreamIds from the
+                // "+" prefill or an earlier selectUpstreamStage call — nothing to toggle here);
+                // editing the SQL directly is still the way to change it.
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label className="service-tile-checkline" style={{ opacity: 0.85 }}>
+                    <input type="checkbox" checked readOnly disabled />
+                    <span style={{ fontSize: 12.5 }}>
+                      {lockedStageUpstream.modelName} <span style={{ color: "var(--text-muted)" }}>({t("medallion.panel.instantPreviewBadge")})</span>
+                    </span>
+                  </label>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 22 }}>{t("medallion.panel.upstreamLockedHint")}</div>
+                </div>
+              ) : upstreamCandidates.length === 0 ? (
                 <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{t("medallion.panel.noUpstreamsLower")}</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {upstreamCandidates.map((d) => {
-                    const colState = columnsByDataset[d.id];
-                    const activeStage = detectUpstreamStage(d);
-                    return (
-                      <div key={d.id}>
-                        <label className="service-tile-checkline">
-                          <input type="checkbox" checked={upstreamIds.has(d.id)} onChange={() => toggleUpstream(d.id)} />
-                          <span style={{ fontSize: 12.5 }}>{d.name} <span style={{ color: "var(--text-muted)" }}>({d.layer})</span></span>
-                        </label>
-                        {d.layer === "bronze" && colState?.structured && (
-                          // UX ask — a full checkbox row per stage, same visual weight as the
-                          // bronze row above (not a smaller sub-detail): a custom
-                          // 03_standardized reads a specific stage, never the bronze directly,
-                          // so that stage needs its own real checkbox here, checked by default
-                          // whenever the SQL already reads it (e.g. the "+" on 02_typed
-                          // pre-seeds exactly that reference). The two are mutually exclusive —
-                          // selecting one (selectUpstreamStage) replaces whichever stage
-                          // reference is already in the SQL rather than inserting a second one
-                          // alongside it, and marks the bronze itself as upstream.
-                          [["01_unpacked", "unpacked"], ["02_typed", "typed"]].map(([prefix, stageKey]) => {
-                            const modelName = `${prefix}_${d.name}`;
-                            const checked = activeStage === prefix;
-                            return (
-                              <label key={stageKey} className="service-tile-checkline">
-                                <input
-                                  type="checkbox" checked={checked}
-                                  onChange={() => selectUpstreamStage(d, modelName)}
-                                  title={t("medallion.structuration.instantPreviewHint")}
-                                />
-                                <span style={{ fontSize: 12.5 }}>
-                                  {modelName} <span style={{ color: "var(--text-muted)" }}>({t("medallion.panel.instantPreviewBadge")})</span>
-                                </span>
-                              </label>
-                            );
-                          })
-                        )}
-                      </div>
-                    );
-                  })}
+                  {upstreamCandidates.map((d) => (
+                    <label key={d.id} className="service-tile-checkline">
+                      <input type="checkbox" checked={upstreamIds.has(d.id)} onChange={() => toggleUpstream(d.id)} />
+                      <span style={{ fontSize: 12.5 }}>{d.name} <span style={{ color: "var(--text-muted)" }}>({d.layer})</span></span>
+                    </label>
+                  ))}
                 </div>
               )}
             </Field>

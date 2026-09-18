@@ -1082,6 +1082,7 @@
       "sqlValidateFailed": "Validation failed.",
       "createStandardizedHint": "Create 03_standardized — a silver dataset off this typed table",
       "instantPreviewBadge": "instant preview",
+      "upstreamLockedHint": "Fixed by the SQL — edit the query directly to change it.",
       "availableTables": "Available tables — click to insert the reference",
       "availableMacros": "Available macros — click to insert the call",
       "insertReferenceHint": "Insert this reference into the SQL",
