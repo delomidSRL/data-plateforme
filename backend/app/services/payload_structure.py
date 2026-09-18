@@ -462,7 +462,14 @@ def render_unpacked_typed_models(column_mapping: list[dict], bronze_name: str) -
     post_hooks = [f'ALTER TABLE {typed_qualified} ALTER COLUMN "{c}" SET NOT NULL' for c in not_null_columns]
     if pk_columns:
         pk_cols_sql = ", ".join(f'"{c}"' for c in pk_columns)
-        post_hooks.append(f'ALTER TABLE {typed_qualified} ADD CONSTRAINT "02_typed_{bronze_name}_pkey" PRIMARY KEY ({pk_cols_sql})')
+        pk_name = f"02_typed_{bronze_name}_pkey"
+        # A table materialization is a fresh build every run, but Postgres constraint/index
+        # names live in a schema-wide namespace (not per-table) — a same-named leftover
+        # (materialize_unpacked_typed_sync's own empty shell, or a stray from a swap dbt's
+        # table materialization didn't fully clean up) would otherwise collide with this
+        # ADD CONSTRAINT. DROP IF EXISTS first makes it idempotent regardless of the cause.
+        post_hooks.append(f'ALTER TABLE {typed_qualified} DROP CONSTRAINT IF EXISTS "{pk_name}"')
+        post_hooks.append(f'ALTER TABLE {typed_qualified} ADD CONSTRAINT "{pk_name}" PRIMARY KEY ({pk_cols_sql})')
     typed_config = "materialized='table', schema='silver'"
     if post_hooks:
         post_hook_literal = "[" + ", ".join(f"'{h}'" for h in post_hooks) + "]"
@@ -712,6 +719,14 @@ def materialize_unpacked_typed_sync(warehouse: DataSource, column_mapping: list[
                     .format(pgsql.Identifier("silver", typed_table), pgsql.Identifier(col))
                 )
             if pk_columns:
+                # Same defensive DROP IF EXISTS as render_unpacked_typed_models's post_hook —
+                # Postgres constraint/index names are schema-wide, so a stray same-named object
+                # (e.g. left behind by a dbt table-materialization swap) could otherwise collide
+                # even though this table itself was just freshly DROP+CREATE'd above.
+                cur.execute(
+                    pgsql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}")
+                    .format(pgsql.Identifier("silver", typed_table), pgsql.Identifier(f"{typed_table}_pkey"))
+                )
                 cur.execute(
                     pgsql.SQL("ALTER TABLE {} ADD CONSTRAINT {} PRIMARY KEY ({})")
                     .format(
