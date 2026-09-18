@@ -195,11 +195,13 @@ def generate_project_files(
 
     `structurations` — Module 6 extension (payload & structuration), keyed by bronze dataset
     id: for each one, two staged models are rendered (`01_unpacked_<name>`, `02_typed_<name>`,
-    §5 rewrite), both landing in the `bronze` schema next to `<name>` itself, the first reading
-    `{{ source('bronze', name) }}` (the same, unchanged bronze ingestion — §11.1), the second
-    `ref()`-ing the first. A dataset absent from this map (no contract yet, or not
-    payload-backed) gets nothing extra — additive only, zero regression for every project that
-    doesn't use this feature.
+    §5 rewrite / §7 UX), both landing in the `silver` schema (never bronze — a directly-usable
+    table, PK/NOT NULL enforced, not bronze's own "never exclude a row" surface), the first
+    reading `{{ source('bronze', name) }}` (the same, unchanged bronze ingestion — §11.1), the
+    second `ref()`-ing the first. 03_standardized onward stay in `bronze`, `ref()`-ing 02_typed
+    across that schema boundary transparently. A dataset absent from this map (no contract yet,
+    or not payload-backed) gets nothing extra — additive only, zero regression for every
+    project that doesn't use this feature.
 
     Module 16 extension §4 — `dbt_test_renderer.render()` is replayed on EVERY generation
     (build, preview, export alike), never a separate write path: a project that materializes
@@ -243,24 +245,20 @@ def generate_project_files(
             # lisibles, jamais de stack trace").
             raise ValueError(f"Structuration invalide pour le dataset « {ds.name} » : {exc}") from exc
         structuration_vars[rendered["vars_key"]] = rendered["vars_entries"]
-        structuration_models[f"models/bronze/01_unpacked_{ds.name}.sql"] = rendered["unpacked_sql"]
-        structuration_models[f"models/bronze/02_typed_{ds.name}.sql"] = rendered["typed_sql"]
+        # §7 UX — 01/02 land in models/silver/ (schema='silver', see render_unpacked_typed_models),
+        # never models/bronze/: 03 onward stay bronze-schema and keep reading
+        # {{ ref('02_typed_<name>') }} unchanged — ref() resolves by model name regardless of
+        # which schema/folder the referenced model is actually in. dbt_run_bronze_structuration's
+        # selector (dag.py.j2) is `+bronze` (not a bare `bronze`) specifically so building 03
+        # pulls its now-silver upstream (01/02) in first, same task, correct order.
+        structuration_models[f"models/silver/01_unpacked_{ds.name}.sql"] = rendered["unpacked_sql"]
+        structuration_models[f"models/silver/02_typed_{ds.name}.sql"] = rendered["typed_sql"]
         structuration_models[f"models/bronze/03_standardized_{ds.name}.sql"] = standardized_sql
         structuration_models[f"models/bronze/04_annotated_{ds.name}.sql"] = annotated_sql
         structuration_models[f"models/bronze/05_validated_{ds.name}.sql"] = validated_quarantine["validated_sql"]
         structuration_models[f"models/bronze/05_quarantine_{ds.name}.sql"] = validated_quarantine["quarantine_sql"]
         structuration_models[f"tests/dq_reconciliation_{ds.name}.sql"] = payload_structure.render_reconciliation_test(ds.name)
         all_quality_flags.extend(structuration.quality_flags)
-
-        # §7 UX — the instant unpacked/typed preview (materialize_unpacked_typed_sync) only
-        # ever creates an empty shell at save time; these two thin silver-schema passthroughs
-        # are what actually fill it once a real dbt build runs (dbt_run_silver, already in the
-        # DAG — no new task needed). File names must be unique project-wide regardless of
-        # folder, hence the "silver_" prefix; `alias` is what makes the physical table land as
-        # silver.01_unpacked_<name>/silver.02_typed_<name> like the empty shell already did.
-        passthrough = payload_structure.render_silver_unpacked_typed_passthrough(structuration.column_mapping, ds.name)
-        structuration_models[f"models/silver/silver_01_unpacked_{ds.name}.sql"] = passthrough["unpacked_sql"]
-        structuration_models[f"models/silver/silver_02_typed_{ds.name}.sql"] = passthrough["typed_sql"]
 
     files: dict[str, str] = {
         "dbt_project.yml": yaml.safe_dump(

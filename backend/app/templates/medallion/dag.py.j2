@@ -67,13 +67,15 @@ with DAG(
     # Module 6 extension (payload & structuration) §5 — bronze itself is never a dbt MODEL
     # (it's declared as a dbt source, populated by the ingest_bronze operators above), but a
     # payload dataset's structuration (01_unpacked_<name> ... 05_validated/05_quarantine_<name>,
-    # Module 18) IS one, living under models/bronze/ next to that source declaration. Nothing
-    # else in this DAG ever runs it — a project with no payload-structured bronze dataset has
-    # zero matching nodes, and dbt exits 0 on "Nothing to do" for an empty selection, so this
-    # is always safe to run.
+    # Module 18) IS one. §7 UX — 01/02 now live under models/silver/ (schema='silver'; 03
+    # onward stay models/bronze/), so `+bronze` (not a bare `bronze`) is what pulls 03's
+    # upstream (01/02) into this same run, in the correct build order, despite them no longer
+    # being selected by "bronze" on their own. Nothing else in this DAG ever runs 03-05 — a
+    # project with no payload-structured bronze dataset has zero matching nodes, and dbt exits
+    # 0 on "Nothing to do" for an empty selection, so this is always safe to run.
     dbt_run_bronze_structuration = BashOperator(
         task_id="dbt_run_bronze_structuration",
-        bash_command=f"{DBT_BIN} run --select bronze --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR} --target {{ project.target.value }}",
+        bash_command=f"{DBT_BIN} run --select +bronze --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR} --target {{ project.target.value }}",
     )
 
     dbt_run_silver = BashOperator(
