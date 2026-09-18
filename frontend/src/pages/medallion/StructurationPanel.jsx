@@ -311,20 +311,25 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
         </div>
       )}
 
-      {!readOnly && (
-        <div style={{ display: "flex", gap: 8, marginBottom: guided ? 10 : 20 }}>
+      {!readOnly && !guided && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
           <button className="btn-ghost" style={{ padding: "6px 10px" }} disabled={busy} onClick={profile}>{Icon.refresh()} {t("medallion.structuration.reprofile")}</button>
           <Button disabled={!canSave || busy} onClick={save}>{busy ? t("medallion.structuration.saving") : t("medallion.structuration.save")}</Button>
         </div>
       )}
 
       {guided && !readOnly && (
+        // UX ask — only one save-ish action ever shows in guided mode, and only on the last
+        // step ("Terminer" IS the save, via wizardFinish): no separate Enregistrer button
+        // competing with it on step 1. Busy re-labels it while
+        // materialize_unpacked_typed_sync runs server-side (a real DROP+CREATE TABLE, not
+        // instant) so the click doesn't look like it did nothing.
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 20 }}>
           <button type="button" className="btn-ghost" style={{ padding: "6px 12px" }} disabled={wizardStepIndex === 0 || busy} onClick={wizardGoBack}>
             ← {t("medallion.structuration.wizardBack")}
           </button>
           {wizardStepIndex === WIZARD_STAGES.length - 1 ? (
-            <Button disabled={!canSave || busy} onClick={wizardFinish}>{t("medallion.structuration.wizardFinish")}</Button>
+            <Button disabled={!canSave || busy} onClick={wizardFinish}>{busy ? t("medallion.structuration.saving") : t("medallion.structuration.wizardFinish")}</Button>
           ) : (
             <Button disabled={!wizardCanAdvance || busy} onClick={wizardGoNext}>{t("medallion.structuration.wizardNext")} →</Button>
           )}

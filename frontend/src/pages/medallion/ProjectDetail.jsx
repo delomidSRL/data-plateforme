@@ -73,6 +73,16 @@ export default function ProjectDetail({ readOnly = false }) {
     setStructurationGuided(guided);
   };
   const [silverPreviewTarget, setSilverPreviewTarget] = useState(null); // Module 18 §7 UX — {datasetId, stage} | null
+  // UX ask — the guided popup's "Terminer" materializes silver.unpacked_<name>/typed_<name>
+  // synchronously server-side, so the canvas's `structured` flag (and thus the two new nodes)
+  // only exist AFTER that request returns — re-fetching lineage here is what replaces the
+  // manual page refresh the engineer had to do until now.
+  const onStructurationSaved = () => {
+    setStructurationTargetId(null);
+    setStructurationStage(null);
+    setStructurationGuided(false);
+    medallionApi.getLineage(id).then(setLineage);
+  };
   const [hasProdEnvironment, setHasProdEnvironment] = useState(false); // Module 17 §5.3.1
   const [hasProdBinding, setHasProdBinding] = useState(false);
   const [promotionOpen, setPromotionOpen] = useState(false);
@@ -540,6 +550,7 @@ export default function ProjectDetail({ readOnly = false }) {
           onClose={() => { setPanel(null); loadPublications(); loadDashboards(); }}
           onSaved={onDatasetSaved}
           onDeleted={onDatasetDeleted}
+          onStructurationSaved={() => medallionApi.getLineage(id).then(setLineage)}
           readOnly={readOnly}
         />
       )}
@@ -569,6 +580,7 @@ export default function ProjectDetail({ readOnly = false }) {
         return structurationDataset ? (
           <StructurationPopup
             project={project} dataset={structurationDataset} stage={structurationStage} guided={structurationGuided}
+            onFinish={onStructurationSaved}
             onClose={() => { setStructurationTargetId(null); setStructurationStage(null); setStructurationGuided(false); }}
           />
         ) : null;

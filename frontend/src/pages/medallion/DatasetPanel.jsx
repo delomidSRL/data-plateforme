@@ -41,7 +41,7 @@ function substitutePlaceholders(code, expectedInputs, values) {
   return result;
 }
 
-export default function DatasetPanel({ project, datasets, dataset, defaultLayer, sources, onClose, onSaved, onDeleted, readOnly = false, initialTab }) {
+export default function DatasetPanel({ project, datasets, dataset, defaultLayer, sources, onClose, onSaved, onDeleted, onStructurationSaved, readOnly = false, initialTab }) {
   const { t } = useTranslation();
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
   const ML_OBJECTIVES = [
@@ -792,6 +792,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
           // just gets the reference inserted at the cursor, same as clicking the table below.
           const d = structurationPopupDataset;
           setStructurationPopupDataset(null);
+          onStructurationSaved?.();
           if (!d) return;
           const ref = `{{ ref('05_validated_${d.name}') }}`;
           if (sql.trim() === "SELECT *") setSql(`SELECT *\nFROM ${ref}\n`);
