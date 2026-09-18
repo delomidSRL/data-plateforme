@@ -25,7 +25,7 @@ export default function DataPreviewPanel({ project, datasetId, dataset = null, f
   const [expandedCell, setExpandedCell] = useState(null); // `${rowIdx}:${colName}` | null
 
   // Module 18 §7 UX — `fetchPreview` lets a caller with no real MedallionDataset (the instant
-  // silver.typed_<name>/silver.structured_<name> preview) reuse this whole panel — same
+  // silver.01_unpacked_<name>/silver.02_typed_<name> preview) reuse this whole panel — same
   // DataSampleOut shape, just a different endpoint — instead of duplicating the table/paging UI.
   const load = async () => {
     setLoading(true);

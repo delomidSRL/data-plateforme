@@ -252,6 +252,16 @@ def generate_project_files(
         structuration_models[f"tests/dq_reconciliation_{ds.name}.sql"] = payload_structure.render_reconciliation_test(ds.name)
         all_quality_flags.extend(structuration.quality_flags)
 
+        # §7 UX — the instant unpacked/typed preview (materialize_unpacked_typed_sync) only
+        # ever creates an empty shell at save time; these two thin silver-schema passthroughs
+        # are what actually fill it once a real dbt build runs (dbt_run_silver, already in the
+        # DAG — no new task needed). File names must be unique project-wide regardless of
+        # folder, hence the "silver_" prefix; `alias` is what makes the physical table land as
+        # silver.01_unpacked_<name>/silver.02_typed_<name> like the empty shell already did.
+        passthrough = payload_structure.render_silver_unpacked_typed_passthrough(structuration.column_mapping, ds.name)
+        structuration_models[f"models/silver/silver_01_unpacked_{ds.name}.sql"] = passthrough["unpacked_sql"]
+        structuration_models[f"models/silver/silver_02_typed_{ds.name}.sql"] = passthrough["typed_sql"]
+
     files: dict[str, str] = {
         "dbt_project.yml": yaml.safe_dump(
             _dbt_project_yml(project, needs_try_cast=bool(structurations), structuration_vars=structuration_vars),

@@ -65,7 +65,7 @@ def attempt_sample(source: DataSource | None, schema_name: str | None, table: st
     """Try to sample one candidate target. Returns None (not an error) when the table simply
     doesn't exist yet there — the caller decides whether to fall back to another candidate or
     report `not_materialized`. Public (not dataset-scoped): also reused by the structuration
-    preview route to sample silver.typed_<name>/silver.structured_<name>, which aren't
+    preview route to sample silver.01_unpacked_<name>/silver.02_typed_<name>, which aren't
     MedallionDataset rows and so never go through resolve_and_sample below."""
     if source is None or not schema_name or not table:
         return None

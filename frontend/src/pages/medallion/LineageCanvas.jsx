@@ -78,7 +78,7 @@ function DatasetNode({ data }) {
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontFamily: "var(--font-m)" }}>{data.layer}</div>
         {data.previewStageLabel && (
-          // Module 18 §7 UX — silver.unpacked_<name>/silver.typed_<name>
+          // Module 18 §7 UX — silver.01_unpacked_<name>/silver.02_typed_<name>
           // (materialize_unpacked_typed_sync): a real silver node, same design as any other,
           // just flagged ember/orange since it's an instant preview, not a registered dataset.
           <span
@@ -218,7 +218,7 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
     // Module 18 §7 UX — nothing shows up here until a contract is actually saved (n.structured,
     // set once materialize_unpacked_typed_sync has run at least once) — never merely because
     // the bronze happens to be payload-backed, and never gated on a downstream silver existing
-    // either: the "+" popup's own save is what creates silver.unpacked_<name>/silver.typed_<name>,
+    // either: the "+" popup's own save is what creates silver.01_unpacked_<name>/silver.02_typed_<name>,
     // so that's the only thing this waits on. Purely additive, client-side only — doesn't
     // touch or replace the real bronze->silver edges below.
     for (const n of byLayer.bronze) {
@@ -232,7 +232,7 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
         type: "dataset",
         position: { x: PREVIEW_X.unpacked, y },
         data: {
-          layer: "silver", name: `unpacked_${n.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
+          layer: "silver", name: `01_unpacked_${n.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
           previewStageLabel: "unpacked", isInstantPreview: true,
           selected: false, onClick: () => onOpenSilverPreview?.(n.id, "unpacked"),
         },
@@ -242,7 +242,7 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
         type: "dataset",
         position: { x: PREVIEW_X.typed, y },
         data: {
-          layer: "silver", name: `typed_${n.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
+          layer: "silver", name: `02_typed_${n.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
           previewStageLabel: "typed", isInstantPreview: true,
           selected: false, onClick: () => onOpenSilverPreview?.(n.id, "typed"),
         },

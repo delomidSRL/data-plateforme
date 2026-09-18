@@ -30,9 +30,10 @@ const STAGE_BLOCK = { unpacked: "fields", typed: "fields", standardized: "fields
 // silver's upstream" both land a first-timer on a blank contract with nothing decided yet;
 // dumping the full editor on them (the canvas-jump behavior) skips explaining what each
 // stage even is. `guided` walks a short, deliberately reduced 2-step version instead — just
-// enough to get a real, browsable silver.typed_<name> table (materialize_unpacked_typed_sync)
-// out the door fast; standardization/quality-flags/quarantine stay reachable the normal way,
-// by clicking a 03/04/05 node directly on the canvas once this bronze has a chain.
+// enough to get silver.01_unpacked_<name>/02_typed_<name> created (materialize_unpacked_typed_sync,
+// empty shell — real rows land once the project's DAG actually runs) out the door fast;
+// standardization/quality-flags/quarantine stay reachable the normal way, by clicking a
+// 03/04/05 node directly on the canvas once this bronze has a chain.
 const WIZARD_STAGES = ["unpacked", "typed"];
 
 // Module 6 extension (payload & structuration) — étapes 2/3/4, §5 rewrite (unpacked/typed

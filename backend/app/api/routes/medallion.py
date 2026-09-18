@@ -350,17 +350,18 @@ def preview_structuration_silver_table(
     did: int, stage: str, limit: int = preview.PREVIEW_DEFAULT_LIMIT, offset: int = 0,
     db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project),
 ):
-    """UX ask — silver.unpacked_<name>/silver.typed_<name> (materialize_unpacked_typed_sync)
+    """UX ask — silver.01_unpacked_<name>/silver.02_typed_<name> (materialize_unpacked_typed_sync)
     aren't MedallionDataset rows, so get_dataset_preview can't resolve them. Reuses the exact
     same low-level sampler (preview.attempt_sample) against a schema+table derived server-side
     from the bronze dataset's own name — never a client-supplied table string — restricted to
     the two literal stages that mechanism ever creates."""
-    if stage not in ("unpacked", "typed"):
+    stage_prefix = {"unpacked": "01_unpacked", "typed": "02_typed"}.get(stage)
+    if stage_prefix is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Étape invalide.")
     dataset = _get_dataset(db, project.id, did)
     warehouse = db.get(DataSource, project.warehouse_source_id)
     limit = max(1, min(limit, preview.PREVIEW_MAX_ROWS))
-    outcome = preview.attempt_sample(warehouse, "silver", f"{stage}_{dataset.name}", "materialized", limit, offset) if warehouse else None
+    outcome = preview.attempt_sample(warehouse, "silver", f"{stage_prefix}_{dataset.name}", "materialized", limit, offset) if warehouse else None
     if outcome is None:
         outcome = (
             preview.PreviewOutcome(status="not_found", message="Aucun warehouse configuré pour ce projet.")
@@ -425,9 +426,10 @@ def update_dataset_structuration(
     """§4.4 — persists the validated contract: identifiers checked before anything is written.
     Marks the project as needing a redeploy (a changed contract re-renders the
     01_unpacked ... 05_validated/05_quarantine dbt models, Module 18, at next build) — but
-    doesn't make the engineer wait for that build to see anything real: every save also
-    materializes silver.unpacked_<name>/silver.typed_<name> synchronously, right here (see
-    materialize_unpacked_typed_sync), so a failure there fails the save too."""
+    doesn't leave the canvas empty until that build runs: every save also creates the empty
+    shape of silver.01_unpacked_<name>/silver.02_typed_<name> synchronously, right here (see
+    materialize_unpacked_typed_sync), so a failure there fails the save too. Rows land later,
+    the normal way — dbt_run_silver building the passthrough models the redeploy just rendered."""
     dataset = _get_dataset(db, project.id, did)
     if payload_structure.resolve_import(db, dataset) is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ce dataset bronze n'est pas adossé à un import en mode payload.")
@@ -445,9 +447,10 @@ def update_dataset_structuration(
         payload_structure.render_unpacked_typed_models(column_mapping, dataset.name)
         payload_structure.render_standardized_model(column_mapping, dataset.name)
         payload_structure.render_annotated_model(quality_flags, dataset.name)
-        # UX ask — don't just prove it renders: materialize silver.unpacked_<name> and
-        # silver.typed_<name> for real, right now, with real data, instead of making the
-        # engineer wait for the next Airflow run. A save only succeeds if this actually works.
+        # UX ask — don't just prove it renders: create the empty shape of
+        # silver.01_unpacked_<name>/silver.02_typed_<name> right now, so the canvas has
+        # something real to show immediately. A save only succeeds if this actually works;
+        # the rows themselves are injected later, by Airflow running the project's DAG.
         payload_structure.materialize_unpacked_typed_sync(warehouse, column_mapping, dataset.name)
     except payload_structure.PayloadStructureError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

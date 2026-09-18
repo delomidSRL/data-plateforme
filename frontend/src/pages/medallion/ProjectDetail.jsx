@@ -73,7 +73,7 @@ export default function ProjectDetail({ readOnly = false }) {
     setStructurationGuided(guided);
   };
   const [silverPreviewTarget, setSilverPreviewTarget] = useState(null); // Module 18 §7 UX — {datasetId, stage} | null
-  // UX ask — the guided popup's "Terminer" materializes silver.unpacked_<name>/typed_<name>
+  // UX ask — the guided popup's "Terminer" creates silver.01_unpacked_<name>/02_typed_<name>
   // synchronously server-side, so the canvas's `structured` flag (and thus the two new nodes)
   // only exist AFTER that request returns — re-fetching lineage here is what replaces the
   // manual page refresh the engineer had to do until now.

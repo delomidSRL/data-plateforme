@@ -599,14 +599,15 @@ def render_standardized_model(column_mapping: list[dict], bronze_name: str) -> s
 
 # ---------------------------------------------------------------------------
 # UX ask — the "+" on a payload-backed bronze and "pick this bronze as a new silver's
-# upstream" popups shouldn't just save config and make the engineer wait for the next Airflow
-# run to see anything real. Every save also materializes `silver.unpacked_<name>` and
-# `silver.typed_<name>` for real, right now, with real rows — by compiling the exact same
-# 01/02 templates a dbt build would eventually run (render_unpacked_typed_models) through a
-# standalone Jinja pass instead of the dbt compiler, then executing the result directly against
-# the warehouse. This is an instant preview layered on top of the real pipeline, not a
-# replacement for it: the bronze-schema 01..05 chain a real dbt build produces later is
-# untouched and still what Airflow/silver models actually depend on.
+# upstream" popups shouldn't just save config and leave the canvas empty until the engineer
+# remembers to build + run the project's DAG. Every save immediately creates the *shape* of
+# `silver.01_unpacked_<name>` and `silver.02_typed_<name>` — real tables, right columns/types/
+# constraints, zero rows (materialize_unpacked_typed_sync, by compiling the same 01/02
+# templates a dbt build would eventually run through a standalone Jinja pass instead of the dbt
+# compiler, then executing the result directly against the warehouse with `WITH NO DATA`). The
+# rows themselves land later, the normal way: render_silver_unpacked_typed_passthrough renders
+# two thin dbt models (schema='silver', aliased to the exact same names) that dbt_run_silver —
+# already a DAG task — builds for real once the engineer actually runs the project's DAG.
 # ---------------------------------------------------------------------------
 
 def _compile_stage_sql(body: str, *, var_entries: list[dict], ref_map: dict[str, str]) -> str:
@@ -631,23 +632,21 @@ def _compile_stage_sql(body: str, *, var_entries: list[dict], ref_map: dict[str,
 
 
 def materialize_unpacked_typed_sync(warehouse: DataSource, column_mapping: list[dict], bronze_name: str) -> None:
-    """Persists `silver.unpacked_<name>` (01, straight from render_unpacked_typed_models) and,
-    reading that real table, `silver.typed_<name>` (02) — both DROP+CREATE (never incremental),
-    same "always fresh, no accumulation" convention as file_import.py's _sync_bronze_mirror.
-    dp_try_cast_* must exist before 02_typed's safe_cast calls can run — normally deployed once
-    per project via dbt's on-run-start, (re)created here too since a first save can land before
-    any dbt build ever has. Deliberately stops at 02 (matches the guided "+" popup's 2-step
-    scope, §7 UX) — standardization/flags/quarantine stay whatever a real dbt build produces
-    in bronze, reachable from the canvas's 03/04/05 nodes once this bronze has a chain.
+    """Creates `silver.01_unpacked_<name>` and, reading that real (still empty) table,
+    `silver.02_typed_<name>` — the right columns/types/constraints, zero rows (`WITH NO DATA`):
+    a shape, not a copy of the data. Both DROP+CREATE (never incremental), same "always fresh,
+    no accumulation" convention as file_import.py's _sync_bronze_mirror. dp_try_cast_* must
+    exist before 02_typed's safe_cast calls can run (even against zero rows — it's still part
+    of the compiled SELECT) — normally deployed once per project via dbt's on-run-start,
+    (re)created here too since a first save can land before any dbt build ever has. The actual
+    rows land later, via render_silver_unpacked_typed_passthrough + a real dbt build (§7 UX).
 
-    Unlike the real 02_typed (a CTAS carries no constraints, and bronze deliberately never
-    excludes a row — cast_issues tags a problem instead), `silver.typed_<name>` is meant to be
-    a directly-usable preview: the contract's own is_primary_key/nullable are applied as real
-    PRIMARY KEY / NOT NULL constraints right after it's built. If the actual data doesn't
-    support them (a "required" field with an absent value, a "key" field with a duplicate —
-    both of which 02_typed would only ever have tagged, never rejected), the ALTER TABLE fails
-    and the whole save is rejected via the same PayloadStructureError path below — surfacing
-    exactly that mismatch instead of silently building a table that doesn't honor its contract."""
+    Unlike the real 02_typed (bronze deliberately never excludes a row — cast_issues tags a
+    problem instead), `silver.02_typed_<name>` is meant to be a directly-usable preview: the
+    contract's own is_primary_key/nullable are applied as real PRIMARY KEY / NOT NULL
+    constraints right after it's built — trivially satisfied here since the table is empty, but
+    the same constraints are reapplied by the passthrough model's post-hook once real rows
+    exist, where they matter and can actually fail (see that function)."""
     included = [f for f in column_mapping if f.get("include", True)]
     pk_columns = [f["target_name"] for f in included if f.get("is_primary_key")]
     # A primary key column is implicitly NOT NULL in Postgres regardless of what `nullable`
@@ -658,12 +657,12 @@ def materialize_unpacked_typed_sync(warehouse: DataSource, column_mapping: list[
     rendered = render_unpacked_typed_models(column_mapping, bronze_name)
 
     unpacked_select = _compile_stage_sql(rendered["unpacked_sql"], var_entries=rendered["vars_entries"], ref_map={})
-    unpacked_table = f"unpacked_{bronze_name}"
+    unpacked_table = f"01_unpacked_{bronze_name}"
     typed_select = _compile_stage_sql(
         rendered["typed_sql"], var_entries=rendered["vars_entries"],
         ref_map={f"01_unpacked_{bronze_name}": f'"silver"."{unpacked_table}"'},
     )
-    typed_table = f"typed_{bronze_name}"
+    typed_table = f"02_typed_{bronze_name}"
 
     conn = _connect_warehouse(warehouse)
     try:
@@ -672,9 +671,9 @@ def materialize_unpacked_typed_sync(warehouse: DataSource, column_mapping: list[
                 cur.execute(statement)
             cur.execute(pgsql.SQL("CREATE SCHEMA IF NOT EXISTS silver"))
             cur.execute(pgsql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(pgsql.Identifier("silver", unpacked_table)))
-            cur.execute(pgsql.SQL("CREATE TABLE {} AS {}").format(pgsql.Identifier("silver", unpacked_table), pgsql.SQL(unpacked_select)))
+            cur.execute(pgsql.SQL("CREATE TABLE {} AS {} WITH NO DATA").format(pgsql.Identifier("silver", unpacked_table), pgsql.SQL(unpacked_select)))
             cur.execute(pgsql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(pgsql.Identifier("silver", typed_table)))
-            cur.execute(pgsql.SQL("CREATE TABLE {} AS {}").format(pgsql.Identifier("silver", typed_table), pgsql.SQL(typed_select)))
+            cur.execute(pgsql.SQL("CREATE TABLE {} AS {} WITH NO DATA").format(pgsql.Identifier("silver", typed_table), pgsql.SQL(typed_select)))
             for col in not_null_columns:
                 cur.execute(
                     pgsql.SQL("ALTER TABLE {} ALTER COLUMN {} SET NOT NULL")
@@ -695,6 +694,45 @@ def materialize_unpacked_typed_sync(warehouse: DataSource, column_mapping: list[
         raise PayloadStructureError(connections.clean_error(exc)) from exc
     finally:
         conn.close()
+
+
+def render_silver_unpacked_typed_passthrough(column_mapping: list[dict], bronze_name: str) -> dict:
+    """§7 UX — the two thin dbt models that actually fill `silver.01_unpacked_<name>`/
+    `silver.02_typed_<name>` with real rows: a plain `select *` from the real bronze
+    `01_unpacked_<name>`/`02_typed_<name>` models, aliased so the built table lands under the
+    exact same name materialize_unpacked_typed_sync already used for the empty shell. Rendered
+    into `models/silver/` (dbt_project.py) so dbt_run_silver — already a DAG task — builds them
+    on every run, no new task needed; `ref()` gives dbt the correct build order automatically
+    (bronze's 01/02 before these). A `materialized='table'` build is a fresh CREATE each time,
+    so 02's PRIMARY KEY/NOT NULL constraints (materialize_unpacked_typed_sync's docstring) are
+    reapplied here via post_hook — this is the version where they can actually fail, if real
+    data doesn't honor what the contract declares."""
+    included = [f for f in column_mapping if f.get("include", True)]
+    pk_columns = [f["target_name"] for f in included if f.get("is_primary_key")]
+    not_null_columns = sorted({f["target_name"] for f in included if not f.get("nullable", True)} | set(pk_columns))
+
+    unpacked_alias = f"01_unpacked_{bronze_name}"
+    typed_alias = f"02_typed_{bronze_name}"
+    typed_qualified = f'"silver"."{typed_alias}"'
+
+    post_hooks = [f'ALTER TABLE {typed_qualified} ALTER COLUMN "{c}" SET NOT NULL' for c in not_null_columns]
+    if pk_columns:
+        pk_cols_sql = ", ".join(f'"{c}"' for c in pk_columns)
+        post_hooks.append(f'ALTER TABLE {typed_qualified} ADD CONSTRAINT "{typed_alias}_pkey" PRIMARY KEY ({pk_cols_sql})')
+
+    unpacked_sql = (
+        f"{{{{ config(materialized='table', schema='silver', alias='{unpacked_alias}') }}}}\n\n"
+        f"select * from {{{{ ref('01_unpacked_{bronze_name}') }}}}\n"
+    )
+    typed_config = f"materialized='table', schema='silver', alias='{typed_alias}'"
+    if post_hooks:
+        post_hook_literal = "[" + ", ".join(f"'{h}'" for h in post_hooks) + "]"
+        typed_config += f", post_hook={post_hook_literal}"
+    typed_sql = (
+        f"{{{{ config({typed_config}) }}}}\n\n"
+        f"select * from {{{{ ref('02_typed_{bronze_name}') }}}}\n"
+    )
+    return {"unpacked_sql": unpacked_sql, "typed_sql": typed_sql}
 
 
 _FLAG_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
