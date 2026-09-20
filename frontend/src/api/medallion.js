@@ -18,6 +18,9 @@ export const createDataset = (pid, payload) => apiFetch(`${base}/${pid}/datasets
 // Imports page itself works with (status="awaiting_validation" needs SchemaValidationModal,
 // same as there; payload mode is already imported).
 export const importFromObjectStore = (pid, payload) => apiFetch(`${base}/${pid}/import-from-object-store`, { method: "POST", body: payload });
+// Scratch analysis only (no FileImport row) — mirrors imports.getColumns for a file already
+// sitting in a bucket, used for the source_pk composite-key candidate list.
+export const getObjectStoreColumns = (pid, payload) => apiFetch(`${base}/${pid}/import-from-object-store/columns`, { method: "POST", body: payload });
 export const updateDataset = (pid, did, payload) => apiFetch(`${base}/${pid}/datasets/${did}`, { method: "PUT", body: payload });
 export const deleteDataset = (pid, did) => apiFetch(`${base}/${pid}/datasets/${did}`, { method: "DELETE" });
 export const getDatasetColumns = (pid, did) => apiFetch(`${base}/${pid}/datasets/${did}/columns`);

@@ -91,7 +91,7 @@ from app.schemas.payload_structuration import (
     StructurationOut,
     StructurationUpdate,
 )
-from app.schemas.file_import import FileImportOut, ImportFromObjectStoreCreate
+from app.schemas.file_import import ColumnsOut, FileImportOut, ImportFromObjectStoreCreate, ObjectStoreColumnsRequest
 from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, file_import as file_import_service, gold_export, gold_profile, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot
 from app.services.ai_config import get_ai_config
 from app.services.superset_instances import get_superset_config
@@ -264,6 +264,28 @@ def create_dataset(payload: DatasetCreate, db: Session = Depends(get_db), projec
     db.refresh(dataset)
     dataset.payload_backed = payload_structure.resolve_import(db, dataset) is not None
     return dataset
+
+
+@router.post("/{pid}/import-from-object-store/columns", response_model=ColumnsOut)
+def object_store_columns(
+    payload: ObjectStoreColumnsRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project),
+):
+    """Scratch analysis only — no FileImport row, nothing archived. Mirrors POST
+    /api/imports/columns (the standalone wizard's own source_pk candidate list) so a CSV/Excel
+    file already sitting in a bucket gets the exact same composite-key picker, not just a
+    free-text field, before the engineer commits to processing it."""
+    source = db.get(DataSource, payload.source_id)
+    if source is None or source.type != DataSourceType.minio:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Source MinIO/S3 introuvable.")
+    try:
+        file_bytes = file_import_service.fetch_object_bytes(source, payload.bucket, payload.key)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Lecture du fichier « {payload.bucket}/{payload.key} » impossible : {exc}")
+    try:
+        columns, _rows = file_import_service.read_columns_and_sample(payload.format, file_bytes, payload.format_options)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Analyse des colonnes impossible : {exc}")
+    return ColumnsOut(columns=columns)
 
 
 @router.post("/{pid}/import-from-object-store", response_model=FileImportOut, status_code=status.HTTP_201_CREATED)

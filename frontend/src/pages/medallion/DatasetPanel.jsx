@@ -242,6 +242,29 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   const [s3Error, setS3Error] = useState("");
   const [s3Result, setS3Result] = useState(null);
   const [s3Validating, setS3Validating] = useState(null);
+  const [s3PkCandidates, setS3PkCandidates] = useState([]);
+  const [s3PkLoading, setS3PkLoading] = useState(false);
+
+  const s3FormatOptions = () => (s3ObjectFormat === "csv"
+    ? { ...(s3Delimiter ? { delimiter: s3Delimiter } : {}), ...(s3Encoding ? { encoding: s3Encoding } : {}) }
+    : (s3Sheet ? { sheet: s3Sheet } : {}));
+
+  // Schema-on-Read has no other preview step (direct import, no inference) — this is the only
+  // way to offer a source_pk candidate list before commit, same as the standalone wizard's own
+  // pkCandidates effect (ImportWizardDrawer.jsx), just reading from the bucket instead of an
+  // uploaded File object.
+  useEffect(() => {
+    if (!isS3Importable || s3ImportMode !== "payload" || !sourceObject) { setS3PkCandidates([]); return; }
+    let cancelled = false;
+    setS3PkLoading(true);
+    const [bucket, ...rest] = sourceObject.split("/");
+    medallionApi.getObjectStoreColumns(project.id, { source_id: Number(sourceId), bucket, key: rest.join("/"), format: s3ObjectFormat, format_options: s3FormatOptions() })
+      .then((res) => { if (!cancelled) setS3PkCandidates(res.columns); })
+      .catch(() => { if (!cancelled) setS3PkCandidates([]); })
+      .finally(() => { if (!cancelled) setS3PkLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isS3Importable, s3ImportMode, sourceObject, s3ObjectFormat, s3Delimiter, s3Encoding, s3Sheet]);
 
   const applyS3ImportResult = (fi) => {
     setS3Result(fi);
@@ -257,13 +280,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
       const [bucket, ...rest] = sourceObject.split("/");
       const key = rest.join("/");
       const isPayload = s3ImportMode === "payload";
-      const formatOptions = {};
-      if (s3ObjectFormat === "csv") {
-        if (s3Delimiter) formatOptions.delimiter = s3Delimiter;
-        if (s3Encoding) formatOptions.encoding = s3Encoding;
-      } else if (s3Sheet) {
-        formatOptions.sheet = s3Sheet;
-      }
+      const formatOptions = s3FormatOptions();
       if (isPayload && s3SourcePk.trim()) formatOptions.source_pk = s3SourcePk.trim();
       if (isPayload && s3SourceSystem.trim()) formatOptions.source_system = s3SourceSystem.trim();
       const fi = await medallionApi.importFromObjectStore(project.id, {
@@ -695,7 +712,21 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                         <option value="replace">{t("imports.modal.writeModeReplace")}</option>
                         <option value="append">{t("imports.modal.writeModeAppend")}</option>
                       </select>
-                      <input className="input" style={{ marginBottom: 10 }} placeholder={t("imports.wizard.sourcePkPlaceholder")} value={s3SourcePk} onChange={(e) => setS3SourcePk(e.target.value)} />
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 4 }}>
+                        {t("imports.wizard.sourcePk")}
+                      </div>
+                      {s3PkLoading && <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 6 }}>{t("imports.wizard.sourcePkAnalyzing")}</div>}
+                      {s3PkCandidates.length > 0 && (
+                        <select
+                          multiple className="input" style={{ marginBottom: 8, minHeight: 90 }}
+                          value={s3SourcePk ? s3SourcePk.split(",").map((s) => s.trim()).filter(Boolean) : []}
+                          onChange={(e) => setS3SourcePk(Array.from(e.target.selectedOptions, (o) => o.value).join(","))}
+                        >
+                          {s3PkCandidates.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      )}
+                      <input className="input" style={{ marginBottom: 4 }} placeholder={t("imports.wizard.sourcePkPlaceholder")} value={s3SourcePk} onChange={(e) => setS3SourcePk(e.target.value)} />
+                      <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginBottom: 10 }}>{t("imports.wizard.sourcePkHelp")}</div>
                       <input className="input" style={{ marginBottom: 10 }} placeholder={t("imports.wizard.sourceSystemPlaceholder")} value={s3SourceSystem} onChange={(e) => setS3SourceSystem(e.target.value)} />
                     </>
                   )}

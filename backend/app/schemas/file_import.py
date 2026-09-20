@@ -73,6 +73,17 @@ class ImportFromObjectStoreCreate(BaseModel):
     write_mode: Literal["create", "replace", "append"] = "create"
 
 
+class ObjectStoreColumnsRequest(BaseModel):
+    """Scratch analysis only, no FileImport row — mirrors POST /api/imports/columns (used by
+    the standalone wizard's source_pk candidate list) but for a file already sitting in a
+    bucket instead of one just uploaded."""
+    source_id: int
+    bucket: str
+    key: str
+    format: Literal["csv", "excel"] = "csv"
+    format_options: dict = Field(default_factory=dict)
+
+
 class FileImportUpdate(BaseModel):
     column_mapping: list[ColumnMappingEntry]
     target_table: str = Field(min_length=1, max_length=120)
