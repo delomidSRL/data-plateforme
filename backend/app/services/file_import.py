@@ -14,7 +14,7 @@ from psycopg import sql
 from app.core.security import decrypt_secret
 from app.db.session import SessionLocal
 from app.models.data_source import DataSource, DataSourceType
-from app.models.file_import import FileImport, FileImportStatus, FileImportWriteMode, ImportMode
+from app.models.file_import import FileImport, FileImportFormat, FileImportStatus, FileImportWriteMode, ImportMode
 from app.services import connections, schema_infer
 
 logger = logging.getLogger("app.file_import")
@@ -32,6 +32,13 @@ ALLOWED_TYPES = {
 
 
 class FileImportError(Exception):
+    pass
+
+
+class ArchiveError(FileImportError):
+    """Raised specifically when writing to the archive (MinIO) source fails — the one failure
+    mode callers may want to surface as "the external dependency failed" (502) rather than
+    "your input was bad" (400)."""
     pass
 
 
@@ -112,6 +119,21 @@ def fetch_archived(archive_source: DataSource, archive_path: str) -> bytes:
     client = connections._minio_client(archive_source.host, archive_source.port, archive_source.username, secret, archive_source.options)
     bucket, object_name = archive_path.split("/", 1)
     response = client.get_object(bucket, object_name)
+    try:
+        return response.read()
+    finally:
+        response.close()
+        response.release_conn()
+
+
+def fetch_object_bytes(source: DataSource, bucket: str, key: str) -> bytes:
+    """A file already sitting in a bucket the platform doesn't own — unlike fetch_archived
+    (reading back what archive_raw itself just wrote under `imports/<id>/<name>`), the caller
+    supplies an explicit bucket/key (e.g. from browsing a MinIO source in the medallion
+    canvas). Same GET mechanics either way."""
+    secret = decrypt_secret(source.secret_encrypted)
+    client = connections._minio_client(source.host, source.port, source.username, secret, source.options)
+    response = client.get_object(bucket, key)
     try:
         return response.read()
     finally:
@@ -601,6 +623,68 @@ def _insert_payload_chunk(
 
     cur.executemany(stmt, rows_to_insert)
     return len(rows_to_insert)
+
+
+def create_import_from_bytes(
+    db, current_user_id: int, file_bytes: bytes, source_file_name: str,
+    format_: str, format_options: dict, target_source: DataSource, archive_source: DataSource,
+    name: str | None, import_mode: ImportMode, write_mode: FileImportWriteMode,
+) -> FileImport:
+    """Everything downstream of "we have the file's bytes" — shared by the multipart-upload
+    route (imports.py POST /) and the "already sitting in an object-store bucket" entry point
+    (medallion.py's import-from-object-store, browsing a MinIO source from the canvas instead
+    of uploading a local file). Raises FileImportError/whatever archive_raw or
+    infer_column_mapping raises on failure — the caller's own route turns that into an
+    HTTPException with whatever status code fits its context; the FileImport row itself is
+    already left correctly flagged status=error either way, same as the original route did."""
+    if not file_bytes:
+        raise FileImportError("Fichier vide.")
+    if import_mode == ImportMode.payload and format_ not in PAYLOAD_FORMATS:
+        raise FileImportError("Le mode payload n'est proposé que pour CSV et Excel — le JSON/XML imbriqué dispose déjà de son propre mode payload.")
+
+    fi = FileImport(
+        name=name or source_file_name, imported_by=current_user_id, source_file_name=source_file_name,
+        file_size=len(file_bytes), format=FileImportFormat(format_), format_options=format_options,
+        target_source_id=target_source.id, archive_source_id=archive_source.id,
+        status=FileImportStatus.draft, import_mode=import_mode,
+    )
+    db.add(fi)
+    db.commit()
+    db.refresh(fi)
+
+    try:
+        fi.archive_path = archive_raw(archive_source, fi.id, source_file_name, file_bytes)
+        fi.checksum = compute_checksum(file_bytes)
+        fi.uploaded_at = datetime.now(timezone.utc)
+        db.commit()
+    except Exception as exc:
+        fi.status = FileImportStatus.error
+        fi.last_error = f"Archivage impossible : {exc}"
+        db.commit()
+        raise ArchiveError(fi.last_error) from exc
+
+    if import_mode == ImportMode.payload:
+        # §3.5 — no mapping step: target table derived, write mode chosen up front, loads
+        # right away.
+        fi.target_table = derive_table_name(fi.name)
+        fi.write_mode = write_mode
+        db.commit()
+        run_import_payload(fi.id)
+        db.refresh(fi)
+        return fi
+
+    try:
+        fi.column_mapping = infer_column_mapping(format_, file_bytes, format_options)
+        fi.status = FileImportStatus.awaiting_validation
+        db.commit()
+    except Exception as exc:
+        fi.status = FileImportStatus.error
+        fi.last_error = f"Analyse du schéma impossible : {exc}"
+        db.commit()
+        raise
+
+    db.refresh(fi)
+    return fi
 
 
 def run_import_payload(file_import_id: int) -> None:

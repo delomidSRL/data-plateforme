@@ -56,6 +56,23 @@ class FileImportOut(BaseModel):
     import_mode: str = "typed"
 
 
+class ImportFromObjectStoreCreate(BaseModel):
+    """A file already sitting in an object-store bucket (browsed from a medallion project's
+    canvas) instead of one freshly uploaded — everything past "fetch these bytes" is the exact
+    same file-import machinery (payload vs typed, write mode, ...) as the regular Imports
+    wizard. `source_id` is the MinIO source to fetch from; the same source also archives the
+    bytes and the project's own warehouse is always the target — no separate pickers needed,
+    unlike the standalone Imports page which isn't tied to any one project."""
+    source_id: int
+    bucket: str
+    key: str
+    format: Literal["csv", "excel"] = "csv"
+    format_options: dict = Field(default_factory=dict)
+    name: str | None = None
+    import_mode: Literal["typed", "payload"] = "typed"
+    write_mode: Literal["create", "replace", "append"] = "create"
+
+
 class FileImportUpdate(BaseModel):
     column_mapping: list[ColumnMappingEntry]
     target_table: str = Field(min_length=1, max_length=120)

@@ -12,7 +12,7 @@ from app.models.airflow_instance import AirflowInstance, AirflowInstanceOrigin
 from app.models.data_source import DataSource, DataSourceType
 from app.models.dbt_macro import DbtMacro
 from app.models.export_log import ExportLog
-from app.models.file_import import FileImport, FileImportStatus
+from app.models.file_import import FileImport, FileImportStatus, FileImportWriteMode, ImportMode
 from app.models.file_watch import FileWatch
 from app.models.infra_stack import InfraStack
 from app.models.payload_structuration import PayloadStructuration
@@ -91,7 +91,8 @@ from app.schemas.payload_structuration import (
     StructurationOut,
     StructurationUpdate,
 )
-from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, gold_export, gold_profile, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot
+from app.schemas.file_import import FileImportOut, ImportFromObjectStoreCreate
+from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, file_import as file_import_service, gold_export, gold_profile, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot
 from app.services.ai_config import get_ai_config
 from app.services.superset_instances import get_superset_config
 from app.services.medallion_crud import create_dataset_internal, validate_lineage
@@ -263,6 +264,45 @@ def create_dataset(payload: DatasetCreate, db: Session = Depends(get_db), projec
     db.refresh(dataset)
     dataset.payload_backed = payload_structure.resolve_import(db, dataset) is not None
     return dataset
+
+
+@router.post("/{pid}/import-from-object-store", response_model=FileImportOut, status_code=status.HTTP_201_CREATED)
+def import_from_object_store(
+    payload: ImportFromObjectStoreCreate, db: Session = Depends(get_db),
+    project: MedallionProject = Depends(get_owned_project), current_user: User = Depends(get_current_user),
+):
+    """UX ask — the same payload/typed choice the standalone Imports wizard offers for an
+    uploaded file, applied to a CSV/Excel file already sitting in an S3/MinIO bucket, browsed
+    from right here in the medallion canvas's own bronze-dataset picker (DatasetPanel). The
+    project's own warehouse is always the target — this route only exists inside a project's
+    context, unlike the standalone wizard, which has no project to default to — and the same
+    MinIO source both supplies and archives the bytes, so there's nothing left to pick. Creating
+    the resulting MedallionDataset (pointing at this import's `<target_schema>.<target_table>`)
+    is still its own, separate, explicit step — exactly like the standalone Imports flow today
+    (create the import, then add a bronze dataset pointing at it), not something this route
+    does automatically."""
+    source = db.get(DataSource, payload.source_id)
+    if source is None or source.type != DataSourceType.minio:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Source MinIO/S3 introuvable.")
+    warehouse = db.get(DataSource, project.warehouse_source_id)
+    if warehouse is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Warehouse du projet introuvable.")
+
+    try:
+        file_bytes = file_import_service.fetch_object_bytes(source, payload.bucket, payload.key)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Lecture du fichier « {payload.bucket}/{payload.key} » impossible : {exc}")
+
+    file_name = payload.key.rsplit("/", 1)[-1]
+    try:
+        return file_import_service.create_import_from_bytes(
+            db, current_user.id, file_bytes, file_name, payload.format, payload.format_options,
+            warehouse, source, payload.name, ImportMode(payload.import_mode), FileImportWriteMode(payload.write_mode),
+        )
+    except file_import_service.ArchiveError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    except file_import_service.FileImportError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @router.put("/{pid}/datasets/{did}", response_model=DatasetOut)

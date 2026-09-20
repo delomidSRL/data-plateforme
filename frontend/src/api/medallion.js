@@ -12,6 +12,12 @@ export const moveProjectFolder = (pid, folderId) => apiFetch(`${base}/${pid}/fol
 
 export const listDatasets = (pid) => apiFetch(`${base}/${pid}/datasets`);
 export const createDataset = (pid, payload) => apiFetch(`${base}/${pid}/datasets`, { method: "POST", body: payload });
+// UX ask — the same payload/typed choice the standalone Imports wizard offers, applied to a
+// CSV/Excel file already sitting in an S3/MinIO bucket, browsed from the bronze dataset picker
+// right here instead of uploading a local file. Returns a FileImportOut, same shape the
+// Imports page itself works with (status="awaiting_validation" needs SchemaValidationModal,
+// same as there; payload mode is already imported).
+export const importFromObjectStore = (pid, payload) => apiFetch(`${base}/${pid}/import-from-object-store`, { method: "POST", body: payload });
 export const updateDataset = (pid, did, payload) => apiFetch(`${base}/${pid}/datasets/${did}`, { method: "PUT", body: payload });
 export const deleteDataset = (pid, did) => apiFetch(`${base}/${pid}/datasets/${did}`, { method: "DELETE" });
 export const getDatasetColumns = (pid, did) => apiFetch(`${base}/${pid}/datasets/${did}/columns`);

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.data_source import DataSource
-from app.models.file_import import FileImport, FileImportFormat, FileImportStatus, FileImportWriteMode, ImportMode
+from app.models.file_import import FileImport, FileImportStatus, FileImportWriteMode, ImportMode
 from app.models.user import User, UserRole
 from app.schemas.file_import import ColumnsOut, FileImportOut, FileImportStatusOut, FileImportUpdate, XmlCandidatesOut
 from app.services import file_import as file_import_service
@@ -80,59 +80,15 @@ async def create_import(
     if not file_bytes:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier vide.")
 
-    fi = FileImport(
-        name=name or file.filename,
-        imported_by=current_user.id,
-        source_file_name=file.filename,
-        file_size=len(file_bytes),
-        format=FileImportFormat(format),
-        format_options=options,
-        target_source_id=target_source.id,
-        archive_source_id=archive_source.id,
-        status=FileImportStatus.draft,
-        import_mode=mode,
-    )
-    db.add(fi)
-    db.commit()
-    db.refresh(fi)
-
     try:
-        archive_path = file_import_service.archive_raw(archive_source, fi.id, file.filename, file_bytes)
-        checksum = file_import_service.compute_checksum(file_bytes)
-        fi.archive_path = archive_path
-        fi.checksum = checksum
-        fi.uploaded_at = datetime.now(timezone.utc)
-        db.commit()
-    except Exception as exc:
-        fi.status = FileImportStatus.error
-        fi.last_error = f"Archivage impossible : {exc}"
-        db.commit()
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=fi.last_error)
-
-    if mode == ImportMode.payload:
-        # §3.5 — no mapping step at all: the target table is derived, the write mode was
-        # chosen up front, and the call archives + loads + returns status=imported directly.
-        fi.target_table = file_import_service.derive_table_name(fi.name)
-        fi.write_mode = payload_write_mode
-        db.commit()
-        file_import_service.run_import_payload(fi.id)
-        db.refresh(fi)
-        if fi.status == FileImportStatus.error:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=fi.last_error)
-        return fi
-
-    try:
-        fi.column_mapping = file_import_service.infer_column_mapping(format, file_bytes, options)
-        fi.status = FileImportStatus.awaiting_validation
-        db.commit()
-    except Exception as exc:
-        fi.status = FileImportStatus.error
-        fi.last_error = f"Analyse du schéma impossible : {exc}"
-        db.commit()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=fi.last_error)
-
-    db.refresh(fi)
-    return fi
+        return file_import_service.create_import_from_bytes(
+            db, current_user.id, file_bytes, file.filename, format, options,
+            target_source, archive_source, name, mode, payload_write_mode,
+        )
+    except file_import_service.ArchiveError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    except file_import_service.FileImportError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @router.post("/xml-candidates", response_model=XmlCandidatesOut)

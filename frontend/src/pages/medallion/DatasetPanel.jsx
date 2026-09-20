@@ -13,6 +13,7 @@ import IndicatorsPanel from "./IndicatorsPanel.jsx";
 import PublishPanel from "./PublishPanel.jsx";
 import StructurationPanel from "./StructurationPanel.jsx";
 import StructurationPopup from "./StructurationPopup.jsx";
+import SchemaValidationModal from "../imports/SchemaValidationModal.jsx";
 import { BUILTIN_MACROS } from "./builtinMacros.js";
 
 const LAYER_ORDER = { bronze: 0, silver: 1, gold: 2 };
@@ -222,6 +223,61 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
 
   const isBronze = layer === "bronze";
   const isPython = layer === "gold" && transformType === "python";
+
+  // UX ask — a CSV/Excel file already sitting in the bucket just browsed gets the exact same
+  // payload/typed choice the standalone Imports wizard offers for an uploaded file, without
+  // leaving this panel. Purely additive: leaving this section alone and just saving keeps the
+  // dataset pointed at the raw bucket/key exactly as before (ingested by the DAG's generic
+  // object-store loader) — nothing here is required.
+  const s3ObjectFormat = /\.(xlsx|xls)$/i.test(sourceObject) ? "excel" : "csv";
+  const isS3Importable = !isEdit && isBronze && sourceType === "minio" && sourceObject && /\.(csv|xlsx|xls)$/i.test(sourceObject);
+  const [s3ImportMode, setS3ImportMode] = useState("typed");
+  const [s3WriteMode, setS3WriteMode] = useState("create");
+  const [s3Delimiter, setS3Delimiter] = useState("");
+  const [s3Encoding, setS3Encoding] = useState("");
+  const [s3Sheet, setS3Sheet] = useState("");
+  const [s3SourcePk, setS3SourcePk] = useState("");
+  const [s3SourceSystem, setS3SourceSystem] = useState("");
+  const [s3Processing, setS3Processing] = useState(false);
+  const [s3Error, setS3Error] = useState("");
+  const [s3Result, setS3Result] = useState(null);
+  const [s3Validating, setS3Validating] = useState(null);
+
+  const applyS3ImportResult = (fi) => {
+    setS3Result(fi);
+    setSourceType("postgresql");
+    setSourceId(fi.target_source_id);
+    setSourceObject(`${fi.target_schema}.${fi.target_table}`);
+  };
+
+  const processS3File = async () => {
+    setS3Processing(true);
+    setS3Error("");
+    try {
+      const [bucket, ...rest] = sourceObject.split("/");
+      const key = rest.join("/");
+      const isPayload = s3ImportMode === "payload";
+      const formatOptions = {};
+      if (s3ObjectFormat === "csv") {
+        if (s3Delimiter) formatOptions.delimiter = s3Delimiter;
+        if (s3Encoding) formatOptions.encoding = s3Encoding;
+      } else if (s3Sheet) {
+        formatOptions.sheet = s3Sheet;
+      }
+      if (isPayload && s3SourcePk.trim()) formatOptions.source_pk = s3SourcePk.trim();
+      if (isPayload && s3SourceSystem.trim()) formatOptions.source_system = s3SourceSystem.trim();
+      const fi = await medallionApi.importFromObjectStore(project.id, {
+        source_id: Number(sourceId), bucket, key, format: s3ObjectFormat, format_options: formatOptions,
+        name: name.trim() || undefined, import_mode: s3ImportMode, write_mode: isPayload ? s3WriteMode : "create",
+      });
+      if (fi.status === "awaiting_validation") setS3Validating(fi);
+      else applyS3ImportResult(fi);
+    } catch (err) {
+      setS3Error(err.message || t("medallion.panel.s3ImportFailed"));
+    } finally {
+      setS3Processing(false);
+    }
+  };
   const selectedTemplate = templates.find((tp) => tp.id === selectedTemplateId) || null;
   // UX ask — an upstream may be an equal-or-lower layer (never strictly higher), same rule for
   // every transform type (mirrors validate_lineage, medallion_crud.py): a new silver can now
@@ -606,6 +662,54 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                     ))}
                 </div>
               </Field>
+            )}
+            {isS3Importable && !s3Result && (
+              <Field label={t("medallion.panel.s3ImportTitle")}>
+                <div className="card" style={{ padding: 12, border: "1px solid var(--border)" }}>
+                  {s3Error && <div className="error-banner" style={{ marginBottom: 10 }}>{Icon.warn()}<span>{s3Error}</span></div>}
+                  <div className="seg">
+                    <button type="button" className={"seg-opt" + (s3ImportMode === "typed" ? " selected" : "")} onClick={() => setS3ImportMode("typed")}>
+                      <div className="seg-role">{t("imports.wizard.modeTyped")}</div>
+                    </button>
+                    <button type="button" className={"seg-opt" + (s3ImportMode === "payload" ? " selected" : "")} onClick={() => setS3ImportMode("payload")}>
+                      <div className="seg-role">{t("imports.wizard.modePayload")}</div>
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--text-muted)", margin: "6px 0 10px" }}>
+                    {s3ImportMode === "typed" ? t("imports.wizard.modeTypedHelp") : t("imports.wizard.modePayloadHelp")}
+                  </div>
+
+                  {s3ObjectFormat === "csv" ? (
+                    <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+                      <input className="input" style={{ flex: 1 }} placeholder={t("imports.wizard.delimiter") + " (,)"} value={s3Delimiter} onChange={(e) => setS3Delimiter(e.target.value)} />
+                      <input className="input" style={{ flex: 1 }} placeholder={t("imports.wizard.encoding") + " (utf-8)"} value={s3Encoding} onChange={(e) => setS3Encoding(e.target.value)} />
+                    </div>
+                  ) : (
+                    <input className="input" style={{ marginBottom: 10 }} placeholder={t("imports.wizard.sheet") + " (0)"} value={s3Sheet} onChange={(e) => setS3Sheet(e.target.value)} />
+                  )}
+
+                  {s3ImportMode === "payload" && (
+                    <>
+                      <select className="input" style={{ marginBottom: 10 }} value={s3WriteMode} onChange={(e) => setS3WriteMode(e.target.value)}>
+                        <option value="create">{t("imports.modal.writeModeCreate")}</option>
+                        <option value="replace">{t("imports.modal.writeModeReplace")}</option>
+                        <option value="append">{t("imports.modal.writeModeAppend")}</option>
+                      </select>
+                      <input className="input" style={{ marginBottom: 10 }} placeholder={t("imports.wizard.sourcePkPlaceholder")} value={s3SourcePk} onChange={(e) => setS3SourcePk(e.target.value)} />
+                      <input className="input" style={{ marginBottom: 10 }} placeholder={t("imports.wizard.sourceSystemPlaceholder")} value={s3SourceSystem} onChange={(e) => setS3SourceSystem(e.target.value)} />
+                    </>
+                  )}
+
+                  <Button type="button" variant="ghost" className="inline" disabled={s3Processing} onClick={processS3File}>
+                    {s3Processing ? t("medallion.panel.s3ImportProcessing") : t("medallion.panel.s3ImportAction")}
+                  </Button>
+                </div>
+              </Field>
+            )}
+            {s3Result && (
+              <div className="error-banner" style={{ background: "rgba(47,158,110,.08)", borderColor: "rgba(47,158,110,.3)", color: "#2f9e6e", marginBottom: 14 }}>
+                {Icon.check()}<span>{t("medallion.panel.s3ImportDone", { table: `${s3Result.target_schema}.${s3Result.target_table}` })}</span>
+              </div>
             )}
             {!browsing && browseTables.length > 0 && (
               <Field label={t("medallion.panel.browseTables")}>
@@ -1005,6 +1109,13 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
           else insertAtCursor(ref);
           requestAnimationFrame(() => sqlRef.current?.focus());
         }}
+      />
+    )}
+    {s3Validating && (
+      <SchemaValidationModal
+        fileImport={s3Validating}
+        onClose={() => setS3Validating(null)}
+        onValidated={(fi) => { setS3Validating(null); applyS3ImportResult(fi); }}
       />
     )}
     </>
