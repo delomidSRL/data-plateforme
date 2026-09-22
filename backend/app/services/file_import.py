@@ -575,7 +575,10 @@ def _prepare_payload_table(cur, schema_name: str, table_name: str, write_mode: F
     stored comma-joined (e.g. "customer_id,order_id") — set once at import time, identical on
     every row. `source_system` (nullable) is a free-text label for which upstream application
     the file was exported from (e.g. "SAP", "Salesforce") — also set once, identical on every
-    row, purely informational like source_pk."""
+    row, purely informational like source_pk. `loaded_at` is the timestamp of this import run,
+    identical on every row of the same run — set explicitly by the caller (not a column
+    DEFAULT) so every row of a multi-chunk import shares the exact same value, same as
+    load_id/source_file."""
     schema_ident = sql.Identifier(_validate_identifier(schema_name, "Schéma cible"))
     table_ident = sql.Identifier(_validate_identifier(table_name, "Table cible"))
 
@@ -593,33 +596,42 @@ def _prepare_payload_table(cur, schema_name: str, table_name: str, write_mode: F
 
     if not exists:
         cur.execute(
-            sql.SQL("CREATE TABLE {}.{} (payload JSONB NOT NULL, load_id INTEGER, source_file TEXT, row_number BIGINT, source_pk TEXT, source_system TEXT)")
+            sql.SQL(
+                "CREATE TABLE {}.{} (payload JSONB NOT NULL, load_id INTEGER, source_file TEXT, "
+                "row_number BIGINT, source_pk TEXT, source_system TEXT, loaded_at TIMESTAMPTZ)"
+            )
             .format(schema_ident, table_ident)
         )
     else:
-        # append to a table created before source_pk/source_system existed — backfill the
-        # columns so _insert_payload_chunk's INSERT always has somewhere to put them.
+        # append to a table created before source_pk/source_system/loaded_at existed — backfill
+        # the columns so _insert_payload_chunk's INSERT always has somewhere to put them.
         cur.execute(sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS source_pk TEXT").format(schema_ident, table_ident))
         cur.execute(sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS source_system TEXT").format(schema_ident, table_ident))
+        cur.execute(sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS loaded_at TIMESTAMPTZ").format(schema_ident, table_ident))
 
 
 def _insert_payload_chunk(
     cur, schema_name: str, table_name: str, fi_id: int, source_file: str, records: list[dict], row_offset: int,
-    source_pk: str | None = None, source_system: str | None = None,
+    source_pk: str | None = None, source_system: str | None = None, loaded_at: datetime | None = None,
 ) -> int:
     """Every cell lands as text in the payload, keyed by the file's own header — no cast, no
     row ever rejected here. `row_number` is the file's true 1-based rank, tracked by the
     caller across chunks (§3.3's traceability line for the future quarantine relation)."""
     schema_ident = sql.Identifier(schema_name)
     table_ident = sql.Identifier(table_name)
-    stmt = sql.SQL("INSERT INTO {}.{} (payload, load_id, source_file, row_number, source_pk, source_system) VALUES ({}, {}, {}, {}, {}, {})").format(
-        schema_ident, table_ident, sql.Placeholder(), sql.Placeholder(), sql.Placeholder(), sql.Placeholder(), sql.Placeholder(), sql.Placeholder(),
+    stmt = sql.SQL(
+        "INSERT INTO {}.{} (payload, load_id, source_file, row_number, source_pk, source_system, loaded_at) "
+        "VALUES ({}, {}, {}, {}, {}, {}, {})"
+    ).format(
+        schema_ident, table_ident,
+        sql.Placeholder(), sql.Placeholder(), sql.Placeholder(), sql.Placeholder(),
+        sql.Placeholder(), sql.Placeholder(), sql.Placeholder(),
     )
 
     rows_to_insert = []
     for i, record in enumerate(records):
         payload = {k: (None if v is None else str(v)) for k, v in record.items()}
-        rows_to_insert.append((json.dumps(payload), fi_id, source_file, row_offset + i + 1, source_pk, source_system))
+        rows_to_insert.append((json.dumps(payload), fi_id, source_file, row_offset + i + 1, source_pk, source_system, loaded_at))
 
     cur.executemany(stmt, rows_to_insert)
     return len(rows_to_insert)
@@ -721,6 +733,7 @@ def _do_run_import_payload(db, fi: FileImport) -> None:
 
     source_pk = (fi.format_options or {}).get("source_pk") or None
     source_system = (fi.format_options or {}).get("source_system") or None
+    loaded_at = datetime.now(timezone.utc)
 
     conn = _pg_connect(target)
     row_count = 0
@@ -731,7 +744,7 @@ def _do_run_import_payload(db, fi: FileImport) -> None:
 
         for chunk in _iter_chunks(fi.format.value, file_bytes, fi.format_options or {}):
             with conn.cursor() as cur:
-                row_count += _insert_payload_chunk(cur, fi.target_schema, fi.target_table, fi.id, fi.source_file_name, chunk, row_count, source_pk, source_system)
+                row_count += _insert_payload_chunk(cur, fi.target_schema, fi.target_table, fi.id, fi.source_file_name, chunk, row_count, source_pk, source_system, loaded_at)
             conn.commit()
 
         try:

@@ -375,7 +375,7 @@ STRUCTURATION_MACROS = {
 # Passed through untouched from bronze on every unpacked/typed model — the platform's actual
 # payload+audit shape (file_import.py's _prepare_payload_table / _prepare_table), not a
 # per-field concern.
-_TRACEABILITY_COLUMNS = ["load_id", "source_file", "source_pk", "source_system", "row_number"]
+_TRACEABILITY_COLUMNS = ["load_id", "source_file", "source_pk", "source_system", "row_number", "loaded_at"]
 
 # US (microseconds, from %f — see _PY_TO_PG_DATE_TOKENS) is 1-6 digits, not a fixed width:
 # Python's %f itself accepts 1-6 digits when parsing, so the validity check has to accept the
