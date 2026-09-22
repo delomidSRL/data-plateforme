@@ -16,7 +16,7 @@ const TYPES = [
 export default function AddSourceDrawer({ onClose, onCreated, onUpdated, source }) {
   const { t } = useTranslation();
   const isEdit = Boolean(source);
-  const [type] = useState(source?.type || "postgresql");
+  const [type, setType] = useState(source?.type || "postgresql");
   const [name, setName] = useState(source?.name || "");
   const [host, setHost] = useState(source?.host || "");
   const [port, setPort] = useState(source?.port || 5432);
@@ -37,7 +37,9 @@ export default function AddSourceDrawer({ onClose, onCreated, onUpdated, source 
 
   const changeType = (t) => {
     // Type is fixed once a source exists (not part of SourceUpdate) — this drawer's type
-    // selector is create-only; edit mode renders it read-only (see below).
+    // selector is create-only; edit mode renders it read-only (see below), so only the
+    // create-mode click handler ever reaches here.
+    setType(t.value);
     setPort(t.defaultPort);
   };
 
