@@ -56,6 +56,14 @@ with DAG(
         bash_command=f"{DBT_BIN} deps --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR}",
     )
 
+    # Module 18 §8 — dq_flag_registry (platform-wide, admin-managed) must be loaded before any
+    # hand-written 05_validated/05_quarantine that refs() it can build. Always runs, like
+    # dbt_deps: harmless no-op if a project's hand-written SQL never actually uses it.
+    dbt_seed = BashOperator(
+        task_id="dbt_seed",
+        bash_command=f"{DBT_BIN} seed --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR} --target {{ project.target.value }}",
+    )
+
     # Module 6 extension (payload & structuration) §5 — bronze itself is never a dbt MODEL
     # (it's declared as a dbt source, populated by the ingest_bronze operators above), but a
     # payload dataset's structuration (01_unpacked_<name>/02_typed_<name>, and any hand-written
@@ -93,7 +101,7 @@ with DAG(
 {% if bronze_datasets %}
     [{% for b in bronze_datasets %}bronze_{{ b.safe_name }}{{ ", " if not loop.last }}{% endfor %}] >> dbt_run_silver
 {% endif %}
-    dbt_deps >> dbt_run_silver
+    dbt_deps >> dbt_seed >> dbt_run_silver
     dbt_run_silver >> dbt_run_gold
 {% if ml_nodes %}
     dbt_run_gold >> [{% for m in ml_nodes %}ml_{{ m.safe_name }}{{ ", " if not loop.last }}{% endfor %}] >> dbt_test

@@ -2,9 +2,10 @@ import yaml
 from sqlalchemy.orm import Session
 
 from app.models.dbt_macro import DbtMacro
+from app.models.dq_flag_registry import DqFlagRegistryEntry
 from app.models.medallion import MedallionDataset, MedallionLayer, MedallionProject, TransformType
 from app.models.payload_structuration import PayloadStructuration
-from app.services import dbt_macros, dbt_test_renderer, payload_structure
+from app.services import dbt_macros, dbt_test_renderer, dq_flag_registry, payload_structure
 
 # Module 16 extension §1/§4 — pinned exact (never "latest", §1: reproductibilité de
 # déploiement multi-tenant), validated live on dbt-core 1.8.8 / dbt-postgres 1.8.2 / Postgres
@@ -83,19 +84,21 @@ def _dbt_project_yml(project: MedallionProject, needs_try_cast: bool, structurat
         # every structuration model's guarded cast calls (deployed once per run, in `public` —
         # always on the default search_path, idempotent CREATE OR REPLACE).
         config["on-run-start"] = [payload_structure.TRY_CAST_FUNCTIONS_SQL]
-        # Module 18 §8 — dq_flag_registry.csv can legitimately have zero data rows (no quality
-        # flag defined anywhere in the project yet). Left to dbt's default seed type inference
-        # (agate), an all-empty column has nothing to disprove "numeric", so `category` gets
-        # created as integer — and 05's `category = 'informative'` comparison then fails with
-        # "invalid input syntax for type integer" the moment it runs. Pin every column to text
-        # explicitly so the seed's shape never depends on how much sample data it happens to hold.
-        config["seeds"] = {
-            project.dbt_project_name: {
-                "dq_flag_registry": {
-                    "+column_types": {"flag_name": "text", "category": "text", "source_rule": "text", "issue_type": "text"},
-                },
+    # Module 18 §8 — dq_flag_registry.csv (platform-wide, admin-managed — app.models.
+    # dq_flag_registry) can legitimately have zero data rows. Left to dbt's default seed type
+    # inference (agate), an all-empty column has nothing to disprove "numeric", so `category`
+    # gets created as integer — and any hand-written SQL's `category = 'informative'` comparison
+    # then fails with "invalid input syntax for type integer" the moment it runs. Pin every
+    # column to text explicitly so the seed's shape never depends on how much data it holds.
+    # Unconditional (not gated on needs_try_cast/structurations any more): the registry is
+    # project-independent, exactly like DbtMacro's own "every project gets every macro".
+    config["seeds"] = {
+        project.dbt_project_name: {
+            "dq_flag_registry": {
+                "+column_types": {"flag_name": "text", "category": "text", "source_rule": "text", "issue_type": "text"},
             },
-        }
+        },
+    }
     if structuration_vars:
         # §5 rewrite — the field list each bronze payload dataset's 01_unpacked/02_typed pair
         # reads via var(<name>_fields); one key per structured dataset, merged here.
@@ -267,6 +270,11 @@ def generate_project_files(
     custom_macros = db.query(DbtMacro).all()
     if custom_macros:
         files.update(dbt_macros.render_macro_files(custom_macros))
+    # Same platform-wide, admin-managed, unconditional pattern as DbtMacro — a hand-written
+    # 04_annotated/05_validated/05_quarantine can `{{ ref('dq_flag_registry') }}` this seed to
+    # look up a flag's category; always present (even with zero rows) so that ref() always
+    # resolves, whether or not this particular project's SQL happens to use it.
+    files["seeds/dq_flag_registry.csv"] = dq_flag_registry.render_registry_seed(db.query(DqFlagRegistryEntry).all())
     if for_export or rendered_tests.has_tier_a:
         # §6 — the exported bundle always pins dbt-expectations/dbt-utils, even for a project
         # with zero Tier A checks today: a standalone artifact ready to extend. The live build

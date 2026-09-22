@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
-from app.api.routes import ai, airflow, airflow_instances, auth, dashboard, dbt_macros, file_watch, imports, medallion, medallion_admin, medallion_agent, medallion_folders, ml_templates, quality, servers, sources, stacks, superset_instances, users
+from app.api.routes import ai, airflow, airflow_instances, auth, dashboard, dbt_macros, dq_flag_registry, file_watch, imports, medallion, medallion_admin, medallion_agent, medallion_folders, ml_templates, quality, servers, sources, stacks, superset_instances, users
 from app.core.config import get_settings
 from app.services import file_watch as file_watch_service
 
@@ -64,6 +64,7 @@ app.include_router(medallion_folders.router)
 app.include_router(quality.router)
 app.include_router(ml_templates.router)
 app.include_router(dbt_macros.router)
+app.include_router(dq_flag_registry.router)
 app.include_router(imports.router)
 app.include_router(file_watch.router)
 app.include_router(dashboard.router)

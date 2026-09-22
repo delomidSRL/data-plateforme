@@ -46,6 +46,10 @@ def build_ref_map(datasets: list[MedallionDataset], structured_bronze_names: set
         for stage, schema in _STRUCTURATION_STAGE_SCHEMA.items():
             model_name = f"{stage}_{bronze_name}"
             ref_map[model_name] = f'"{schema}"."{model_name}"'
+    # Platform-wide, admin-managed (app.models.dq_flag_registry), unconditional — like every
+    # DbtMacro, generated into every project regardless of whether it uses payload
+    # structuration at all, so any hand-written SQL's {{ ref('dq_flag_registry') }} resolves.
+    ref_map["dq_flag_registry"] = '"silver"."dq_flag_registry"'
     return ref_map
 
 

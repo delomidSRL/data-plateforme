@@ -11,6 +11,7 @@ import Dashboard from "./pages/Dashboard.jsx";
 import Users from "./pages/settings/Users.jsx";
 import MLTemplates from "./pages/settings/MLTemplates.jsx";
 import DbtMacros from "./pages/settings/DbtMacros.jsx";
+import DqFlagRegistry from "./pages/settings/DqFlagRegistry.jsx";
 import ServersList from "./pages/servers/ServersList.jsx";
 import ServerDetail from "./pages/servers/ServerDetail.jsx";
 import OrchestratorsList from "./pages/orchestrators/OrchestratorsList.jsx";
@@ -50,6 +51,7 @@ export default function App() {
                   <Route path="/settings/users" element={<Users />} />
                   <Route path="/settings/ml-templates" element={<MLTemplates />} />
                   <Route path="/settings/dbt-macros" element={<DbtMacros />} />
+                  <Route path="/settings/dq-flag-registry" element={<DqFlagRegistry />} />
                 </Route>
               </Route>
             </Route>

@@ -44,6 +44,7 @@ export default function Shell() {
     "/settings/users": t("breadcrumbs.users"),
     "/settings/ml-templates": t("breadcrumbs.mlLibrary"),
     "/settings/dbt-macros": t("breadcrumbs.dbtMacros"),
+    "/settings/dq-flag-registry": t("breadcrumbs.dqFlagRegistry"),
   };
   const crumb = CRUMBS[location.pathname]
     || (location.pathname.startsWith("/servers/") ? t("breadcrumbs.serverDetail") : null)
@@ -111,6 +112,13 @@ export default function Shell() {
           ) : (
             <button className="nav-item disabled" disabled title={t("common.reservedToAdmins")}>
               {Icon.code()}{t("sidebar.dbtMacros")} {Icon.lockSm()}
+            </button>
+          )}
+          {isAdmin ? (
+            navItem("/settings/dq-flag-registry", Icon.warn(), t("sidebar.dqFlagRegistry"))
+          ) : (
+            <button className="nav-item disabled" disabled title={t("common.reservedToAdmins")}>
+              {Icon.warn()}{t("sidebar.dqFlagRegistry")} {Icon.lockSm()}
             </button>
           )}
         </nav>
