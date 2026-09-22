@@ -238,12 +238,26 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   const [s3Sheet, setS3Sheet] = useState("");
   const [s3SourcePk, setS3SourcePk] = useState("");
   const [s3SourceSystem, setS3SourceSystem] = useState("");
+  // UX ask — payload mode needs its own bronze table name, same field the standalone Imports
+  // wizard offers (not the dataset's own "Nom" field above, which is a separate concept): the
+  // FileImport row this creates has its own name, independent of what the MedallionDataset
+  // ends up called.
+  const [s3BronzeTableName, setS3BronzeTableName] = useState("");
   const [s3Processing, setS3Processing] = useState(false);
   const [s3Error, setS3Error] = useState("");
   const [s3Result, setS3Result] = useState(null);
   const [s3Validating, setS3Validating] = useState(null);
   const [s3PkCandidates, setS3PkCandidates] = useState([]);
   const [s3PkLoading, setS3PkLoading] = useState(false);
+
+  // Client-side preview only — the backend re-derives this itself (schema_infer's own
+  // slugifier) at import time; mirrors ImportWizardDrawer's own previewTableName so both entry
+  // points show the exact same rule before commit.
+  const previewTableName = (n) => {
+    const ascii = (n || "").normalize("NFKD").replace(/[̀-ͯ]/g, "");
+    const slug = ascii.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    return slug ? (/^[0-9]/.test(slug) ? `col_${slug}` : slug) : "col";
+  };
 
   const s3FormatOptions = () => (s3ObjectFormat === "csv"
     ? { ...(s3Delimiter ? { delimiter: s3Delimiter } : {}), ...(s3Encoding ? { encoding: s3Encoding } : {}) }
@@ -285,7 +299,8 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
       if (isPayload && s3SourceSystem.trim()) formatOptions.source_system = s3SourceSystem.trim();
       const fi = await medallionApi.importFromObjectStore(project.id, {
         source_id: Number(sourceId), bucket, key, format: s3ObjectFormat, format_options: formatOptions,
-        name: name.trim() || undefined, import_mode: s3ImportMode, write_mode: isPayload ? s3WriteMode : "create",
+        name: (isPayload ? s3BronzeTableName.trim() : name.trim()) || undefined,
+        import_mode: s3ImportMode, write_mode: isPayload ? s3WriteMode : "create",
       });
       if (fi.status === "awaiting_validation") setS3Validating(fi);
       else applyS3ImportResult(fi);
@@ -728,6 +743,17 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                       <input className="input" style={{ marginBottom: 4 }} placeholder={t("imports.wizard.sourcePkPlaceholder")} value={s3SourcePk} onChange={(e) => setS3SourcePk(e.target.value)} />
                       <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginBottom: 10 }}>{t("imports.wizard.sourcePkHelp")}</div>
                       <input className="input" style={{ marginBottom: 10 }} placeholder={t("imports.wizard.sourceSystemPlaceholder")} value={s3SourceSystem} onChange={(e) => setS3SourceSystem(e.target.value)} />
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 4 }}>
+                        {t("imports.wizard.bronzeTableName")}
+                      </div>
+                      <input
+                        className="input" style={{ marginBottom: 4 }} value={s3BronzeTableName}
+                        onChange={(e) => setS3BronzeTableName(e.target.value)}
+                        placeholder={previewTableName(sourceObject.split("/").pop() || "")}
+                      />
+                      <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginBottom: 10, fontFamily: "var(--font-m)" }}>
+                        {previewTableName(s3BronzeTableName.trim() || sourceObject.split("/").pop() || "")}
+                      </div>
                     </>
                   )}
 
