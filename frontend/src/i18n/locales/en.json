@@ -1085,6 +1085,7 @@
       "sqlValidating": "Validating…",
       "sqlValidateOk": "Valid syntax — checked without running anything (EXPLAIN).",
       "sqlValidateFailed": "Validation failed.",
+      "sqlCompiledShow": "Show compiled SQL (after macro/ref substitution)",
       "createStandardizedHint": "Create 03_standardized — a silver dataset off this typed table",
       "instantPreviewBadge": "instant preview",
       "upstreamLockedHint": "Fixed by the SQL — edit the query directly to change it.",

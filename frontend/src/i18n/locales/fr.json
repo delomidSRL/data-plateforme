@@ -1085,6 +1085,7 @@
       "sqlValidating": "Validation…",
       "sqlValidateOk": "Syntaxe valide — requête vérifiée sans rien exécuter (EXPLAIN).",
       "sqlValidateFailed": "Validation impossible.",
+      "sqlCompiledShow": "Voir le SQL compilé (après remplacement des macros/ref)",
       "createStandardizedHint": "Créer 03_standardized — un dataset silver à partir de ce typed",
       "instantPreviewBadge": "aperçu instantané",
       "upstreamLockedHint": "Relation fixée par le SQL — modifiez la requête directement pour la changer.",

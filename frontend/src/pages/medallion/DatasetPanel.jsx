@@ -1075,6 +1075,18 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                       <span>{sqlValidation.valid ? t("medallion.panel.sqlValidateOk") : sqlValidation.message}</span>
                     </div>
                   )}
+                  {sqlValidation?.compiled_sql && (
+                    // UX ask — the backend already computes the compiled (post-Jinja) SQL it
+                    // actually ran EXPLAIN against, but it never reached the screen before —
+                    // makes a validation failure self-diagnosable (e.g. exactly where a
+                    // "single statement only" rejection is coming from) instead of a dead end.
+                    <details style={{ marginTop: 8 }}>
+                      <summary style={{ fontSize: 11.5, color: "var(--text-muted)", cursor: "pointer" }}>{t("medallion.panel.sqlCompiledShow")}</summary>
+                      <pre style={{ fontSize: 11, fontFamily: "var(--font-m)", whiteSpace: "pre-wrap", wordBreak: "break-word", padding: 8, marginTop: 6, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)" }}>
+                        {sqlValidation.compiled_sql}
+                      </pre>
+                    </details>
+                  )}
                 </div>
               )}
             </Field>
