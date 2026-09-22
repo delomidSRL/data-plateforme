@@ -35,13 +35,6 @@ class PayloadStructuration(Base):
     # 18's per-field `standardize` (03's normalization operation, or null for passthrough).
     column_mapping: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
 
-    # Module 18 §6/§8 — the no-code equivalent of 04's hand-written flag list + the
-    # dq_flag_registry seed, in one place: each entry is {name, field, rule_type, params,
-    # category}. `category` (informative|elimination) is exactly what 05_validated/
-    # 05_quarantine's routing reads, and what render_registry_seed() turns into
-    # seeds/dq_flag_registry.csv at export/build time — never hand-edited SQL or CSV.
-    quality_flags: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-
     # §5 rewrite (unpacked/typed convention) dropped the quarantine relation — every row from
     # bronze reaches 02_typed, diagnosed via cast_issues, never excluded — so these two are no
     # longer read or written anywhere. Left in place (harmless, SQLAlchemy-defaulted) rather

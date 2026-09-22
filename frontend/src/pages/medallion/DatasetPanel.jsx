@@ -18,10 +18,19 @@ import { BUILTIN_MACROS } from "./builtinMacros.js";
 
 const LAYER_ORDER = { bronze: 0, silver: 1, gold: 2 };
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-// Any {{ ref('01_unpacked_<name>') }} / '02_typed_<name>' / '05_validated_<name>' for one
-// bronze — the set of refs a "which stage does this SQL read" selector treats as mutually
-// exclusive alternatives to the SAME upstream, never several at once.
-const stageRefPattern = (bronzeName, flags = "") => new RegExp(`\\{\\{\\s*ref\\(['"](01_unpacked|02_typed|05_validated)_${escapeRegExp(bronzeName)}['"]\\)\\s*\\}\\}`, flags);
+// Any {{ ref('01_unpacked_<name>') }} / '02_typed_<name>' for one bronze — the set of refs a
+// "which stage does this SQL read" selector treats as mutually exclusive alternatives to the
+// SAME upstream, never several at once. These two are the only stages ALWAYS auto-rendered for
+// a structured bronze — 03_standardized onward are optional hand-written datasets (see
+// PIPELINE_STAGE_RE below), never assumed to exist.
+const stageRefPattern = (bronzeName, flags = "") => new RegExp(`\\{\\{\\s*ref\\(['"](01_unpacked|02_typed)_${escapeRegExp(bronzeName)}['"]\\)\\s*\\}\\}`, flags);
+// A real, registered dataset whose OWN name marks it as a fixed link in the 03->04->05 custom-
+// SQL chain (the "+" on a 03_standardized/04_annotated canvas node) — exactly one upstream,
+// same "locked, not a pick-any-list" treatment as the 01_unpacked/02_typed bronze stages above,
+// just detected by an exact ref to the candidate's own dbt_model_name instead of a derived
+// bronze-name+prefix combo (see detectUpstreamStage).
+const PIPELINE_STAGE_RE = /^(03_standardized|04_annotated)_/;
+const exactRefPattern = (modelName, flags = "") => new RegExp(`\\{\\{\\s*ref\\(['"]${escapeRegExp(modelName)}['"]\\)\\s*\\}\\}`, flags);
 const TEST_TYPES = ["not_null", "unique", "accepted_values", "relationships"];
 const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "Oracle", minio: "MinIO" };
 
@@ -376,15 +385,15 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   // datasets are declared as a dbt source keyed by their `name`; silver/gold dbt models
   // are files named after `dbt_model_name` and referenced via ref(); gold ML (python)
   // outputs are declared as a separate `gold_ml` source keyed by `output_table`. A payload
-  // bronze dataset with a saved structuration contract is the one exception (Module 18 §7.5):
-  // its own source table is just the raw audit/payload shape, so downstream SQL should read
-  // its `05_validated_<name>` model instead — the clean, routed output of the full
-  // 01..05 chain, never 04_annotated nor the bronze directly.
+  // bronze dataset with a saved structuration contract is the one exception: its own source
+  // table is just the raw audit/payload shape, so downstream SQL should read its
+  // `02_typed_<name>` model instead — the only stage ALWAYS guaranteed to exist (03_standardized
+  // onward are optional, hand-written; never assumed present as a default reference).
   // columnsByDataset[d.id].structured (set by getDatasetColumns) is what tells us that
   // contract exists.
   const referenceSnippetFor = (d) => {
     if (d.layer === "bronze") {
-      if (columnsByDataset[d.id]?.structured) return `{{ ref('05_validated_${d.name}') }}`;
+      if (columnsByDataset[d.id]?.structured) return `{{ ref('02_typed_${d.name}') }}`;
       return `{{ source('bronze', '${d.name}') }}`;
     }
     if (d.transform_type === "python") return `{{ source('gold_ml', '${d.output_table || d.name}') }}`;
@@ -395,10 +404,20 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   // actually reads a specific stage (02_typed, 01_unpacked) rather than the bronze directly —
   // this reads that back out of the live SQL text so the section shows the real relationship,
   // not just "this bronze is involved somehow". Same detection LineageCanvas.jsx's
-  // rerouteThroughStage uses to draw the canvas edge through that same stage node.
+  // rerouteThroughStage uses to draw the canvas edge through that same stage node. A candidate
+  // can also BE a pipeline-stage dataset itself (03_standardized_<x>/04_annotated_<x>, the "+"
+  // on the previous stage's canvas node) — same single-fixed-upstream relationship, just
+  // detected by an exact ref to that candidate's own model name instead of a derived one.
   const detectUpstreamStage = (d) => {
-    if (d.layer !== "bronze" || !columnsByDataset[d.id]?.structured) return null;
-    return stageRefPattern(d.name).exec(sql)?.[1] || null;
+    if (d.layer === "bronze" && columnsByDataset[d.id]?.structured) {
+      const stage = stageRefPattern(d.name).exec(sql)?.[1];
+      return stage ? { modelName: `${stage}_${d.name}`, isInstantPreview: true } : null;
+    }
+    if (d.layer === "silver" && PIPELINE_STAGE_RE.test(d.name)) {
+      const modelName = d.dbt_model_name || d.name;
+      return exactRefPattern(modelName).test(sql) ? { modelName, isInstantPreview: false } : null;
+    }
+    return null;
   };
 
   const sqlRef = useRef(null);
@@ -420,10 +439,10 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
     setUpstreamIds((s) => (s.has(d.id) ? s : new Set(s).add(d.id)));
   };
   // UX ask — a structured bronze's "Tables disponibles" entry only ever offered
-  // 05_validated_<name> (the clean, routed output — the right default). Earlier stages
-  // (01_unpacked/02_typed, §7's instant preview) are real, useful upstream shapes too — this
-  // inserts one of those instead, same "clicking a reference marks the dependency" convention
-  // as insertReference, just for a stage instead of the dataset's own default reference.
+  // 02_typed_<name> (the guaranteed, right default). 01_unpacked (§7's instant preview) is a
+  // real, useful upstream shape too — this inserts that instead, same "clicking a reference
+  // marks the dependency" convention as insertReference, just for a stage instead of the
+  // dataset's own default reference.
   const insertStageReference = (d, stageModelName) => {
     insertAtCursor(`{{ ref('${stageModelName}') }}`);
     setUpstreamIds((s) => (s.has(d.id) ? s : new Set(s).add(d.id)));
@@ -434,8 +453,8 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   // (sometimes split apart by the insertion itself), so the SQL matched neither stage cleanly
   // afterward — the clicked checkbox never showed checked, and the canvas edge (which reads
   // this same SQL text) had nothing valid to reroute through either. Replaces any existing
-  // 01_unpacked/02_typed/05_validated reference to this bronze with the new one instead;
-  // inserts at cursor only when there's nothing to replace yet (a fresh/empty SQL box).
+  // 01_unpacked/02_typed reference to this bronze with the new one instead; inserts at cursor
+  // only when there's nothing to replace yet (a fresh/empty SQL box).
   const selectUpstreamStage = (d, stageModelName) => {
     const newRef = `{{ ref('${stageModelName}') }}`;
     // Global replace — collapses EVERY stage reference to this bronze down to the one just
@@ -477,16 +496,15 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [upstreamIdsKey]);
 
-  // UX ask — 01_unpacked -> 02_typed -> 03_standardized is a fixed workflow (the "+" on a
-  // 02_typed canvas node), never a pick-any-upstream situation: once the SQL reads one of
-  // these two instant-preview stages for some bronze, that relationship is locked — "Upstreams"
-  // shows just that one line (checked, disabled) instead of the full candidate list. 05_validated
-  // isn't included here: that's the normal, still-freely-editable default reference every other
-  // silver/gold dataset gets when it depends on a structured bronze.
+  // UX ask — 01_unpacked -> 02_typed -> 03_standardized -> 04_annotated -> {05_validated,
+  // 05_quarantine} is a fixed workflow (the "+" on a canvas node), never a pick-any-upstream
+  // situation: once the SQL reads one of these fixed stages, that relationship is locked —
+  // "Upstreams" shows just that one line (checked, disabled) instead of the full candidate
+  // list.
   const lockedStageUpstream = (() => {
     for (const d of upstreamCandidates) {
       const stage = detectUpstreamStage(d);
-      if (stage === "01_unpacked" || stage === "02_typed") return { modelName: `${stage}_${d.name}`, bronzeId: d.id };
+      if (stage) return { ...stage, bronzeId: d.id };
     }
     return null;
   })();
@@ -979,9 +997,9 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                           <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 4, fontStyle: "italic" }}>{t("medallion.panel.columnsUnavailable")}</div>
                         ) : null}
                         {d.layer === "bronze" && colState?.structured && (
-                          // UX ask — 05_validated_<name> above is the recommended default, but
-                          // the instant-preview stages (§7) are real, buildable upstreams too —
-                          // same columns (target_name is stable across 01/02/05), just a
+                          // UX ask — 02_typed_<name> above is the recommended default, but
+                          // 01_unpacked (§7's instant preview) is a real, buildable upstream
+                          // too — same columns (target_name is stable across 01/02), just a
                           // different reference to insert. Reuses colState's columns as-is
                           // rather than a second fetch: names don't change stage to stage.
                           <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--border)", display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1104,7 +1122,8 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                   <label className="service-tile-checkline" style={{ opacity: 0.85 }}>
                     <input type="checkbox" checked readOnly disabled />
                     <span style={{ fontSize: 12.5 }}>
-                      {lockedStageUpstream.modelName} <span style={{ color: "var(--text-muted)" }}>({t("medallion.panel.instantPreviewBadge")})</span>
+                      {lockedStageUpstream.modelName}
+                      {lockedStageUpstream.isInstantPreview && <span style={{ color: "var(--text-muted)" }}> ({t("medallion.panel.instantPreviewBadge")})</span>}
                     </span>
                   </label>
                   <div style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 22 }}>{t("medallion.panel.upstreamLockedHint")}</div>
@@ -1173,7 +1192,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
           setStructurationPopupDataset(null);
           onStructurationSaved?.();
           if (!d) return;
-          const ref = `{{ ref('05_validated_${d.name}') }}`;
+          const ref = `{{ ref('02_typed_${d.name}') }}`;
           if (sql.trim() === "SELECT *") setSql(`SELECT *\nFROM ${ref}\n`);
           else insertAtCursor(ref);
           requestAnimationFrame(() => sqlRef.current?.focus());

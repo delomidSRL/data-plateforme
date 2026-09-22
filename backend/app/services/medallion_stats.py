@@ -23,15 +23,14 @@ def table_name(ds: MedallionDataset) -> str:
 
 # UX ask — the dataset editor's "Valider la syntaxe" button (payload_structure.compile_adhoc_sql)
 # needs to know, for an arbitrary {{ ref('x') }} in ad-hoc SQL, whether "x" is actually a real
-# model somewhere in this project — every real silver/gold dataset by its own dbt_model_name,
-# plus the auto-generated structuration stages (01_unpacked..05_quarantine) for every bronze
-# dataset that has a saved contract. Bronze itself is reached via {{ source(...) }}, not this
-# map — compile_adhoc_sql stubs that generically, it never needs to be "known" here.
-_STRUCTURATION_STAGE_SCHEMA = {
-    "01_unpacked": "silver", "02_typed": "silver",
-    "03_standardized": "bronze", "04_annotated": "bronze",
-    "05_validated": "bronze", "05_quarantine": "bronze",
-}
+# model somewhere in this project — every real silver/gold dataset by its own dbt_model_name
+# (the loop below), plus the two structuration stages ALWAYS auto-rendered for every bronze
+# dataset that has a saved contract (01_unpacked/02_typed). 03_standardized onward are never
+# auto-rendered — each is either a real, hand-written silver dataset (already covered by the
+# generic loop below when it exists) or simply absent, never assumed. Bronze itself is reached
+# via {{ source(...) }}, not this map — compile_adhoc_sql stubs that generically, it never needs
+# to be "known" here.
+_STRUCTURATION_STAGE_SCHEMA = {"01_unpacked": "silver", "02_typed": "silver"}
 
 
 def build_ref_map(datasets: list[MedallionDataset], structured_bronze_names: set[str]) -> dict[str, str]:

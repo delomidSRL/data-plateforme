@@ -315,6 +315,49 @@ export default function ProjectDetail({ readOnly = false }) {
     });
   };
 
+  // Same "+"-authoring pattern, one stage further each time: a real 03_standardized_<name>'s
+  // "+" authors 04_annotated_<name> off it; a real 04_annotated_<name>'s "+" authors either
+  // 05_validated_<name> or 05_quarantine_<name> off it (two independent children, never linked
+  // to each other — both read 04_annotated directly). The bronze name is recovered from the
+  // clicked node's own name/prefix rather than passed separately, same convention
+  // LineageCanvas.jsx's badge detection and dbt_project.py's file naming both already use.
+  const openAnnotatedDataset = (standardizedId, standardizedName) => {
+    const bronzeName = standardizedName.replace(/^03_standardized_/, "");
+    setPanel({
+      defaultLayer: "silver",
+      prefill: {
+        name: `04_annotated_${bronzeName}`,
+        dbtModelName: `04_annotated_${bronzeName}`,
+        upstreamIds: [standardizedId],
+        sql: `SELECT *\nFROM {{ ref('${standardizedName}') }}\n`,
+      },
+    });
+  };
+  const openValidatedDataset = (annotatedId, annotatedName) => {
+    const bronzeName = annotatedName.replace(/^04_annotated_/, "");
+    setPanel({
+      defaultLayer: "silver",
+      prefill: {
+        name: `05_validated_${bronzeName}`,
+        dbtModelName: `05_validated_${bronzeName}`,
+        upstreamIds: [annotatedId],
+        sql: `SELECT *\nFROM {{ ref('${annotatedName}') }}\n`,
+      },
+    });
+  };
+  const openQuarantineDataset = (annotatedId, annotatedName) => {
+    const bronzeName = annotatedName.replace(/^04_annotated_/, "");
+    setPanel({
+      defaultLayer: "silver",
+      prefill: {
+        name: `05_quarantine_${bronzeName}`,
+        dbtModelName: `05_quarantine_${bronzeName}`,
+        upstreamIds: [annotatedId],
+        sql: `SELECT *\nFROM {{ ref('${annotatedName}') }}\n`,
+      },
+    });
+  };
+
   // Module 13's Agent tab manages its own execution/plan state independently of this
   // component's own datasets/lineage/publications/dashboards (fetched once on mount, §load
   // effect below) — without this, a project built/run/published/dashboarded entirely from the
@@ -517,6 +560,9 @@ export default function ProjectDetail({ readOnly = false }) {
               projectId={project.id} onOpenStructuration={openStructuration}
               onOpenSilverPreview={(datasetId, stage) => setSilverPreviewTarget({ datasetId, stage })}
               onCreateStandardized={openStandardizedDataset}
+              onCreateAnnotated={openAnnotatedDataset}
+              onCreateValidated={openValidatedDataset}
+              onCreateQuarantine={openQuarantineDataset}
               qualityByDataset={qualityByDataset} publishedByDataset={publishedByDataset} dashboardByDataset={dashboardByDataset}
               sqlByDataset={sqlByDataset}
             />

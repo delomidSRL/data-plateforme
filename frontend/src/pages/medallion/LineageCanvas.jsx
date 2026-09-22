@@ -15,6 +15,10 @@ const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "O
 // platform: still fully configurable from the bronze dataset's own "Structuration" tab
 // (DatasetPanel, unconditional full view) — this only trims what shows up here.
 const PREVIEW_X = { unpacked: 220, typed: 460 };
+// Real, registered custom-SQL datasets in the 01->05 chain (never synchronously previewed,
+// unlike 01_unpacked/02_typed) — share one tooltip/badge treatment, distinct from the
+// "instant preview" one those two get.
+const CUSTOM_STAGE_LABELS = new Set(["standardized", "annotated", "validated", "quarantine"]);
 
 function OriginNode({ data }) {
   return (
@@ -93,6 +97,57 @@ function DatasetNode({ data }) {
           +
         </button>
       )}
+      {data.onCreateAnnotated && (
+        // Same shortcut, one stage further: a real, registered 03_standardized_<name> node's
+        // own "+" authors 04_annotated_<name> off it, exact same pre-seeded pattern.
+        <button
+          type="button"
+          title={t("medallion.panel.createAnnotatedHint")}
+          onClick={(e) => { e.stopPropagation(); data.onCreateAnnotated(); }}
+          style={{
+            position: "absolute", top: -9, right: -9, width: 20, height: 20, borderRadius: "50%",
+            border: "1.5px solid var(--ember)", background: "var(--ember-soft)", color: "var(--ember)",
+            fontSize: 14, lineHeight: "17px", fontWeight: 700, cursor: "pointer", padding: 0,
+          }}
+        >
+          +
+        </button>
+      )}
+      {(data.onCreateValidated || data.onCreateQuarantine) && (
+        // A 04_annotated_<name> node spawns TWO independent children, never linked to each
+        // other (both read 04_annotated directly) — two separate "+" buttons side by side
+        // rather than the single one every other stage gets.
+        <div style={{ position: "absolute", top: -9, right: -9, display: "flex", gap: 4 }}>
+          {data.onCreateValidated && (
+            <button
+              type="button"
+              title={t("medallion.panel.createValidatedHint")}
+              onClick={(e) => { e.stopPropagation(); data.onCreateValidated(); }}
+              style={{
+                width: 20, height: 20, borderRadius: "50%",
+                border: "1.5px solid var(--ember)", background: "var(--ember-soft)", color: "var(--ember)",
+                fontSize: 14, lineHeight: "17px", fontWeight: 700, cursor: "pointer", padding: 0,
+              }}
+            >
+              +
+            </button>
+          )}
+          {data.onCreateQuarantine && (
+            <button
+              type="button"
+              title={t("medallion.panel.createQuarantineHint")}
+              onClick={(e) => { e.stopPropagation(); data.onCreateQuarantine(); }}
+              style={{
+                width: 20, height: 20, borderRadius: "50%",
+                border: "1.5px solid var(--ember)", background: "var(--ember-soft)", color: "var(--ember)",
+                fontSize: 14, lineHeight: "17px", fontWeight: 700, cursor: "pointer", padding: 0,
+              }}
+            >
+              +
+            </button>
+          )}
+        </div>
+      )}
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontFamily: "var(--font-m)" }}>{data.layer}</div>
@@ -100,12 +155,13 @@ function DatasetNode({ data }) {
           // Module 18 §7 UX — silver.01_unpacked_<name>/silver.02_typed_<name>
           // (materialize_unpacked_typed_sync): a real silver node, same design as any other,
           // just flagged ember/orange since it's an instant preview, not a registered dataset.
-          // "standardized" is the one exception — a real, registered 03_standardized_<name>
-          // dataset (built normally, never synchronously previewed), tagged the same way purely
-          // for visual continuity along the 01->02->03 chain, so it gets its own tooltip text.
+          // "standardized"/"annotated"/"validated"/"quarantine" are the exception — real,
+          // registered custom-SQL datasets (built normally, never synchronously previewed),
+          // tagged the same way purely for visual continuity along the whole 01->05 chain, so
+          // they get their own, shared tooltip text instead of the "instant preview" one.
           <span
             className="badge"
-            title={t(data.previewStageLabel === "standardized" ? "medallion.structuration.standardizedBadgeHint" : "medallion.structuration.instantPreviewHint")}
+            title={t(CUSTOM_STAGE_LABELS.has(data.previewStageLabel) ? "medallion.structuration.customStageBadgeHint" : "medallion.structuration.instantPreviewHint")}
             style={{ fontSize: 9.5, padding: "1px 6px", border: "1px solid var(--ember)", color: "var(--ember)", background: "var(--ember-soft)" }}
           >
             {data.previewStageLabel}
@@ -188,7 +244,11 @@ function rerouteThroughStage(bronzeNode, targetSql) {
   return null;
 }
 
-export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSelect, selectedId, projectId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {}, sqlByDataset = {} }) {
+export default function LineageCanvas({
+  nodes: rawNodes, edges: rawEdges, onSelect, selectedId, projectId, onOpenStructuration, onOpenSilverPreview,
+  onCreateStandardized, onCreateAnnotated, onCreateValidated, onCreateQuarantine,
+  qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {}, sqlByDataset = {},
+}) {
   const { t, i18n } = useTranslation();
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
   const publishedLabel = t("medallion.publish.badge");
@@ -248,11 +308,24 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
             dashboardDate: dashboardByDataset[n.id]?.last_generated_at ? new Date(dashboardByDataset[n.id].last_generated_at).toLocaleDateString(i18n.language) : "",
             payloadBacked: n.payload_backed, onOpenStructuration: () => onOpenStructuration?.(n.id, null, true),
             // UX ask — same orange "stage" badge as the 01_unpacked/02_typed synthetic preview
-            // nodes, for visual continuity along the whole 01->02->03 chain: unlike those two,
-            // this is a real, registered silver dataset (the "+" on 02_typed), not an instant
-            // preview — detected by name, the same "03_standardized_<bronze>" convention
-            // dbt_project.py itself keys off to resolve which model 04_annotated reads.
-            previewStageLabel: n.layer === "silver" && n.name.startsWith("03_standardized_") ? "standardized" : undefined,
+            // nodes, for visual continuity along the whole 01->05 chain: unlike those two,
+            // these are real, registered silver datasets (each created via the previous stage's
+            // own "+"), not an instant preview — detected by name, the same
+            // "<prefix>_<bronze>" convention used throughout this feature.
+            previewStageLabel: n.layer === "silver" && n.name.startsWith("03_standardized_") ? "standardized"
+              : n.layer === "silver" && n.name.startsWith("04_annotated_") ? "annotated"
+              : n.layer === "silver" && n.name.startsWith("05_validated_") ? "validated"
+              : n.layer === "silver" && n.name.startsWith("05_quarantine_") ? "quarantine"
+              : undefined,
+            // The "+" a real 03_standardized_<name>/04_annotated_<name> node shows to author
+            // the next stage off it — mirrors onCreateStandardized (the 02_typed synthetic
+            // node's own "+"), just one level further down the chain each time.
+            onCreateAnnotated: n.layer === "silver" && n.name.startsWith("03_standardized_") && onCreateAnnotated
+              ? () => onCreateAnnotated(n.id, n.name) : undefined,
+            onCreateValidated: n.layer === "silver" && n.name.startsWith("04_annotated_") && onCreateValidated
+              ? () => onCreateValidated(n.id, n.name) : undefined,
+            onCreateQuarantine: n.layer === "silver" && n.name.startsWith("04_annotated_") && onCreateQuarantine
+              ? () => onCreateQuarantine(n.id, n.name) : undefined,
             selected: selectedId === n.id, onClick: () => onSelect(n.id),
           },
         });
@@ -315,7 +388,7 @@ export default function LineageCanvas({ nodes: rawNodes, edges: rawEdges, onSele
     // every node-pushing branch above stays oblivious to it.
     const positionedNodes = flowNodes.map((n) => (positionOverrides[n.id] ? { ...n, position: positionOverrides[n.id] } : n));
     return { nodes: positionedNodes, edges: flowEdges };
-  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, qualityByDataset, publishedByDataset, dashboardByDataset, sqlByDataset, publishedLabel, dashboardLabel, i18n.language, t, positionOverrides]);
+  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, onCreateAnnotated, onCreateValidated, onCreateQuarantine, qualityByDataset, publishedByDataset, dashboardByDataset, sqlByDataset, publishedLabel, dashboardLabel, i18n.language, t, positionOverrides]);
 
   const hasCustomLayout = Object.keys(positionOverrides).length > 0;
 

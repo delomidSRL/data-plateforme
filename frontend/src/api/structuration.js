@@ -7,13 +7,6 @@ export const profileStructuration = (pid, did) => apiFetch(`${base}/${pid}/datas
 export const getStructuration = (pid, did) => apiFetch(`${base}/${pid}/datasets/${did}/structuration`);
 export const saveStructuration = (pid, did, payload) => apiFetch(`${base}/${pid}/datasets/${did}/structuration`, { method: "PUT", body: payload });
 
-export const listQuarantine = (pid, did, { column, limit = 50, offset = 0 } = {}) => {
-  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  if (column) params.set("column", column);
-  return apiFetch(`${base}/${pid}/datasets/${did}/structuration/quarantine?${params.toString()}`);
-};
-export const getQuarantineSummary = (pid, did) => apiFetch(`${base}/${pid}/datasets/${did}/structuration/quarantine/summary`);
-
 // Module 18 §7 UX — instant preview of silver.01_unpacked_<name>/silver.02_typed_<name>
 // (materialize_unpacked_typed_sync), same response shape as medallionApi.getDatasetPreview.
 export const previewStructurationTable = (pid, did, stage, { limit = 50, offset = 0 } = {}) => {

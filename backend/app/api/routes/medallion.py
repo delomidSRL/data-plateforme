@@ -85,9 +85,6 @@ from app.schemas.promotion import (
     SourceMappingOut,
 )
 from app.schemas.payload_structuration import (
-    QuarantineRowOut,
-    QuarantineSummaryEntry,
-    QuarantineSummaryOut,
     StructurationOut,
     StructurationUpdate,
 )
@@ -368,13 +365,12 @@ def get_dataset_columns(did: int, db: Session = Depends(get_db), project: Medall
     table hasn't been created yet (no successful pipeline run so far).
 
     A payload-mode bronze dataset's own physical table is just `payload`/`load_id`/
-    `source_file`/`row_number`/`source_pk`/`source_system` (§3.3 audit shape) — useless for
-    authoring downstream SQL. Once it has a saved structuration contract, its
-    `05_validated_<name>` model (Module 18 §7.5 — the clean, routed output; never
-    `04_annotated` nor the bronze directly) is what silver/gold should reference instead, so
-    its *structured* columns (the profiled, included target_name/target_type pairs — column
-    names are stable across 02/05, a hand-written 03_standardized notwithstanding since that's
-    arbitrary SQL) are returned here in its place."""
+    `source_file`/`row_number`/`source_pk`/`source_system`/`loaded_at` (§3.3 audit shape) —
+    useless for authoring downstream SQL. Once it has a saved structuration contract, its
+    `02_typed_<name>` model (the guaranteed, always-rendered stage; 03_standardized onward are
+    optional hand-written datasets, never assumed to exist) is what silver/gold should
+    reference instead, so its *structured* columns (the profiled, included
+    target_name/target_type pairs) are returned here in its place."""
     dataset = _get_dataset(db, project.id, did)
     if dataset.layer == MedallionLayer.bronze:
         structuration = db.query(PayloadStructuration).filter(PayloadStructuration.dataset_id == dataset.id).first()
@@ -443,7 +439,7 @@ def preview_structuration_silver_table(
 def _structuration_out(row: PayloadStructuration) -> StructurationOut:
     return StructurationOut(
         dataset_id=row.dataset_id, payload_column=row.payload_column, column_mapping=row.column_mapping,
-        quality_flags=row.quality_flags, contract_hash=row.contract_hash, updated_at=row.updated_at, updated_by=row.updated_by,
+        contract_hash=row.contract_hash, updated_at=row.updated_at, updated_by=row.updated_by,
     )
 
 
@@ -490,9 +486,9 @@ def update_dataset_structuration(
 ):
     """§4.4 — persists the validated contract: identifiers checked before anything is written.
     Marks the project as needing a redeploy (a changed contract re-renders the
-    01_unpacked ... 05_validated/05_quarantine dbt models, Module 18, at next build) — but
-    doesn't leave the canvas empty until that build runs: every save also creates the empty
-    shape of silver.01_unpacked_<name>/silver.02_typed_<name> synchronously, right here (see
+    01_unpacked/02_typed dbt models at next build) — but doesn't leave the canvas empty until
+    that build runs: every save also creates the empty shape of
+    silver.01_unpacked_<name>/silver.02_typed_<name> synchronously, right here (see
     materialize_unpacked_typed_sync), so a failure there fails the save too. Rows land later,
     the normal way — dbt_run_silver building the passthrough models the redeploy just rendered."""
     dataset = _get_dataset(db, project.id, did)
@@ -500,18 +496,12 @@ def update_dataset_structuration(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ce dataset bronze n'est pas adossé à un import en mode payload.")
 
     column_mapping = [f.model_dump() for f in payload.column_mapping]
-    quality_flags = [f.model_dump() for f in payload.quality_flags]
     warehouse = db.get(DataSource, project.warehouse_source_id)
     if warehouse is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse introuvable.")
     try:
         payload_structure.validate_column_mapping(column_mapping)
-        payload_structure.validate_quality_flags(quality_flags, column_mapping)
-        # proves the whole chain will actually build, not just 01/02 — 04_annotated's exact
-        # upstream (02_typed directly, or a custom 03_standardized) depends on datasets this
-        # route doesn't load, but that choice has no bearing on whether this renders at all.
         payload_structure.render_unpacked_typed_models(column_mapping, dataset.name)
-        payload_structure.render_annotated_model(quality_flags, dataset.name, f"02_typed_{dataset.name}")
         # UX ask — don't just prove it renders: create the empty shape of
         # silver.01_unpacked_<name>/silver.02_typed_<name> right now, so the canvas has
         # something real to show immediately. A save only succeeds if this actually works;
@@ -525,8 +515,7 @@ def update_dataset_structuration(
         row = PayloadStructuration(dataset_id=dataset.id)
         db.add(row)
     row.column_mapping = column_mapping
-    row.quality_flags = quality_flags
-    row.contract_hash = payload_structure.canonical_contract(column_mapping, quality_flags)
+    row.contract_hash = payload_structure.canonical_contract(column_mapping)
     row.updated_by = current_user.id
 
     if project.status in (ProjectStatus.deployed, ProjectStatus.paused):
@@ -534,43 +523,6 @@ def update_dataset_structuration(
     db.commit()
     db.refresh(row)
     return _structuration_out(row)
-
-
-@router.get("/{pid}/datasets/{did}/structuration/quarantine", response_model=list[QuarantineRowOut])
-def list_dataset_quarantine(
-    did: int, column: str | None = None, limit: int = 50, offset: int = 0,
-    db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project),
-):
-    """Module 6 extension §6.2, Module 18 §7.5 — paginated rows already routed as bloquant
-    (cast tag or quality flag), straight from `bronze.05_quarantine_<name>` (never copied into
-    the control plane)."""
-    dataset = _get_dataset(db, project.id, did)
-    warehouse = db.get(DataSource, project.warehouse_source_id)
-    if warehouse is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse introuvable.")
-    limit = max(1, min(limit, 200))
-    try:
-        rows = payload_structure.list_quarantine(warehouse, dataset.name, column=column, limit=limit, offset=offset)
-    except payload_structure.PayloadStructureError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    return [QuarantineRowOut(**r) for r in rows]
-
-
-@router.get("/{pid}/datasets/{did}/structuration/quarantine/summary", response_model=QuarantineSummaryOut)
-def get_dataset_quarantine_summary(did: int, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
-    """§6.2 — per-column rejection counts + a few raw examples, to point at what to fix first."""
-    dataset = _get_dataset(db, project.id, did)
-    warehouse = db.get(DataSource, project.warehouse_source_id)
-    if warehouse is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse introuvable.")
-    try:
-        summary = payload_structure.quarantine_summary(warehouse, dataset.name)
-    except payload_structure.PayloadStructureError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    return QuarantineSummaryOut(
-        total_quarantined=summary["total"],
-        by_column=[QuarantineSummaryEntry(column=c["column"], count=c["count"], sample_values=c["sample_values"]) for c in summary["by_column"]],
-    )
 
 
 @router.get("/{pid}/datasets/{did}/export.csv")
