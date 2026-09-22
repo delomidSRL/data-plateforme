@@ -679,13 +679,22 @@ def compile_adhoc_sql(sql: str, ref_map: dict[str, str], extra_macros_src: str =
         raise PayloadStructureError(f"Variable Jinja non définie : {exc.message}") from exc
 
 
+_SQL_NOISE_RE = re.compile(
+    r"'(?:[^']|'')*'"  # single-quoted string literal (doubled '' is an escaped quote)
+    r"|--[^\n]*"  # line comment
+    r"|/\*.*?\*/",  # block comment
+    re.DOTALL,
+)
+
+
 def _sql_without_string_literals(sql: str) -> str:
     """Strips the content of every Postgres single-quoted string literal (a doubled `''`
     inside one is the standard escaped-quote, not a terminator, so it's treated as literal
-    content too) — used to check for a real second statement without false-positiving on a
-    semicolon that's actually just part of a literal, e.g. a regex character class like
-    '[,;]' in a normalize_for_matching/clean_string call."""
-    return re.sub(r"'(?:[^']|'')*'", "''", sql)
+    content too), every `--` line comment and every `/* ... */` block comment — used to check
+    for a real second statement without false-positiving on a semicolon that's actually just
+    part of a literal (e.g. a regex character class like '[,;]' in a normalize_for_matching/
+    clean_string call) or part of an explanatory comment in the model's SQL."""
+    return _SQL_NOISE_RE.sub(" ", sql)
 
 
 def explain_sql(warehouse: DataSource, sql: str) -> None:
