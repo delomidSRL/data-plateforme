@@ -11,6 +11,16 @@ import { useToast } from "../../context/ToastContext.jsx";
 const TYPES = ["text", "integer", "bigint", "numeric", "boolean", "date", "timestamp", "jsonb"];
 const IDENTIFIER_RE = /^[a-z_][a-z0-9_]{0,62}$/;
 
+// UX ask — the format field is free text (any strptime-style combination of %Y/%m/%d/%H/%M/%S/%f
+// is accepted end to end, e.g. "%Y-%m-%d %H:%M:%S.%f" for microsecond timestamps): these three
+// are just quick-fill suggestions for the common cases, not a closed list — a hand-typed format
+// this platform has never seen before works exactly the same way.
+const DATE_FORMAT_SUGGESTIONS = [
+  { format: "%Y-%m-%d", labelKey: "imports.modal.dateFormatISO" },
+  { format: "%d/%m/%Y", labelKey: "imports.modal.dateFormatDDMM" },
+  { format: "%m/%d/%Y", labelKey: "imports.modal.dateFormatMMDD" },
+];
+
 // Module 18 §7 — how far into the 01/02 chain a stage sits, used to progressively reveal
 // contract columns instead of dumping everything at once: 01 only knows raw fields exist, 02
 // decides their type/name/nullability. Everything past 02 (standardization, quality flags,
@@ -230,12 +240,28 @@ export default function StructurationPanel({ project, dataset, readOnly = false,
                         onChange={(e) => updateField(idx, { target_name: e.target.value })}
                       />
                       {showDateFormat && (
-                        <select className="input" style={{ marginTop: 6, fontSize: 11.5 }} disabled={readOnly}
-                          value={f.format || "%d/%m/%Y"} onChange={(e) => updateField(idx, { format: e.target.value })}>
-                          <option value="%Y-%m-%d">{t("imports.modal.dateFormatISO")}</option>
-                          <option value="%d/%m/%Y">{t("imports.modal.dateFormatDDMM")}</option>
-                          <option value="%m/%d/%Y">{t("imports.modal.dateFormatMMDD")}</option>
-                        </select>
+                        <div style={{ marginTop: 6 }}>
+                          <Input
+                            style={{ fontFamily: "var(--font-m)", fontSize: 11.5 }}
+                            disabled={readOnly}
+                            value={f.format || "%d/%m/%Y"}
+                            onChange={(e) => updateField(idx, { format: e.target.value })}
+                            placeholder="%Y-%m-%d %H:%M:%S.%f"
+                          />
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                            {DATE_FORMAT_SUGGESTIONS.map((s) => (
+                              <button
+                                key={s.format} type="button" className="badge badge-neutral"
+                                style={{ cursor: "pointer", border: "none", fontSize: 10, fontFamily: "var(--font-m)" }}
+                                disabled={readOnly}
+                                title={t(s.labelKey)}
+                                onClick={() => updateField(idx, { format: s.format })}
+                              >
+                                {s.format}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       )}
                     </td>
                   )}
