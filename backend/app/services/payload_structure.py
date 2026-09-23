@@ -377,10 +377,10 @@ STRUCTURATION_MACROS = {
 # per-field concern.
 _TRACEABILITY_COLUMNS = ["load_id", "source_file", "source_pk", "source_system", "row_number", "loaded_at"]
 
-# US (microseconds, from %f — see _PY_TO_PG_DATE_TOKENS) is 1-6 digits, not a fixed width:
-# Python's %f itself accepts 1-6 digits when parsing, so the validity check has to accept the
-# same range inference did, or a value inference just approved would still get tagged invalid.
-_DATE_TOKEN_DIGITS = [("YYYY", "[0-9]{4}"), ("HH24", "[0-9]{2}"), ("MI", "[0-9]{2}"), ("SS", "[0-9]{2}"), ("MM", "[0-9]{2}"), ("DD", "[0-9]{2}"), ("YY", "[0-9]{2}"), ("US", "[0-9]{1,6}")]
+# Fixed-width date/time tokens only — US (microseconds) is handled separately in
+# _cast_pattern below, as an always-optional trailing group rather than a substituted token
+# (see its docstring for why).
+_DATE_TOKEN_DIGITS = [("YYYY", "[0-9]{4}"), ("HH24", "[0-9]{2}"), ("MI", "[0-9]{2}"), ("SS", "[0-9]{2}"), ("MM", "[0-9]{2}"), ("DD", "[0-9]{2}"), ("YY", "[0-9]{2}")]
 
 
 def _cast_pattern(target_type: str, pg_format: str | None) -> str:
@@ -388,7 +388,15 @@ def _cast_pattern(target_type: str, pg_format: str | None) -> str:
     not as a type-only dbt macro, because a date/timestamp's pattern depends on that field's
     own configured format (DD/MM/YYYY vs YYYY-MM-DD aren't interchangeable), not just its
     type. Longest tokens replaced first (YYYY before YY) so a 4-digit year never gets doubly
-    substituted into two 2-digit ones."""
+    substituted into two 2-digit ones.
+
+    A timestamp's fractional seconds are always optional here, regardless of whether the
+    configured format declares a US token or not — mirroring a real, verified Postgres
+    to_timestamp(v, fmt) quirk: it silently accepts a value with no fraction against a format
+    that declares one (US matches zero-width), and just as silently accepts a value WITH a
+    fraction against a format that doesn't (the trailing digits are parsed as the fraction
+    anyway, never a parse failure). A stricter regex than that disagrees with the cast it's
+    meant to describe, tagging rows cast_issue that the actual safe_cast call never rejects."""
     if target_type in ("integer", "bigint"):
         return r"^-?[0-9]+$"
     if target_type == "numeric":
@@ -397,9 +405,13 @@ def _cast_pattern(target_type: str, pg_format: str | None) -> str:
         return r"^(true|false|1|0|oui|non|vrai|faux|o|n|yes|no|y)$"
     if target_type in ("date", "timestamp"):
         fmt = pg_format or ("DD/MM/YYYY" if target_type == "date" else "DD/MM/YYYY HH24:MI:SS")
+        fraction_suffix = ""
+        if target_type == "timestamp":
+            fmt = fmt.replace(".US", "").replace("US", "")
+            fraction_suffix = r"(\.[0-9]{1,6})?"
         for token, digits in _DATE_TOKEN_DIGITS:
             fmt = fmt.replace(token, digits)
-        return f"^{fmt}$"
+        return f"^{fmt}{fraction_suffix}$"
     return ".*"
 
 
