@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Drawer } from "../../components/ui/Drawer.jsx";
+import { Modal } from "../../components/ui/Modal.jsx";
 import { Button } from "../../components/ui/Button.jsx";
 import { Badge } from "../../components/ui/Badge.jsx";
 import { Icon } from "../../components/icons.jsx";
@@ -35,7 +35,7 @@ export default function OriginPanel({ origin, project, previewDatasetId, onClose
   };
 
   return (
-    <Drawer title={origin.name} description={t("medallion.origin.description")} onClose={onClose}>
+    <Modal large title={origin.name} description={t("medallion.origin.description")} onClose={onClose}>
       <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" style={{ display: "none" }} onChange={handleReimportFile} />
 
       <div className="field">
@@ -85,6 +85,6 @@ export default function OriginPanel({ origin, project, previewDatasetId, onClose
           </Button>
         </div>
       )}
-    </Drawer>
+    </Modal>
   );
 }

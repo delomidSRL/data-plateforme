@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Drawer } from "../../components/ui/Drawer.jsx";
+import { Modal } from "../../components/ui/Modal.jsx";
 import { Field, Input } from "../../components/ui/Input.jsx";
 import { Button } from "../../components/ui/Button.jsx";
 import { Icon } from "../../components/icons.jsx";
@@ -570,7 +570,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
 
   return (
     <>
-    <Drawer title={title} description={t("medallion.panel.layerDesc", { layer })} onClose={onClose}>
+    <Modal large title={title} description={t("medallion.panel.layerDesc", { layer })} onClose={onClose}>
       {isEdit && (
         <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
           <button type="button" className="btn-ghost" style={{ opacity: panelTab === "config" ? 1 : 0.6 }} onClick={() => setPanelTab("config")}>
@@ -1178,7 +1178,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
       </form>
       </>
       )}
-    </Drawer>
+    </Modal>
     {structurationPopupDataset && (
       <StructurationPopup
         project={project} dataset={structurationPopupDataset} guided

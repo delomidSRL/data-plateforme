@@ -1,9 +1,9 @@
 import { Icon } from "../icons.jsx";
 
-export function Modal({ title, description, onClose, children, maxWidth }) {
+export function Modal({ title, description, onClose, children, maxWidth, large = false }) {
   return (
     <div className="overlay" onClick={onClose}>
-      <div className="modal" style={maxWidth ? { maxWidth } : undefined} onClick={(e) => e.stopPropagation()}>
+      <div className={large ? "modal modal-lg" : "modal"} style={maxWidth ? { maxWidth } : undefined} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div>
             <div className="modal-title">{title}</div>
