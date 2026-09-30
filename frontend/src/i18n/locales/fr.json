@@ -888,6 +888,20 @@
     "dagAirflow": "DAG (Airflow)",
     "previewFailed": "Prévisualisation impossible.",
     "deployedToast": "Déployé — {{count}} connexion(s), DAG déposé.",
+    "impact": {
+      "title": "Revue des changements de code",
+      "description": "Ce déploiement modifie des colonnes utilisées en aval. Vérifiez avant de continuer :",
+      "cancel": "Annuler",
+      "confirmDeploy": "Déployer quand même",
+      "severity": {
+        "column_removed": "Colonne supprimée",
+        "column_renamed": "Renommage probable",
+        "downstream_model": "Modèle en aval",
+        "superset": "Superset",
+        "quality_check": "Contrôle qualité",
+        "export": "Export CSV"
+      }
+    },
     "deployFailed": "Déploiement impossible.",
     "projectResumed": "Projet repris.",
     "projectPaused": "Projet mis en pause.",
@@ -1067,7 +1081,10 @@
       "runDev": "Exécuter en dev",
       "runningDev": "Exécution…",
       "runDevOk": "Exécution en dev réussie.",
-      "runDevFailed": "Exécution en dev impossible."
+      "runDevFailed": "Exécution en dev impossible.",
+      "history": "Historique",
+      "historyTitle": "Historique du fichier",
+      "historyEmpty": "Aucun historique."
     },
     "conflicts": {
       "banner": "{{count}} fichier(s) à arbitrer avant de pouvoir déployer.",

@@ -4,8 +4,14 @@ const BASE_URL = window.__API_BASE_URL__ || import.meta.env.VITE_API_BASE_URL ||
 
 export class ApiError extends Error {
   constructor(message, status) {
-    super(message);
+    // `Error`'s own constructor coerces a non-string argument via ToString (an array becomes
+    // "[object Object],[object Object]", a plain object becomes "[object Object]") — silently
+    // destroying a structured FastAPI `detail` payload (a 422's list of jinja-guard
+    // violations, a 409's {message, dataset_name}/{message, impact}, …). `.detail` below is
+    // what every caller that expects one of those shapes must read instead of `.message`.
+    super(typeof message === "string" ? message : (message?.message || "Une erreur est survenue."));
     this.status = status;
+    this.detail = message;
   }
 }
 

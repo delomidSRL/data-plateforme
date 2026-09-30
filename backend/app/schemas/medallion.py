@@ -623,3 +623,40 @@ class RunDevOut(BaseModel):
     ok: bool
     nodes: list[RunDevNodeOut] = Field(default_factory=list)
     errors: list[SyncErrorOut] = Field(default_factory=list)
+
+
+# ---------------- Module 19 étape 5 — analyse d'impact & publication ----------------
+
+class BuildRequest(BaseModel):
+    # §7.3 — "Revue des changements de code" : true once the caller has seen the impact
+    # preview (GET .../workspace/impact) and explicitly wants to proceed anyway.
+    confirm_impact: bool = False
+
+
+class ImpactItemOut(BaseModel):
+    severity: str
+    message: str
+
+
+class ModelImpactOut(BaseModel):
+    dataset_id: int
+    dataset_name: str
+    path: str
+    columns_removed: list[str] = Field(default_factory=list)
+    columns_added: list[str] = Field(default_factory=list)
+    items: list[ImpactItemOut] = Field(default_factory=list)
+
+
+class ImpactOut(BaseModel):
+    models: list[ModelImpactOut] = Field(default_factory=list)
+    has_impact: bool = False
+
+
+class FileAuditEntryOut(BaseModel):
+    id: int
+    action: str
+    actor_name: str | None = None
+    generator: str | None = None
+    content_hash_before: str | None = None
+    content_hash_after: str | None = None
+    created_at: datetime

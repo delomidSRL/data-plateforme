@@ -6,11 +6,11 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.models.data_source import DataSource, DataSourceOrigin, DataSourceType
-from app.models.medallion import MedallionDataset, MedallionLayer, MedallionProject
+from app.models.medallion import MedallionDataset, MedallionLayer, MedallionProject, WorkspaceParseStatus
 from app.models.payload_structuration import PayloadStructuration
 from app.models.project_environment_binding import ProjectEnvironmentBinding
 from app.models.project_file_conflict import ConflictTrigger
-from app.services import airflow_api, dag_render, dbt_project, ssh, workspace, workspace_merge
+from app.services import airflow_api, dag_render, dbt_project, ssh, workspace, workspace_merge, workspace_sync
 from app.services.airflow_instances import DeployTarget
 from app.core.security import decrypt_secret
 
@@ -162,6 +162,17 @@ async def build_project(
     active = workspace_merge.list_active_conflicts(db, project.id)
     if active:
         raise workspace_merge.WorkspaceConflictsPending([c.path for c in active])
+
+    # Module 19 §7.3 — "compilation OK" as an explicit build precondition, re-checked here
+    # rather than trusted from workspace_parse_status alone: a canvas-only edit (dataset CRUD)
+    # never goes through the Code tab's save-time sync, so that flag can be stale relative to
+    # what THIS regeneration just merged.
+    sync_result = workspace_sync.sync(db, project)
+    project.workspace_parse_status = WorkspaceParseStatus.ok if sync_result.ok else WorkspaceParseStatus.error
+    project.workspace_parse_errors = None if sync_result.ok else [e.as_dict() for e in sync_result.errors]
+    if not sync_result.ok:
+        raise workspace_sync.WorkspaceParseFailed(sync_result.errors)
+
     deploy_files = workspace.export_tree(db, project)
     deploy_files["profiles.yml"] = dbt_files["profiles.yml"]
 

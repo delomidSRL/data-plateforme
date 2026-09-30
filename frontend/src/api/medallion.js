@@ -40,7 +40,11 @@ export const previewProject = (pid) => apiFetch(`${base}/${pid}/preview`, { meth
 // UX ask — dataset editor's "Valider la syntaxe": checks ad-hoc dbt SQL (ref()/source() +
 // a real EXPLAIN) without saving anything.
 export const validateSql = (pid, sql) => apiFetch(`${base}/${pid}/validate-sql`, { method: "POST", body: { sql } });
-export const buildProject = (pid) => apiFetch(`${base}/${pid}/build`, { method: "POST" });
+// Module 19 §7.3 — confirmImpact acknowledges the "Revue des changements de code" preview
+// (GET workspace/impact) when the build's own 409 surfaced one.
+export const buildProject = (pid, confirmImpact = false) => apiFetch(`${base}/${pid}/build`, { method: "POST", body: { confirm_impact: confirmImpact } });
+export const getWorkspaceImpact = (pid) => apiFetch(`${base}/${pid}/workspace/impact`);
+export const getFileAudit = (pid, path) => apiFetch(`${base}/${pid}/workspace/file/audit?path=${encodeURIComponent(path)}`);
 export const getDeployStatus = (pid) => apiFetch(`${base}/${pid}/deploy-status`);
 export const runProject = (pid, payload = {}) => apiFetch(`${base}/${pid}/run`, { method: "POST", body: payload });
 export const pauseProject = (pid) => apiFetch(`${base}/${pid}/pause`, { method: "POST" });

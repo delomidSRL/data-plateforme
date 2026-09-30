@@ -888,6 +888,20 @@
     "dagAirflow": "DAG (Airflow)",
     "previewFailed": "Preview failed.",
     "deployedToast": "Deployed — {{count}} connection(s), DAG deposited.",
+    "impact": {
+      "title": "Code change review",
+      "description": "This deploy changes columns used downstream. Review before continuing:",
+      "cancel": "Cancel",
+      "confirmDeploy": "Deploy anyway",
+      "severity": {
+        "column_removed": "Column removed",
+        "column_renamed": "Likely rename",
+        "downstream_model": "Downstream model",
+        "superset": "Superset",
+        "quality_check": "Quality check",
+        "export": "CSV export"
+      }
+    },
     "deployFailed": "Deployment failed.",
     "projectResumed": "Project resumed.",
     "projectPaused": "Project paused.",
@@ -1067,7 +1081,10 @@
       "runDev": "Run in dev",
       "runningDev": "Running…",
       "runDevOk": "Ran successfully in dev.",
-      "runDevFailed": "Could not run in dev."
+      "runDevFailed": "Could not run in dev.",
+      "history": "History",
+      "historyTitle": "File history",
+      "historyEmpty": "No history."
     },
     "conflicts": {
       "banner": "{{count}} file(s) need arbitration before you can deploy.",

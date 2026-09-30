@@ -59,6 +59,17 @@ class SyncResult:
     errors: list[SyncError] = field(default_factory=list)
 
 
+class WorkspaceParseFailed(Exception):
+    """Module 19 §7.3 — "compilation OK" is a build precondition: raised by the build itself
+    right after apply_generated() reconciles the workspace, catching what a canvas-only edit
+    (dataset CRUD never runs the Code tab's own save-time sync) could otherwise silently
+    introduce and only surface much later, at real Airflow execution time."""
+
+    def __init__(self, errors: list[SyncError]):
+        self.errors = errors
+        super().__init__(f"{len(errors)} erreur(s) de parsing : " + "; ".join(e.message for e in errors[:3]))
+
+
 def dbt_bin() -> str:
     """The control plane's OWN pinned dbt (requirements.txt), sibling of the running
     interpreter — never Airflow's dbt_venv (dag_render.DBT_BIN), a completely different

@@ -888,6 +888,20 @@
     "dagAirflow": "DAG (Airflow)",
     "previewFailed": "Voorbeeld mislukt.",
     "deployedToast": "Geïmplementeerd — {{count}} verbinding(en), DAG geplaatst.",
+    "impact": {
+      "title": "Codewijzigingen beoordelen",
+      "description": "Deze deploy wijzigt kolommen die verderop worden gebruikt. Controleer voordat u doorgaat:",
+      "cancel": "Annuleren",
+      "confirmDeploy": "Toch deployen",
+      "severity": {
+        "column_removed": "Kolom verwijderd",
+        "column_renamed": "Waarschijnlijk hernoemd",
+        "downstream_model": "Model verderop",
+        "superset": "Superset",
+        "quality_check": "Kwaliteitscontrole",
+        "export": "CSV-export"
+      }
+    },
     "deployFailed": "Implementatie mislukt.",
     "projectResumed": "Project hervat.",
     "projectPaused": "Project gepauzeerd.",
@@ -1067,7 +1081,10 @@
       "runDev": "Uitvoeren in dev",
       "runningDev": "Bezig…",
       "runDevOk": "Succesvol uitgevoerd in dev.",
-      "runDevFailed": "Uitvoeren in dev mislukt."
+      "runDevFailed": "Uitvoeren in dev mislukt.",
+      "history": "Geschiedenis",
+      "historyTitle": "Bestandsgeschiedenis",
+      "historyEmpty": "Geen geschiedenis."
     },
     "conflicts": {
       "banner": "{{count}} bestand(en) moeten worden beoordeeld voordat u kunt deployen.",

@@ -127,6 +127,19 @@ def apply_generated(
         if content == row.base_content:
             continue  # the generator's output hasn't actually changed — nothing to propose
 
+        if content == row.content:
+            # The regeneration now matches exactly what the human already has — typically
+            # because their Code-tab edit already updated the underlying MedallionDataset via
+            # workspace_sync, so regenerating from the canvas reproduces the same bytes. There
+            # is nothing to arbitrate: just advance the base silently (same "no version bump on
+            # a base-only move" rule as workspace.materialize()'s own), so the NEXT genuinely
+            # different regeneration diffs against this, not the stale pre-edit base.
+            if row.base_hash != h:
+                row.base_content = content
+                row.base_hash = h
+                row.generator = generator
+            continue
+
         merged_text, has_conflicts = _three_way_merge(row.content, row.base_content, content)
         status = ConflictStatus.open if has_conflicts else ConflictStatus.proposed
         conflict = active_conflicts.get(path)

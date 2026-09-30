@@ -18,6 +18,7 @@ import StructurationPopup from "./StructurationPopup.jsx";
 import SilverPreviewPopup from "./SilverPreviewPopup.jsx";
 import PromotionDrawer from "./PromotionDrawer.jsx";
 import RunsTab from "./RunsTab.jsx";
+import BuildImpactModal from "./BuildImpactModal.jsx";
 import QualityTab from "./QualityTab.jsx";
 import VersionsTab from "./VersionsTab.jsx";
 import AgentTab from "./AgentTab.jsx";
@@ -57,6 +58,7 @@ export default function ProjectDetail({ readOnly = false }) {
   const [previewData, setPreviewData] = useState(null);
   const [previewing, setPreviewing] = useState(false);
   const [building, setBuilding] = useState(false);
+  const [buildImpact, setBuildImpact] = useState(null); // Module 19 §7.3 — pending impact review before a build
   const [buildStep, setBuildStep] = useState(0);
   const [deployWatch, setDeployWatch] = useState(null); // { status: "polling"|"detected"|"timeout", elapsed }
   const deployWatchTimer = useRef(null);
@@ -226,7 +228,7 @@ export default function ProjectDetail({ readOnly = false }) {
     }
   };
 
-  const handleBuild = async () => {
+  const handleBuild = async (confirmImpact = false) => {
     setBuilding(true);
     setBuildStep(1);
     if (deployWatchTimer.current) clearTimeout(deployWatchTimer.current);
@@ -234,15 +236,23 @@ export default function ProjectDetail({ readOnly = false }) {
     try {
       await new Promise((r) => setTimeout(r, 400));
       setBuildStep(2);
-      const report = await medallionApi.buildProject(id);
+      const report = await medallionApi.buildProject(id, confirmImpact);
       setBuildStep(3);
       await new Promise((r) => setTimeout(r, 400));
       setBuildStep(4);
+      setBuildImpact(null);
       showToast(t("medallion.deployedToast", { count: report.connections_created.length }));
       await load();
       if (report.dag_deposited) watchAirflowDetection();
     } catch (err) {
-      showToast(err.message || t("medallion.deployFailed"));
+      // Module 19 §7.3 — "Revue des changements de code" : a 409 here carries the impact
+      // preview instead of a plain message; show it and let the user explicitly confirm
+      // rather than surfacing it as a generic failure toast.
+      if (err.status === 409 && err.detail?.impact) {
+        setBuildImpact(err.detail.impact);
+      } else {
+        showToast(err.message || t("medallion.deployFailed"));
+      }
     } finally {
       setTimeout(() => { setBuilding(false); setBuildStep(0); }, 800);
     }
@@ -494,7 +504,7 @@ export default function ProjectDetail({ readOnly = false }) {
             <Button variant="ghost" className="inline" onClick={() => setPanel({ defaultLayer: "bronze" })}>{Icon.plus()} {t("medallion.addDataset")}</Button>
             <Button variant="ghost" className="inline" onClick={() => setImportWizardOpen(true)}>{Icon.upload()} {t("medallion.origin.importFile")}</Button>
             <Button variant="ghost" className="inline" disabled={previewing} onClick={handlePreview}>{previewing ? t("medallion.previewing") : t("medallion.preview")}</Button>
-            <Button className="inline" disabled={building} onClick={handleBuild}>{building ? t("medallion.deploying") : t("medallion.buildAndDeploy")}</Button>
+            <Button className="inline" disabled={building} onClick={() => handleBuild()}>{building ? t("medallion.deploying") : t("medallion.buildAndDeploy")}</Button>
           </>
         )}
 
@@ -655,6 +665,10 @@ export default function ProjectDetail({ readOnly = false }) {
           readOnly={readOnly}
           onViewCode={(datasetId) => { setPanel(null); setCodeInitialDatasetId(datasetId); setTab("code"); }}
         />
+      )}
+
+      {!readOnly && buildImpact && (
+        <BuildImpactModal impact={buildImpact} busy={building} onClose={() => setBuildImpact(null)} onConfirm={() => handleBuild(true)} />
       )}
 
       {!readOnly && importWizardOpen && (

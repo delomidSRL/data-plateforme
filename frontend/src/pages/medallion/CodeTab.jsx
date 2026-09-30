@@ -134,6 +134,8 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
   const [showCompiled, setShowCompiled] = useState(false);
   const [runResult, setRunResult] = useState(null); // { ok, nodes, datasetId } for the active file's last run-dev
   const [showPreview, setShowPreview] = useState(false);
+  const [showAudit, setShowAudit] = useState(false);
+  const [auditEntries, setAuditEntries] = useState([]);
 
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
@@ -160,6 +162,7 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
 
   const openFile = (path) => {
     setActivePath(path);
+    setShowAudit(false);
     setOpenPaths((prev) => (prev.includes(path) ? prev : [...prev, path]));
     setContents((prev) => {
       if (prev[path]) return prev;
@@ -220,7 +223,7 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
       else showToast(t("medallion.code.savedWithErrors"));
     } catch (err) {
       if (err instanceof ApiError && err.status === 422) {
-        const violations = Array.isArray(err.message) ? err.message : [];
+        const violations = Array.isArray(err.detail) ? err.detail : [];
         setMarkers(violations.map((v) => ({ line: v.line || 1, message: v.message })));
         showToast(t("medallion.code.guardBlocked"));
       } else if (err instanceof ApiError && err.status === 409) {
@@ -280,6 +283,13 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
     } finally {
       setRunningDev(false);
     }
+  };
+
+  const loadAudit = (path) => {
+    if (showAudit) { setShowAudit(false); return; }
+    medallionApi.getFileAudit(project.id, path)
+      .then((entries) => { setAuditEntries(entries); setShowAudit(true); })
+      .catch((err) => showToast(err.message || t("medallion.code.loadFailed")));
   };
 
   const handleEditorMount = (editor, monacoInstance) => {
@@ -343,8 +353,8 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
         applySyncResult({ path }, sync);
       })
       .catch((err) => {
-        if (err instanceof ApiError && err.status === 409 && err.message?.dataset_name) {
-          if (window.confirm(t("medallion.code.deleteConfirmDataset", { name: err.message.dataset_name }))) attempt(true);
+        if (err instanceof ApiError && err.status === 409 && err.detail?.dataset_name) {
+          if (window.confirm(t("medallion.code.deleteConfirmDataset", { name: err.detail.dataset_name }))) attempt(true);
         } else {
           showToast(err.message || t("medallion.code.saveFailed"));
         }
@@ -419,7 +429,7 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
                 const isActive = activePath === p;
                 return (
                   <div
-                    key={p} onClick={() => setActivePath(p)}
+                    key={p} onClick={() => { setActivePath(p); setShowAudit(false); }}
                     style={{
                       display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", fontSize: 12, fontFamily: "var(--font-m)",
                       borderRight: "1px solid var(--border)", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
@@ -432,11 +442,38 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
                   </div>
                 );
               })}
-              {canEdit && activePath && (
-                <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", padding: "0 10px" }}>
-                  <Button className="inline" disabled={!activeDirty || activeSaving} onClick={() => save(activePath)}>
-                    {activeSaving ? t("medallion.code.saving") : t("medallion.code.save")}
-                  </Button>
+              {activePath && (
+                <div style={{ marginLeft: canEdit ? "auto" : "auto", display: "flex", alignItems: "center", gap: 8, padding: "0 10px" }}>
+                  <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => loadAudit(activePath)}>
+                    {Icon.refresh()} {t("medallion.code.history")}
+                  </button>
+                  {canEdit && (
+                    <Button className="inline" disabled={!activeDirty || activeSaving} onClick={() => save(activePath)}>
+                      {activeSaving ? t("medallion.code.saving") : t("medallion.code.save")}
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {showAudit && activePath && (
+            <div style={{ borderBottom: "1px solid var(--border)", padding: 10, maxHeight: 160, overflowY: "auto", flexShrink: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".04em" }}>{t("medallion.code.historyTitle")}</span>
+                <button type="button" className="btn-icon" onClick={() => setShowAudit(false)}>{Icon.x({ width: 13, height: 13 })}</button>
+              </div>
+              {auditEntries.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{t("medallion.code.historyEmpty")}</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {auditEntries.map((e) => (
+                    <div key={e.id} style={{ fontSize: 11.5, display: "flex", gap: 8, fontFamily: "var(--font-m)" }}>
+                      <span style={{ color: "var(--text-muted)" }}>{new Date(e.created_at).toLocaleString()}</span>
+                      <Badge tone="neutral">{e.action}</Badge>
+                      <span>{e.actor_name || e.generator || "—"}</span>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

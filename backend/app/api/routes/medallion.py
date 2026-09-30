@@ -37,6 +37,7 @@ from app.models.superset_instance import SupersetInstance
 from app.models.superset_publication import SupersetPublication
 from app.schemas.medallion import (
     BuildReport,
+    BuildRequest,
     DatasetColumnOut,
     DatasetColumnsOut,
     DatasetCreate,
@@ -90,7 +91,7 @@ from app.schemas.payload_structuration import (
     StructurationUpdate,
 )
 from app.schemas.file_import import ColumnsOut, FileImportOut, ImportFromObjectStoreCreate, ObjectStoreColumnsRequest
-from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, file_import as file_import_service, gold_export, gold_profile, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot, workspace, workspace_merge
+from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, file_import as file_import_service, gold_export, gold_profile, impact, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot, workspace, workspace_merge, workspace_sync
 from app.services.ai_config import get_ai_config
 from app.services.superset_instances import get_superset_config
 from app.services.medallion_crud import create_dataset_internal, validate_lineage
@@ -843,7 +844,7 @@ def _resolve_binding_deploy_target(db: Session, project: MedallionProject, bindi
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
-async def _build_binding(db: Session, project: MedallionProject, binding: ProjectEnvironmentBinding, current_user: User) -> BuildReport:
+async def _build_binding(db: Session, project: MedallionProject, binding: ProjectEnvironmentBinding, current_user: User, confirm_impact: bool = False) -> BuildReport:
     """Module 17 §4.1 — the generalized build, shared by the home-alias route and the
     explicit-environment one. Everything infra-shaped (warehouse/object store/Airflow
     instance/schedule) is read from `binding`, never from `project` directly — the only way
@@ -860,6 +861,16 @@ async def _build_binding(db: Session, project: MedallionProject, binding: Projec
     pending = workspace_merge.list_active_conflicts(db, project.id)
     if pending:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{len(pending)} fichier(s) à arbitrer (onglet Code) avant de déployer.")
+    # Module 19 §7.3 — "Revue des changements de code" : non bloquant (ce module n'invente
+    # aucun gate — seul un check M16 en « Bloquer » bloque quoi que ce soit), mais exige une
+    # confirmation explicite la première fois. Un projet jamais construit, ou dont le code n'a
+    # pas divergé de ce qui est déjà en ligne, n'a rien à revoir.
+    impact_result = impact.analyze(db, project)
+    if impact_result.has_impact and not confirm_impact:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+            "message": "Ce déploiement modifie des colonnes utilisées en aval — confirmez pour continuer.",
+            "impact": [m.as_dict() for m in impact_result.models],
+        })
 
     warehouse = db.get(DataSource, binding.warehouse_source_id)
     object_store = db.get(DataSource, binding.object_store_source_id)
@@ -871,6 +882,13 @@ async def _build_binding(db: Session, project: MedallionProject, binding: Projec
         # This regeneration itself just created (or left standing) an active conflict — the
         # proposal is already persisted (see medallion_deploy's own commit-on-exception
         # path), ready for the "À arbitrer" view; no deployment happened.
+        binding.status = ProjectStatus.error
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except workspace_sync.WorkspaceParseFailed as exc:
+        # §7.3's "compilation OK" precondition, re-checked right after this regeneration's own
+        # merge — the file(s) involved are already saved (workspace_sync never rolls that
+        # back), only the deploy itself didn't happen.
         binding.status = ProjectStatus.error
         db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
@@ -903,16 +921,18 @@ async def _build_binding(db: Session, project: MedallionProject, binding: Projec
 
 
 @router.post("/{pid}/build", response_model=BuildReport)
-async def build_project_endpoint(db: Session = Depends(get_db), current_user: User = Depends(get_current_user), project: MedallionProject = Depends(get_owned_project)):
+async def build_project_endpoint(payload: BuildRequest | None = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user), project: MedallionProject = Depends(get_owned_project)):
     """Kept as a thin alias onto the home binding (§4.3 compat) — every existing caller of
-    this route keeps working exactly as before, unaware bindings exist at all."""
-    return await _build_binding(db, project, project.home_binding, current_user)
+    this route keeps working exactly as before, unaware bindings exist at all. `payload` is
+    optional (Module 19 §7.3's `confirm_impact`) precisely so every pre-existing no-body
+    caller keeps working unchanged."""
+    return await _build_binding(db, project, project.home_binding, current_user, (payload or BuildRequest()).confirm_impact)
 
 
 @router.post("/{pid}/bindings/{env}/build", response_model=BuildReport)
-async def build_binding_endpoint(env: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user), project: MedallionProject = Depends(get_owned_project)):
+async def build_binding_endpoint(env: str, payload: BuildRequest | None = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user), project: MedallionProject = Depends(get_owned_project)):
     binding = get_project_binding(project.id, env, db, project)
-    return await _build_binding(db, project, binding, current_user)
+    return await _build_binding(db, project, binding, current_user, (payload or BuildRequest()).confirm_impact)
 
 
 @router.get("/{pid}/bindings", response_model=list[BindingOut])

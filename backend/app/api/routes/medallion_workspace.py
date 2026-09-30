@@ -22,6 +22,10 @@ from app.schemas.medallion import (
     ConflictActionOut,
     ConflictOut,
     ConflictResolveRequest,
+    FileAuditEntryOut,
+    ImpactItemOut,
+    ImpactOut,
+    ModelImpactOut,
     RunDevNodeOut,
     RunDevOut,
     RunDevRequest,
@@ -37,7 +41,7 @@ from app.schemas.medallion import (
     WorkspaceTreeOut,
     WorkspaceWriteOut,
 )
-from app.services import dbt_runner, jinja_guard, workspace, workspace_merge, workspace_sync
+from app.services import dbt_runner, impact, jinja_guard, workspace, workspace_merge, workspace_sync
 
 router = APIRouter(prefix="/api/medallion/projects", tags=["medallion-workspace"])
 
@@ -426,3 +430,45 @@ def post_run_dev(payload: RunDevRequest, db: Session = Depends(get_db), project:
         nodes=[RunDevNodeOut(unique_id=n.unique_id, name=n.name, resource_type=n.resource_type, status=n.status, execution_time=n.execution_time) for n in result.nodes],
         errors=[SyncErrorOut(**e.as_dict()) for e in result.errors],
     )
+
+
+# ---------------- Impact & publication (étape 5) ----------------
+
+@router.get("/{pid}/workspace/impact", response_model=ImpactOut)
+def get_impact(db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+    """§7.2/§7.3 — the same review the build itself runs (and blocks on, once, until
+    confirmed) — exposed read-only so the "Build & déployer" flow can show it BEFORE the
+    build call, instead of the human discovering it only from a 409."""
+    result = impact.analyze(db, project)
+    return ImpactOut(
+        has_impact=result.has_impact,
+        models=[
+            ModelImpactOut(
+                dataset_id=m.dataset_id, dataset_name=m.dataset_name, path=m.path,
+                columns_removed=m.columns_removed, columns_added=m.columns_added,
+                items=[ImpactItemOut(severity=i.severity, message=i.message) for i in m.items],
+            )
+            for m in result.models
+        ],
+    )
+
+
+@router.get("/{pid}/workspace/file/audit", response_model=list[FileAuditEntryOut])
+def get_file_audit(path: str, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+    """§7.4 — "qui (ou quel générateur) a modifié [ce fichier] et quand" ; jamais de contenu,
+    seulement des hash (déjà vrai à l'écriture, §7.4 du modèle ProjectFileAudit)."""
+    rows = (
+        db.query(ProjectFileAudit)
+        .filter(ProjectFileAudit.project_id == project.id, ProjectFileAudit.path == path)
+        .order_by(ProjectFileAudit.created_at.desc())
+        .all()
+    )
+    actor_ids = {r.actor_id for r in rows if r.actor_id}
+    names = dict(db.query(User.id, User.name).filter(User.id.in_(actor_ids)).all()) if actor_ids else {}
+    return [
+        FileAuditEntryOut(
+            id=r.id, action=r.action.value, actor_name=names.get(r.actor_id), generator=r.generator,
+            content_hash_before=r.content_hash_before, content_hash_after=r.content_hash_after, created_at=r.created_at,
+        )
+        for r in rows
+    ]
