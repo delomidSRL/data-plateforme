@@ -6,16 +6,77 @@ import * as medallionApi from "../../api/medallion.js";
 import { Badge } from "../../components/ui/Badge.jsx";
 import { Icon } from "../../components/icons.jsx";
 
-// Module 19 §3.6 — the explorer groups files the same way the spec lists them: one header
-// per dbt sub-folder, root files (dbt_project.yml, packages.yml) ungrouped at the top.
-// `profiles.yml` never appears here — the backend's workspace never stores it (§2).
-const GROUP_ORDER = ["", "models/bronze", "models/silver", "models/gold", "macros", "tests", "seeds"];
+// Module 19 §3.6 — a real, collapsible folder tree (VSCode-style), built from the flat file
+// list the backend returns. `profiles.yml` never appears here — the workspace never stores
+// it (§2).
+const INDENT = 16;
 
-function groupKey(path) {
-  const parts = path.split("/");
-  if (parts.length === 1) return "";
-  if (parts[0] === "models") return `${parts[0]}/${parts[1]}`;
-  return parts[0];
+/** Flat [{path, status, ...}] -> a nested {type:"folder", name, path, children: Map} /
+ * {type:"file", name, path, file} tree. `path` accumulates as we descend so a folder node's
+ * own path can be used as its collapse-state key. */
+function buildTree(files) {
+  const root = { type: "folder", name: "", path: "", children: new Map() };
+  for (const f of files) {
+    const parts = f.path.split("/");
+    let node = root;
+    let acc = "";
+    parts.forEach((part, i) => {
+      acc = acc ? `${acc}/${part}` : part;
+      const isFile = i === parts.length - 1;
+      if (isFile) {
+        node.children.set(part, { type: "file", name: part, path: acc, file: f });
+      } else {
+        if (!node.children.has(part)) node.children.set(part, { type: "folder", name: part, path: acc, children: new Map() });
+        node = node.children.get(part);
+      }
+    });
+  }
+  return root;
+}
+
+function sortedChildren(node) {
+  return [...node.children.values()].sort((a, b) => {
+    if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function TreeNode({ node, depth, activePath, collapsed, onToggle, onOpenFile }) {
+  const { t } = useTranslation();
+  const rowStyle = (isActive) => ({
+    display: "flex", alignItems: "center", gap: 6, width: "100%", padding: "5px 8px 5px 0",
+    paddingLeft: 8 + depth * INDENT, borderRadius: 7, fontSize: 12.5, fontFamily: "var(--font-m)", textAlign: "left",
+    background: isActive ? "var(--ember-soft)" : "transparent", color: isActive ? "var(--ember-600)" : "var(--text)",
+  });
+
+  if (node.type === "file") {
+    const f = node.file;
+    const isActive = activePath === f.path;
+    return (
+      <button type="button" onClick={() => onOpenFile(f.path)} style={rowStyle(isActive)}>
+        <span style={{ width: 14, flexShrink: 0 }} />
+        <span style={{ flexShrink: 0, opacity: .6, display: "flex" }}>{Icon.file()}</span>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{node.name}</span>
+        {STATUS_TONE[f.status] && <Badge tone={STATUS_TONE[f.status]}>{t(`medallion.code.status.${f.status}`)}</Badge>}
+      </button>
+    );
+  }
+
+  const isCollapsed = collapsed.has(node.path);
+  return (
+    <div>
+      <button type="button" onClick={() => onToggle(node.path)} style={rowStyle(false)}>
+        <span style={{ width: 14, flexShrink: 0, display: "flex", transform: isCollapsed ? "rotate(-90deg)" : "none", transition: "transform .12s" }}>
+          {Icon.chevronDown()}
+        </span>
+        <span style={{ flexShrink: 0, opacity: .7, display: "flex" }}>{Icon.folder()}</span>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{node.name}</span>
+      </button>
+      {!isCollapsed && sortedChildren(node).map((child) => (
+        <TreeNode key={child.path} node={child} depth={depth + 1} activePath={activePath} collapsed={collapsed} onToggle={onToggle} onOpenFile={onOpenFile} />
+      ))}
+    </div>
+  );
 }
 
 function languageFor(path) {
@@ -37,6 +98,7 @@ export default function CodeTab({ project, initialDatasetId, onConsumedInitialDa
   const [activePath, setActivePath] = useState(null);
   const [openPaths, setOpenPaths] = useState([]);
   const [contents, setContents] = useState({}); // path -> { content, status, version, loading, error }
+  const [collapsed, setCollapsed] = useState(() => new Set()); // folder paths currently collapsed
 
   useEffect(() => {
     let cancelled = false;
@@ -66,19 +128,15 @@ export default function CodeTab({ project, initialDatasetId, onConsumedInitialDa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tree, initialDatasetId]);
 
-  const groups = useMemo(() => {
-    if (!tree) return [];
-    const byGroup = {};
-    for (const f of tree) (byGroup[groupKey(f.path)] ||= []).push(f);
-    const keys = Object.keys(byGroup).sort((a, b) => {
-      const ia = GROUP_ORDER.indexOf(a), ib = GROUP_ORDER.indexOf(b);
-      if (ia !== -1 && ib !== -1) return ia - ib;
-      if (ia !== -1) return -1;
-      if (ib !== -1) return 1;
-      return a.localeCompare(b);
+  const treeRoot = useMemo(() => (tree ? buildTree(tree) : null), [tree]);
+
+  const toggleFolder = (path) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path); else next.add(path);
+      return next;
     });
-    return keys.map((g) => ({ key: g, label: g || t("medallion.code.rootGroup"), files: [...byGroup[g]].sort((a, b) => a.path.localeCompare(b.path)) }));
-  }, [tree, t]);
+  };
 
   const closeFile = (path, e) => {
     e?.stopPropagation();
@@ -98,30 +156,8 @@ export default function CodeTab({ project, initialDatasetId, onConsumedInitialDa
     <div className="card" style={{ padding: 0, display: "flex", height: 560, overflow: "hidden" }}>
       <div style={{ width: 260, borderRight: "1px solid var(--border)", overflowY: "auto", padding: 10, flexShrink: 0 }}>
         {tree.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)", padding: 8 }}>{t("medallion.code.noFiles")}</div>}
-        {groups.map((g) => (
-          <div key={g.key} style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--text-muted)", padding: "4px 6px" }}>
-              {g.label}
-            </div>
-            {g.files.map((f) => {
-              const name = f.path.split("/").pop();
-              const isActive = activePath === f.path;
-              return (
-                <button
-                  key={f.path} type="button" onClick={() => openFile(f.path)}
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, width: "100%",
-                    padding: "6px 8px", borderRadius: 7, fontSize: 12.5, fontFamily: "var(--font-m)", textAlign: "left",
-                    background: isActive ? "var(--ember-soft)" : "transparent",
-                    color: isActive ? "var(--ember-600)" : "var(--text)",
-                  }}
-                >
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-                  {STATUS_TONE[f.status] && <Badge tone={STATUS_TONE[f.status]}>{t(`medallion.code.status.${f.status}`)}</Badge>}
-                </button>
-              );
-            })}
-          </div>
+        {sortedChildren(treeRoot).map((child) => (
+          <TreeNode key={child.path} node={child} depth={0} activePath={activePath} collapsed={collapsed} onToggle={toggleFolder} onOpenFile={openFile} />
         ))}
       </div>
 
