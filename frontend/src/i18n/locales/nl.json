@@ -1021,6 +1021,7 @@
       "restoreTitle": "Versie {{n}} herstellen",
       "restoreDescription": "Het dbt-project en de DAG van deze versie worden exact zo opnieuw gedeployed naar Airflow.",
       "restoreWarning": "Dit herdeployt versie {{n}}, die de nieuwe actieve versie wordt. Er wordt geen enkele warehouse-tabel verwijderd en er wordt geen run gestart — de data wordt opnieuw opgebouwd bij de volgende run die u start.",
+      "restoreCodeWarning": "{{count}} bestand(en) gewijzigd in code worden door deze herstelling overschreven (geen samenvoeging):",
       "cancel": "Annuleren",
       "restoring": "Herstellen…",
       "confirmRestore": "v{{n}} herstellen",
@@ -1056,6 +1057,25 @@
       "conflictReload": "De huidige versie herladen? Uw lokale wijzigingen gaan verloren.",
       "syncErrors": "Het project bevat fouten — de build is geblokkeerd tot ze zijn opgelost:",
       "projectParseError": "De code van dit project bevat fouten — de build is geblokkeerd:"
+    },
+    "conflicts": {
+      "banner": "{{count}} bestand(en) moeten worden beoordeeld voordat u kunt deployen.",
+      "viewAction": "Bekijken",
+      "backToTree": "Terug naar boomstructuur",
+      "none": "Niets te beoordelen.",
+      "statusOpen": "Conflict",
+      "statusProposed": "Voorgestelde samenvoeging",
+      "triggeredBy": "gegenereerd door {{generator}} · {{trigger}}",
+      "proposedHint": "Een schone automatische samenvoeging — combineert uw versie en de regeneratie. Er wordt niets toegepast totdat u accepteert.",
+      "openHint": "Uw versie en de regeneratie, naast elkaar:",
+      "resolveHint": "Bewerk hieronder om de conflictmarkeringen te verwijderen en los dan op:",
+      "markersRemain": "Er staan nog conflictmarkeringen (<<<<<<<) in de tekst.",
+      "accept": "Samenvoeging accepteren",
+      "discard": "Mijn versie behouden",
+      "resolve": "Oplossen",
+      "working": "Bezig…",
+      "settled": "Conflict afgehandeld.",
+      "actionFailed": "Actie mislukt."
     },
     "panel": {
       "viewCode": "Code bekijken",

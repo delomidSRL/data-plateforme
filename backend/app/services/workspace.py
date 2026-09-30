@@ -1,14 +1,18 @@
-"""Module 19 étape 1 — the project's persisted dbt workspace (`project_files`). This is the
-ONLY writer in this stage: no human-edit endpoint exists yet (étape 2), so a file's `content`
-and `base_content` always move together here — `materialize()` simply mirrors whatever the
-existing generators (`dbt_project.generate_project_files`, and through it `gold_builder` /
-`dbt_test_renderer`) already produce, exactly as before, just persisted instead of thrown away.
+"""Module 19 — the project's persisted dbt workspace (`project_files`). `export_tree()` is
+what the build deploys (medallion_deploy.build_project), and read-side helpers here back the
+Code tab (étape 1) and `code_modified` (étape 2).
 
-`export_tree()` is what the build now deploys (medallion_deploy.build_project), always
-byte-identical to what `dbt_project.generate_project_files` itself just returned, since
-`materialize()` runs first on every build and is idempotent."""
+`materialize()` is the original, pre-merge writer (étape 1): it still mirrors a generator's
+output 1:1 when nothing is modified (the common case — new file, or an intact one), but for a
+MODIFIED file it only slides the base forward, never proposing anything. It's still what the
+lazy bootstrap (`materialize_if_empty`) uses, since a brand-new workspace can never have a
+modified file to merge. Every OTHER call site (the actual build) goes through
+`services/workspace_merge.apply_generated()` instead (étape 3) — the merge-aware superset of
+this same per-file logic, which turns that "slide the base" case into an actual three-way
+merge proposal or conflict."""
 import hashlib
 import logging
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -16,6 +20,7 @@ from app.models.medallion import MedallionDataset, MedallionLayer, MedallionProj
 from app.models.medallion import MedallionVersion
 from app.models.payload_structuration import PayloadStructuration
 from app.models.project_file import ProjectFile
+from app.models.project_file_conflict import ConflictStatus, ProjectFileConflict
 from app.services import dbt_project
 
 logger = logging.getLogger("app.services.workspace")
@@ -25,7 +30,7 @@ def hash_content(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def _dataset_path_map(datasets: list[MedallionDataset]) -> dict[str, int]:
+def dataset_path_map(datasets: list[MedallionDataset]) -> dict[str, int]:
     """models/{silver|gold}/{dbt_model_name}.sql -> dataset.id — the only files with a 1:1
     dataset (bronze has no per-dataset model file, its ingestion is Python not dbt; a gold
     python/ML node is not a dbt model either)."""
@@ -62,7 +67,7 @@ def materialize(db: Session, project: MedallionProject, files: dict[str, str], d
     silent-overwrite this invariant forbids."""
     if "profiles.yml" in files:
         files = {path: content for path, content in files.items() if path != "profiles.yml"}
-    path_to_dataset = _dataset_path_map(datasets or [])
+    path_to_dataset = dataset_path_map(datasets or [])
 
     existing = {pf.path: pf for pf in db.query(ProjectFile).filter(ProjectFile.project_id == project.id).all()}
     seen: set[str] = set()
@@ -101,6 +106,64 @@ def materialize(db: Session, project: MedallionProject, files: dict[str, str], d
     for path, row in existing.items():
         if path not in seen and not is_modified(row):
             db.delete(row)
+
+    db.flush()
+
+
+def modified_paths_overwritten_by(db: Session, project: MedallionProject) -> list[str]:
+    """Module 19 §5.4 — what a restore's confirmation dialog warns about: every currently
+    `modified`/`code` file, which `replace_all()` is about to either plainly overwrite (if
+    the target snapshot still has that path) or drop outright (if it doesn't) — either way,
+    the human's own edit is gone. No merge is offered here: restoring is already the
+    explicit, user-confirmed act M8 treats as a deliberate replacement."""
+    rows = db.query(ProjectFile).filter(ProjectFile.project_id == project.id).all()
+    return sorted(row.path for row in rows if is_modified(row))
+
+
+def replace_all(db: Session, project: MedallionProject, files: dict[str, str], datasets: list[MedallionDataset] | None = None, generator: str = "restore") -> None:
+    """Module 19 §5.4 — a restore's own writer: a plain, unconditional overwrite (content AND
+    base both become `files`), never a merge — restoring is already the explicit, confirmed
+    act the spec treats as a deliberate replacement, not a regeneration to reconcile against.
+    Any workspace path NOT in `files` is dropped outright (the workspace becomes exactly the
+    snapshot, matching "remplace l'espace de travail"). Active conflicts on any touched path
+    are discarded — their underlying file no longer has the base/content they were about."""
+    if "profiles.yml" in files:
+        files = {path: content for path, content in files.items() if path != "profiles.yml"}
+    path_to_dataset = dataset_path_map(datasets or [])
+    existing = {pf.path: pf for pf in db.query(ProjectFile).filter(ProjectFile.project_id == project.id).all()}
+
+    for path, content in files.items():
+        h = hash_content(content)
+        dataset_id = path_to_dataset.get(path)
+        row = existing.get(path)
+        if row is None:
+            db.add(ProjectFile(
+                project_id=project.id, path=path, content=content, content_hash=h,
+                base_content=content, base_hash=h, generator=generator, dataset_id=dataset_id, version=1,
+            ))
+        else:
+            row.content = content
+            row.content_hash = h
+            row.base_content = content
+            row.base_hash = h
+            row.generator = generator
+            row.dataset_id = dataset_id
+            row.version += 1
+
+    for path, row in existing.items():
+        if path not in files:
+            db.delete(row)
+
+    # Every active proposal/conflict is now stale — the file it was about just got wholesale
+    # replaced, so accepting/resolving it later would apply a merge against content that no
+    # longer exists. `discarded`, not deleted: still visible in a conflict's own history.
+    stale = db.query(ProjectFileConflict).filter(
+        ProjectFileConflict.project_id == project.id,
+        ProjectFileConflict.status.in_([ConflictStatus.proposed, ConflictStatus.open]),
+    ).all()
+    for c in stale:
+        c.status = ConflictStatus.discarded
+        c.resolved_at = datetime.now(timezone.utc)
 
     db.flush()
 

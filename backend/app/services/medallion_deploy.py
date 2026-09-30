@@ -9,7 +9,8 @@ from app.models.data_source import DataSource, DataSourceOrigin, DataSourceType
 from app.models.medallion import MedallionDataset, MedallionLayer, MedallionProject
 from app.models.payload_structuration import PayloadStructuration
 from app.models.project_environment_binding import ProjectEnvironmentBinding
-from app.services import airflow_api, dag_render, dbt_project, ssh, workspace
+from app.models.project_file_conflict import ConflictTrigger
+from app.services import airflow_api, dag_render, dbt_project, ssh, workspace, workspace_merge
 from app.services.airflow_instances import DeployTarget
 from app.core.security import decrypt_secret
 
@@ -149,13 +150,18 @@ async def build_project(
     )
     dbt_files = dbt_project.generate_project_files(db, project, datasets, warehouse_dict, structurations)
 
-    # Module 19 étape 1 — the workspace (`project_files`) becomes the base for every one of
-    # these files except profiles.yml (never persisted, §2); materialize() is idempotent, so
-    # calling it on every build is exactly what keeps the workspace in sync with canvas/agent
-    # changes, first-build backfill included. export_tree() is then what actually gets
-    # deployed below — always byte-identical to `dbt_files` here, since materialize() just
-    # wrote it from that same dict (§3.3's "déploie l'espace de travail").
-    workspace.materialize(db, project, dbt_files, datasets=datasets)
+    # Module 19 étape 3 — the workspace (`project_files`) becomes the base for every one of
+    # these files except profiles.yml (never persisted, §2). apply_generated() is the merge-
+    # aware writer (§5.2): a file nobody touched is updated in place exactly like étape 1's
+    # materialize() did; a human-modified one gets a three-way-merge proposal or conflict
+    # instead of being silently overwritten OR silently left to drift. Any conflict left
+    # active (just created by THIS regeneration, or still pending from a previous one) blocks
+    # this deploy outright (§5.6) — nothing below runs, but the proposal/conflict itself is
+    # still persisted by the caller's own commit, ready for the "À arbitrer" view.
+    workspace_merge.apply_generated(db, project, dbt_files, generator="dbt_project", trigger=ConflictTrigger.canvas, datasets=datasets)
+    active = workspace_merge.list_active_conflicts(db, project.id)
+    if active:
+        raise workspace_merge.WorkspaceConflictsPending([c.path for c in active])
     deploy_files = workspace.export_tree(db, project)
     deploy_files["profiles.yml"] = dbt_files["profiles.yml"]
 

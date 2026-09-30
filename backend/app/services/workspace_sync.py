@@ -31,7 +31,13 @@ from app.services.medallion_crud import layer_rank
 # is a real, saved, deployed file (never silently dropped), but it must never spawn a
 # duplicate "dataset" of its own just because it happens to sit in models/silver/*.sql.
 _STRUCTURATION_FILE_RE = re.compile(r"^models/silver/(01_unpacked|02_typed)_.+\.sql$")
-_CONFIG_LINE_RE = re.compile(r"^\{\{\s*config\([^\n]*\)\s*\}\}\s*\n+")
+# Module 19 bugfix — NOT anchored to the very start of the file (re.MULTILINE `^` matches any
+# line start): a human edit routinely adds a comment or anything else *before* the generated
+# `{{ config(...) }}` line (e.g. étape 3's own merge output, which puts the human's addition
+# first). Anchoring to position 0 only silently failed to strip it in that case, leaving the
+# config wrapper embedded inside `dataset.sql` — which then got wrapped in a SECOND one by
+# the very next `_model_sql()` regeneration (doubling on every subsequent edit).
+_CONFIG_LINE_RE = re.compile(r"^[ \t]*\{\{\s*config\([^\n]*\)\s*\}\}[ \t]*\n+", re.MULTILINE)
 _PATH_IN_MSG_RE = re.compile(r"\(([^()]+\.(?:sql|yml|yaml))\)")
 _LINE_IN_MSG_RE = re.compile(r"\bline (\d+)\b")
 

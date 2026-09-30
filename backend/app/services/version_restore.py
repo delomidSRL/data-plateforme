@@ -18,7 +18,7 @@ from app.models.medallion import (
     TransformType,
 )
 from app.models.user import User
-from app.services import dag_render, dbt_project, ssh, version_snapshot
+from app.services import dag_render, dbt_project, ssh, version_snapshot, workspace
 from app.services.airflow_instances import DeployTarget
 from app.services.medallion_deploy import _deploy_dag_via_ssh, _deploy_files_via_ssh, _resolve_endpoint, _upsert_connection
 
@@ -161,6 +161,11 @@ async def restore(
     # 2. reconcile the editable screen onto the restored definition (§0) — never touches
     # what was just deposited on Airflow.
     reconciled = _reconcile_datasets(db, project, target_version.datasets_snapshot)
+
+    # Module 19 §5.4 — the workspace (Code tab) is replaced wholesale by this same snapshot,
+    # bases realigned to match: a plain overwrite, not a merge (restoring is already the
+    # explicit, user-confirmed act the caller's own impact preview warned about).
+    workspace.replace_all(db, project, dict(target_version.dbt_project_snapshot), datasets=reconciled)
 
     home_binding.dag_id = dag_id
     home_binding.dag_file_path = dag_path

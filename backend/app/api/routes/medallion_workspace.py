@@ -14,8 +14,12 @@ from app.db.session import get_db
 from app.models.medallion import MedallionDataset, MedallionProject, MedallionVersion, WorkspaceParseStatus
 from app.models.project_file import ProjectFile
 from app.models.project_file_audit import ProjectFileAudit, ProjectFileAuditAction
+from app.models.project_file_conflict import ConflictStatus, ProjectFileConflict
 from app.models.user import User
 from app.schemas.medallion import (
+    ConflictActionOut,
+    ConflictOut,
+    ConflictResolveRequest,
     SyncErrorOut,
     WorkspaceFileContentOut,
     WorkspaceFileCreate,
@@ -28,7 +32,7 @@ from app.schemas.medallion import (
     WorkspaceTreeOut,
     WorkspaceWriteOut,
 )
-from app.services import jinja_guard, workspace, workspace_sync
+from app.services import jinja_guard, workspace, workspace_merge, workspace_sync
 
 router = APIRouter(prefix="/api/medallion/projects", tags=["medallion-workspace"])
 
@@ -134,6 +138,15 @@ def get_workspace_file(path: str, db: Session = Depends(get_db), project: Medall
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier introuvable dans l'espace de travail.")
     return _file_out(row)
+
+
+@router.get("/{pid}/workspace/modified-files", response_model=list[str])
+def get_modified_files(db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+    """Module 19 §5.4 — what a restore's confirmation dialog warns about before redeploying:
+    every file restoring would silently discard (restoring ANY version wholesale-replaces the
+    whole workspace, so this list doesn't depend on which version is being restored)."""
+    _ensure_workspace(db, project)
+    return workspace.modified_paths_overwritten_by(db, project)
 
 
 @router.get("/{pid}/workspace/file/diff", response_model=WorkspaceFileDiffOut)
@@ -298,3 +311,72 @@ def delete_workspace_file(
 
     sync_result = _sync_and_settle(db, project)
     return WorkspaceSyncOut(ok=sync_result.ok, errors=[SyncErrorOut(**e.as_dict()) for e in sync_result.errors])
+
+
+# ---------------- Conflicts — "À arbitrer" (étape 3) ----------------
+
+def _get_conflict(db: Session, project: MedallionProject, cid: int) -> ProjectFileConflict:
+    conflict = db.query(ProjectFileConflict).filter(ProjectFileConflict.id == cid, ProjectFileConflict.project_id == project.id).first()
+    if conflict is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conflit introuvable.")
+    return conflict
+
+
+def _conflict_action_out(db: Session, project: MedallionProject, conflict: ProjectFileConflict, row: ProjectFile) -> ConflictActionOut:
+    sync_result = _sync_and_settle(db, project)
+    db.refresh(conflict)
+    db.refresh(row)
+    return ConflictActionOut(conflict=ConflictOut.model_validate(conflict), file=_file_out(row), sync=WorkspaceSyncOut(ok=sync_result.ok, errors=[SyncErrorOut(**e.as_dict()) for e in sync_result.errors]))
+
+
+@router.get("/{pid}/workspace/conflicts", response_model=list[ConflictOut])
+def list_conflicts(status_filter: str | None = None, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+    q = db.query(ProjectFileConflict).filter(ProjectFileConflict.project_id == project.id)
+    if status_filter:
+        try:
+            q = q.filter(ProjectFileConflict.status == ConflictStatus(status_filter))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Statut de conflit invalide.")
+    rows = q.order_by(ProjectFileConflict.created_at.desc()).all()
+    return [ConflictOut.model_validate(c) for c in rows]
+
+
+@router.get("/{pid}/workspace/conflicts/{cid}", response_model=ConflictOut)
+def get_conflict(cid: int, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+    return ConflictOut.model_validate(_get_conflict(db, project, cid))
+
+
+@router.post("/{pid}/workspace/conflicts/{cid}/accept", response_model=ConflictActionOut)
+def accept_conflict(cid: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user), project: MedallionProject = Depends(get_owned_project)):
+    conflict = _get_conflict(db, project, cid)
+    if conflict.status != ConflictStatus.proposed:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Seule une proposition de fusion propre peut être acceptée telle quelle — utilisez la résolution pour un conflit ouvert.")
+    row = workspace_merge.accept_conflict(db, project, conflict, current_user)
+    db.add(ProjectFileAudit(project_id=project.id, path=row.path, action=ProjectFileAuditAction.accept_merge, actor_id=current_user.id, content_hash_before=row.content_hash, content_hash_after=row.content_hash))
+    db.commit()
+    return _conflict_action_out(db, project, conflict, row)
+
+
+@router.post("/{pid}/workspace/conflicts/{cid}/resolve", response_model=ConflictActionOut)
+def resolve_conflict_endpoint(cid: int, payload: ConflictResolveRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user), project: MedallionProject = Depends(get_owned_project)):
+    conflict = _get_conflict(db, project, cid)
+    if conflict.status not in (ConflictStatus.proposed, ConflictStatus.open):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ce conflit a déjà été traité.")
+    _validate_size(payload.content)
+    _check_guard(conflict.path, payload.content)
+    before_hash = workspace.hash_content(conflict.ours_content)
+    row = workspace_merge.resolve_conflict(db, project, conflict, payload.content, current_user)
+    db.add(ProjectFileAudit(project_id=project.id, path=row.path, action=ProjectFileAuditAction.resolve, actor_id=current_user.id, content_hash_before=before_hash, content_hash_after=row.content_hash))
+    db.commit()
+    return _conflict_action_out(db, project, conflict, row)
+
+
+@router.post("/{pid}/workspace/conflicts/{cid}/discard", response_model=ConflictActionOut)
+def discard_conflict_endpoint(cid: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user), project: MedallionProject = Depends(get_owned_project)):
+    conflict = _get_conflict(db, project, cid)
+    if conflict.status not in (ConflictStatus.proposed, ConflictStatus.open):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ce conflit a déjà été traité.")
+    row = workspace_merge.discard_conflict(db, project, conflict, current_user)
+    db.add(ProjectFileAudit(project_id=project.id, path=row.path, action=ProjectFileAuditAction.discard, actor_id=current_user.id, content_hash_before=row.content_hash, content_hash_after=row.content_hash))
+    db.commit()
+    return _conflict_action_out(db, project, conflict, row)

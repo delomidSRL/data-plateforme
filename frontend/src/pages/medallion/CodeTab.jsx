@@ -8,6 +8,7 @@ import { Badge } from "../../components/ui/Badge.jsx";
 import { Button } from "../../components/ui/Button.jsx";
 import { Icon } from "../../components/icons.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
+import ConflictsPanel from "./ConflictsPanel.jsx";
 
 // Module 19 §3.6/§4.6 — a real, collapsible folder tree (VSCode-style), built from the flat
 // file list the backend returns. `profiles.yml` never appears here — the workspace never
@@ -117,18 +118,31 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
   const [contextMenu, setContextMenu] = useState(null); // { x, y, path, isFolder }
   const [lastSync, setLastSync] = useState(null); // { ok, errors } — the most recent write's sync result
   const [markers, setMarkers] = useState([]); // markers for the CURRENTLY ACTIVE file only
+  const [conflicts, setConflicts] = useState([]); // Module 19 étape 3 — "À arbitrer"
+  const [view, setView] = useState("tree"); // "tree" | "conflicts"
 
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
 
+  const activeConflicts = useMemo(() => conflicts.filter((c) => c.status === "proposed" || c.status === "open"), [conflicts]);
+
   const loadTree = () => medallionApi.getWorkspaceTree(project.id).then((res) => setTree(res.files));
+  const loadConflicts = () => medallionApi.getConflicts(project.id).then(setConflicts).catch(() => {});
 
   useEffect(() => {
     let cancelled = false;
     loadTree().catch((err) => { if (!cancelled) setError(err.message || t("medallion.code.loadFailed")); });
+    loadConflicts();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
+
+  const handleConflictSettled = () => {
+    loadConflicts().then(() => {
+      loadTree();
+      onSynced?.();
+    });
+  };
 
   const openFile = (path) => {
     setActivePath(path);
@@ -303,6 +317,18 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
         </div>
       )}
 
+      {activeConflicts.length > 0 && (
+        <div className="error-banner" style={{ marginBottom: 10, background: "rgba(229,114,0,.08)", borderColor: "rgba(229,114,0,.3)", color: "var(--ember-600)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>{Icon.warn()}<span>{t("medallion.conflicts.banner", { count: activeConflicts.length })}</span></span>
+          <button type="button" className="btn-ghost" style={{ padding: "4px 10px" }} onClick={() => setView(view === "conflicts" ? "tree" : "conflicts")}>
+            {view === "conflicts" ? t("medallion.conflicts.backToTree") : t("medallion.conflicts.viewAction")}
+          </button>
+        </div>
+      )}
+
+      {view === "conflicts" ? (
+        <ConflictsPanel project={project} conflicts={activeConflicts} onSettled={handleConflictSettled} />
+      ) : (
       <div className="card" style={{ padding: 0, display: "flex", height: 560, overflow: "hidden" }}>
         <div style={{ width: 260, borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
           {canEdit && (
@@ -390,6 +416,7 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
           )}
         </div>
       </div>
+      )}
 
       {lastSync && !lastSync.ok && (
         <div className="error-banner" style={{ marginTop: 10 }}>

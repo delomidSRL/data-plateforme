@@ -1021,6 +1021,7 @@
       "restoreTitle": "Restaurer la version {{n}}",
       "restoreDescription": "Le projet dbt et le DAG de cette version seront redéployés à l'identique sur Airflow.",
       "restoreWarning": "Cette action redéploie la version {{n}} et deviendra la nouvelle version active. Aucune table du warehouse n'est supprimée et aucun run n'est déclenché — la donnée se reconstruit au prochain run que vous lancerez.",
+      "restoreCodeWarning": "{{count}} fichier(s) modifiés dans le code seront remplacés par cette restauration (pas de fusion) :",
       "cancel": "Annuler",
       "restoring": "Restauration…",
       "confirmRestore": "Restaurer v{{n}}",
@@ -1056,6 +1057,25 @@
       "conflictReload": "Recharger la version actuelle ? Vos modifications locales seront perdues.",
       "syncErrors": "Le projet contient des erreurs — le build est bloqué jusqu'à leur correction :",
       "projectParseError": "Le code de ce projet contient des erreurs — le build est bloqué :"
+    },
+    "conflicts": {
+      "banner": "{{count}} fichier(s) à arbitrer avant de pouvoir déployer.",
+      "viewAction": "Voir",
+      "backToTree": "Retour à l'arborescence",
+      "none": "Rien à arbitrer.",
+      "statusOpen": "Conflit",
+      "statusProposed": "Fusion proposée",
+      "triggeredBy": "généré par {{generator}} · {{trigger}}",
+      "proposedHint": "Fusion automatique propre — combine votre version et la régénération. Rien n'est appliqué tant que vous n'acceptez pas.",
+      "openHint": "Votre version et la régénération, côte à côte :",
+      "resolveHint": "Modifiez ci-dessous pour retirer les marqueurs de conflit, puis résolvez :",
+      "markersRemain": "Il reste des marqueurs de conflit (<<<<<<<) dans le texte.",
+      "accept": "Accepter la fusion",
+      "discard": "Garder ma version",
+      "resolve": "Résoudre",
+      "working": "En cours…",
+      "settled": "Conflit traité.",
+      "actionFailed": "Action impossible."
     },
     "panel": {
       "viewCode": "Voir le code",

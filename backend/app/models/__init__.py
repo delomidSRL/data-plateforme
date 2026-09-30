@@ -34,6 +34,7 @@ from app.models.binding_source_mapping import BindingSourceMapping
 from app.models.dbt_macro import DbtMacro
 from app.models.project_file import ProjectFile
 from app.models.project_file_audit import ProjectFileAudit, ProjectFileAuditAction
+from app.models.project_file_conflict import ConflictStatus, ConflictTrigger, ProjectFileConflict
 
 __all__ = [
     "User", "UserRole", "UserStatus",
@@ -61,4 +62,5 @@ __all__ = [
     "DbtMacro",
     "ProjectFile",
     "ProjectFileAudit", "ProjectFileAuditAction",
+    "ProjectFileConflict", "ConflictStatus", "ConflictTrigger",
 ]

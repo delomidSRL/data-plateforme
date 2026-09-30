@@ -564,3 +564,32 @@ class WorkspaceWriteOut(BaseModel):
     generator: str | None
     updated_at: datetime
     sync: WorkspaceSyncOut
+
+
+# ---------------- Module 19 étape 3 — fusion à trois voies ----------------
+
+class ConflictOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    path: str
+    base_content: str
+    ours_content: str
+    theirs_content: str
+    merged_content: str
+    status: str
+    generator: str
+    trigger: str
+    created_at: datetime
+    resolved_by: int | None = None
+    resolved_at: datetime | None = None
+
+
+class ConflictResolveRequest(BaseModel):
+    content: str
+
+
+class ConflictActionOut(BaseModel):
+    conflict: ConflictOut
+    file: WorkspaceFileContentOut
+    sync: WorkspaceSyncOut

@@ -90,7 +90,7 @@ from app.schemas.payload_structuration import (
     StructurationUpdate,
 )
 from app.schemas.file_import import ColumnsOut, FileImportOut, ImportFromObjectStoreCreate, ObjectStoreColumnsRequest
-from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, file_import as file_import_service, gold_export, gold_profile, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot, workspace
+from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, file_import as file_import_service, gold_export, gold_profile, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot, workspace, workspace_merge
 from app.services.ai_config import get_ai_config
 from app.services.superset_instances import get_superset_config
 from app.services.medallion_crud import create_dataset_internal, validate_lineage
@@ -855,6 +855,11 @@ async def _build_binding(db: Session, project: MedallionProject, binding: Projec
     # every build (any binding), until a fix through the Code tab clears it.
     if project.workspace_parse_status == WorkspaceParseStatus.error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le code du projet contient des erreurs (onglet Code) — corrigez-les avant de déployer.")
+    # Module 19 §5.6 — a proposal/conflict left over from a previous build blocks every
+    # later one too, without even attempting to regenerate.
+    pending = workspace_merge.list_active_conflicts(db, project.id)
+    if pending:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{len(pending)} fichier(s) à arbitrer (onglet Code) avant de déployer.")
 
     warehouse = db.get(DataSource, binding.warehouse_source_id)
     object_store = db.get(DataSource, binding.object_store_source_id)
@@ -862,6 +867,13 @@ async def _build_binding(db: Session, project: MedallionProject, binding: Projec
 
     try:
         report = await build_project(db, project, binding, datasets, warehouse, object_store, target)
+    except workspace_merge.WorkspaceConflictsPending as exc:
+        # This regeneration itself just created (or left standing) an active conflict — the
+        # proposal is already persisted (see medallion_deploy's own commit-on-exception
+        # path), ready for the "À arbitrer" view; no deployment happened.
+        binding.status = ProjectStatus.error
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except Exception as exc:
         binding.status = ProjectStatus.error
         db.commit()
