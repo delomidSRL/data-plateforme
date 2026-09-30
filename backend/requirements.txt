@@ -23,3 +23,9 @@ openpyxl==3.1.5
 lxml==5.3.0
 charset-normalizer==3.4.0
 sqlglot==30.17.0
+# Module 19 — local dbt execution (workspace_sync's `dbt parse`, étape 4's dbt_runner compile/
+# run-dev). Pinned to the exact version baked into the Airflow image (see
+# app/templates/airflow/Dockerfile.j2's dbt_core_version/dbt_postgres_version defaults) —
+# the control plane's own parse/compile must never diverge from what actually deploys.
+dbt-core==1.8.8
+dbt-postgres==1.8.2

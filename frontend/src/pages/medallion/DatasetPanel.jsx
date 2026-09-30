@@ -614,8 +614,17 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
       <>
       {error && <div className="error-banner">{Icon.warn()}<span>{error}</span></div>}
 
+      {isEdit && dataset.code_modified && (
+        // Module 19 §4.4 — the declarative form is a lossy view of code that has since
+        // diverged from it; editing it here would silently discard the human's own edit on
+        // next save. "Voir le code" (above) is the only way to change this dataset now.
+        <div className="error-banner" style={{ background: "rgba(229,114,0,.08)", borderColor: "rgba(229,114,0,.3)", color: "var(--ember-600)" }}>
+          {Icon.code()}<span>{t("medallion.panel.codeModifiedNotice")}</span>
+        </div>
+      )}
+
       <form onSubmit={submit}>
-      <fieldset disabled={readOnly} style={{ border: "none", margin: 0, padding: 0 }}>
+      <fieldset disabled={readOnly || (isEdit && dataset.code_modified)} style={{ border: "none", margin: 0, padding: 0 }}>
         {!isEdit && (
           <Field label={t("medallion.panel.layer")}>
             <div className="seg">
@@ -1176,7 +1185,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
             <>
               {isEdit && <button type="button" className="btn-icon" onClick={remove} disabled={busy} title={t("common.delete")}>{Icon.trash()}</button>}
               <Button type="button" variant="ghost" onClick={onClose}>{t("medallion.panel.cancel")}</Button>
-              <Button type="submit" disabled={!valid || busy}>{busy ? t("medallion.panel.saving") : t("medallion.panel.save")}</Button>
+              <Button type="submit" disabled={!valid || busy || (isEdit && dataset.code_modified)}>{busy ? t("medallion.panel.saving") : t("medallion.panel.save")}</Button>
             </>
           )}
         </div>

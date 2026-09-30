@@ -1037,10 +1037,29 @@
       "status": {
         "modified": "Modifié en code",
         "code": "Créé en code"
-      }
+      },
+      "newFile": "Nouveau fichier",
+      "newFilePrompt": "Chemin du nouveau fichier (ex. models/gold/mon_mart.sql) :",
+      "rename": "Renommer",
+      "renamePrompt": "Nouveau chemin :",
+      "delete": "Supprimer",
+      "deleteConfirm": "Supprimer « {{path}} » ?",
+      "deleteConfirmDataset": "Ce fichier est lié au dataset « {{name}} » — le supprimer aussi ?",
+      "discardConfirm": "Des modifications non enregistrées seront perdues. Fermer quand même ?",
+      "save": "Enregistrer",
+      "saving": "Enregistrement…",
+      "saved": "Fichier enregistré.",
+      "savedWithErrors": "Fichier enregistré — mais le projet contient des erreurs (voir ci-dessous).",
+      "saveFailed": "Enregistrement impossible.",
+      "guardBlocked": "Enregistrement refusé — construction interdite (voir la ligne signalée).",
+      "conflict": "Ce fichier a été modifié entretemps.",
+      "conflictReload": "Recharger la version actuelle ? Vos modifications locales seront perdues.",
+      "syncErrors": "Le projet contient des erreurs — le build est bloqué jusqu'à leur correction :",
+      "projectParseError": "Le code de ce projet contient des erreurs — le build est bloqué :"
     },
     "panel": {
       "viewCode": "Voir le code",
+      "codeModifiedNotice": "Ce dataset a été modifié directement dans le code — ce formulaire est en lecture seule. Utilisez « Voir le code » pour le modifier.",
       "editTitle": "Modifier — {{name}}",
       "viewTitle": "Détail — {{name}}",
       "tabConfig": "Configuration",

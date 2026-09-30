@@ -7,6 +7,13 @@ from app.schemas.medallion import DatasetCreate
 _LAYER_ORDER = {MedallionLayer.bronze: 0, MedallionLayer.silver: 1, MedallionLayer.gold: 2}
 
 
+def layer_rank(layer: MedallionLayer) -> int:
+    """Public access to the same ordering `validate_lineage` enforces — Module 19's
+    workspace_sync reuses it to flag a code-authored `ref()`/`source()` that points to a
+    strictly higher layer, the same rule as the canvas's own dataset CRUD."""
+    return _LAYER_ORDER[layer]
+
+
 def validate_lineage(db: Session, pid: int, layer: MedallionLayer, upstream_ids: list[int], transform_type: TransformType = TransformType.dbt) -> None:
     """An upstream may be an equal-or-lower layer — never a strictly higher one. Originally
     dbt nodes were restricted to a strictly-lower layer (silver reads bronze, gold reads

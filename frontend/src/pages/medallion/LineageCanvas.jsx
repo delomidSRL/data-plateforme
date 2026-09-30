@@ -170,6 +170,11 @@ function DatasetNode({ data }) {
         {data.transformType === "python" && (
           <span className="badge badge-accent" style={{ fontSize: 9.5, padding: "1px 6px" }}>{data.mlObjectiveLabel}</span>
         )}
+        {data.codeModified && (
+          // Module 19 §4.4 — its file diverges from what the declarative form would generate
+          // (or was created directly in the Code tab); the form is read-only until resolved.
+          <span className="badge badge-accent" style={{ fontSize: 9.5, padding: "1px 6px" }} title={data.codeModifiedLabel}>{data.codeModifiedLabel}</span>
+        )}
         {data.layer === "gold" && data.published && (
           <span className="badge badge-accent" style={{ fontSize: 9.5, padding: "1px 6px" }} title={data.publishedLabel}>{data.publishedLabel}</span>
         )}
@@ -253,6 +258,7 @@ export default function LineageCanvas({
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
   const publishedLabel = t("medallion.publish.badge");
   const dashboardLabel = t("medallion.suggest.dashboardBadge");
+  const codeModifiedLabel = t("medallion.code.status.modified");
 
   const [positionOverrides, setPositionOverrides] = useState(() => loadPositionOverrides(projectId));
   useEffect(() => { setPositionOverrides(loadPositionOverrides(projectId)); }, [projectId]);
@@ -303,6 +309,7 @@ export default function LineageCanvas({
             rowsLabel: t("medallion.rows", { count: n.last_row_count }), testsLabel: t("medallion.tests"), qualityLabel: t("medallion.quality.degraded"),
             qualityDegraded: qualityByDataset[n.id]?.degraded,
             published: !!publishedByDataset[n.id], publishedLabel,
+            codeModified: !!n.code_modified, codeModifiedLabel,
             dashboard: !!dashboardByDataset[n.id], dashboardLabel,
             dashboardTitle: dashboardByDataset[n.id]?.last_generated_at ? new Date(dashboardByDataset[n.id].last_generated_at).toLocaleString(i18n.language) : undefined,
             dashboardDate: dashboardByDataset[n.id]?.last_generated_at ? new Date(dashboardByDataset[n.id].last_generated_at).toLocaleDateString(i18n.language) : "",
@@ -388,7 +395,7 @@ export default function LineageCanvas({
     // every node-pushing branch above stays oblivious to it.
     const positionedNodes = flowNodes.map((n) => (positionOverrides[n.id] ? { ...n, position: positionOverrides[n.id] } : n));
     return { nodes: positionedNodes, edges: flowEdges };
-  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, onCreateAnnotated, onCreateValidated, onCreateQuarantine, qualityByDataset, publishedByDataset, dashboardByDataset, sqlByDataset, publishedLabel, dashboardLabel, i18n.language, t, positionOverrides]);
+  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, onCreateAnnotated, onCreateValidated, onCreateQuarantine, qualityByDataset, publishedByDataset, dashboardByDataset, sqlByDataset, publishedLabel, dashboardLabel, codeModifiedLabel, i18n.language, t, positionOverrides]);
 
   const hasCustomLayout = Object.keys(positionOverrides).length > 0;
 

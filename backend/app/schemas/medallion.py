@@ -94,6 +94,9 @@ class ProjectOut(BaseModel):
     # Module 17 — the home binding's environment (dev|prod); read-only, drives the project
     # header's environment badge (§3.6).
     environment: str
+    # Module 19 §8 — set by workspace_sync after a code edit; "error" blocks every build.
+    workspace_parse_status: str = "ok"
+    workspace_parse_errors: list[dict] | None = None
 
 
 class DatasetCreate(BaseModel):
@@ -192,6 +195,12 @@ class DatasetOut(BaseModel):
     # Module 6 extension (payload & structuration) — bronze-only; true when this dataset's
     # source_object resolves to a payload-mode FileImport. Computed, never stored.
     payload_backed: bool = False
+    # Module 19 §8 — `visual` (built through the canvas forms) | `code` (its model file was
+    # created directly in the Code tab). Stored, unlike the two below.
+    origin: str = "visual"
+    # §4.4 — computed, never stored: true once this dataset's linked file diverges from its
+    # generated base. Drives the canvas badge and the read-only declarative form.
+    code_modified: bool = False
 
 
 class DatasetColumnOut(BaseModel):
@@ -461,6 +470,8 @@ class LineageNode(BaseModel):
     # payload-backed): the canvas only shows the 01..05 chain / instant unpacked+typed preview
     # once this is true, never just because the bronze happens to be payload-backed.
     structured: bool = False
+    # Module 19 §4.4 — drives the canvas node's "Modifié en code" badge.
+    code_modified: bool = False
 
 
 class LineageEdge(BaseModel):
@@ -505,3 +516,51 @@ class WorkspaceFileDiffOut(BaseModel):
     path: str
     against: str
     diff: str
+
+
+# ---------------- Module 19 étape 2 — édition & synchronisation code -> canvas ----------------
+
+class WorkspaceFileWrite(BaseModel):
+    path: str
+    content: str
+    if_version: int
+
+
+class WorkspaceFileCreate(BaseModel):
+    path: str
+    content: str = ""
+
+
+class WorkspaceFileMove(BaseModel):
+    from_path: str
+    to_path: str
+    if_version: int
+
+
+class WorkspaceFileDelete(BaseModel):
+    path: str
+    if_version: int
+    confirm: bool = False
+
+
+class SyncErrorOut(BaseModel):
+    path: str | None = None
+    line: int | None = None
+    column: int | None = None
+    message: str
+
+
+class WorkspaceSyncOut(BaseModel):
+    ok: bool
+    errors: list[SyncErrorOut] = Field(default_factory=list)
+
+
+class WorkspaceWriteOut(BaseModel):
+    path: str
+    content: str
+    status: str
+    dataset_id: int | None
+    version: int
+    generator: str | None
+    updated_at: datetime
+    sync: WorkspaceSyncOut

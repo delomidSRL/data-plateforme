@@ -1037,10 +1037,29 @@
       "status": {
         "modified": "Modified in code",
         "code": "Created in code"
-      }
+      },
+      "newFile": "New file",
+      "newFilePrompt": "Path for the new file (e.g. models/gold/my_mart.sql):",
+      "rename": "Rename",
+      "renamePrompt": "New path:",
+      "delete": "Delete",
+      "deleteConfirm": "Delete \"{{path}}\"?",
+      "deleteConfirmDataset": "This file is linked to the \"{{name}}\" dataset — delete it too?",
+      "discardConfirm": "Unsaved changes will be lost. Close anyway?",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "File saved.",
+      "savedWithErrors": "File saved — but the project now has errors (see below).",
+      "saveFailed": "Could not save.",
+      "guardBlocked": "Save refused — a forbidden construct was found (see the flagged line).",
+      "conflict": "This file was changed in the meantime.",
+      "conflictReload": "Reload the current version? Your local changes will be lost.",
+      "syncErrors": "The project has errors — the build is blocked until they're fixed:",
+      "projectParseError": "This project's code has errors — the build is blocked:"
     },
     "panel": {
       "viewCode": "View code",
+      "codeModifiedNotice": "This dataset was modified directly in code — this form is read-only. Use \"View code\" to change it.",
       "editTitle": "Edit — {{name}}",
       "viewTitle": "Details — {{name}}",
       "tabConfig": "Configuration",

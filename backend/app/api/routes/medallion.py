@@ -1,4 +1,3 @@
-import difflib
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -18,7 +17,6 @@ from app.models.file_watch import FileWatch
 from app.models.infra_stack import InfraStack
 from app.models.payload_structuration import PayloadStructuration
 from app.models.project_environment_binding import ProjectEnvironmentBinding
-from app.models.project_file import ProjectFile
 from app.models.server import Environment, Server
 from app.models.medallion import (
     MedallionDataset,
@@ -30,6 +28,7 @@ from app.models.medallion import (
     ProjectStatus,
     RunState,
     TransformType,
+    WorkspaceParseStatus,
 )
 from app.models.user import User
 from app.models.dashboard_spec import DashboardSpec
@@ -75,10 +74,6 @@ from app.schemas.medallion import (
     VersionDetailOut,
     VersionDiffOut,
     VersionOut,
-    WorkspaceFileContentOut,
-    WorkspaceFileDiffOut,
-    WorkspaceFileOut,
-    WorkspaceTreeOut,
 )
 from app.schemas.environment_binding import BindingOut
 from app.schemas.promotion import (
@@ -253,8 +248,10 @@ def move_project_folder(payload: ProjectFolderUpdate, db: Session = Depends(get_
 def list_datasets(db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
     datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).order_by(MedallionDataset.created_at.asc()).all()
     payload_backed = payload_structure.bulk_payload_backed(db, datasets)
+    code_modified = workspace.bulk_code_modified(db, [d.id for d in datasets])
     for d in datasets:
         d.payload_backed = payload_backed.get(d.id, False)
+        d.code_modified = code_modified.get(d.id, False)
     return datasets
 
 
@@ -266,6 +263,7 @@ def create_dataset(payload: DatasetCreate, db: Session = Depends(get_db), projec
     db.commit()
     db.refresh(dataset)
     dataset.payload_backed = payload_structure.resolve_import(db, dataset) is not None
+    dataset.code_modified = False  # freshly created through the canvas — no linked file yet
     return dataset
 
 
@@ -349,6 +347,7 @@ def update_dataset(did: int, payload: DatasetUpdate, db: Session = Depends(get_d
     db.commit()
     db.refresh(dataset)
     dataset.payload_backed = payload_structure.resolve_import(db, dataset) is not None
+    dataset.code_modified = workspace.bulk_code_modified(db, [dataset.id]).get(dataset.id, False)
     return dataset
 
 
@@ -852,6 +851,10 @@ async def _build_binding(db: Session, project: MedallionProject, binding: Projec
     datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
     if not datasets:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ajoutez au moins un dataset avant de déployer.")
+    # Module 19 §4.2 — a workspace left in "parse en erreur" by the last code edit blocks
+    # every build (any binding), until a fix through the Code tab clears it.
+    if project.workspace_parse_status == WorkspaceParseStatus.error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le code du projet contient des erreurs (onglet Code) — corrigez-les avant de déployer.")
 
     warehouse = db.get(DataSource, binding.warehouse_source_id)
     object_store = db.get(DataSource, binding.object_store_source_id)
@@ -1001,71 +1004,6 @@ async def get_deploy_status(db: Session = Depends(get_db), project: MedallionPro
                 activated = False
 
     return DeployStatusOut(known_to_airflow=dag is not None, activated=activated)
-
-
-# ---------------- Workspace — Code tab, read-only explorer (Module 19 étape 1) ----------------
-
-def _workspace_file_status(pf: ProjectFile) -> str:
-    if pf.base_hash is None:
-        return "code"
-    if pf.content_hash != pf.base_hash:
-        return "modified"
-    return "generated"
-
-
-def _ensure_workspace(db: Session, project: MedallionProject) -> None:
-    """§3.4's backfill, done lazily on first touch of the Code tab rather than as an Alembic
-    data migration (see workspace.materialize_if_empty's own docstring for why) — commits only
-    when it actually had to materialize something, so an already-backfilled project's GET stays
-    a plain read."""
-    datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
-    if workspace.materialize_if_empty(db, project, datasets):
-        db.commit()
-
-
-@router.get("/{pid}/workspace/tree", response_model=WorkspaceTreeOut)
-def get_workspace_tree(db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
-    _ensure_workspace(db, project)
-    rows = db.query(ProjectFile).filter(ProjectFile.project_id == project.id).order_by(ProjectFile.path).all()
-    return WorkspaceTreeOut(files=[
-        WorkspaceFileOut(path=r.path, status=_workspace_file_status(r), dataset_id=r.dataset_id, version=r.version, generator=r.generator, updated_at=r.updated_at)
-        for r in rows
-    ])
-
-
-@router.get("/{pid}/workspace/file", response_model=WorkspaceFileContentOut)
-def get_workspace_file(path: str, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
-    _ensure_workspace(db, project)
-    row = db.query(ProjectFile).filter(ProjectFile.project_id == project.id, ProjectFile.path == path).first()
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier introuvable dans l'espace de travail.")
-    return WorkspaceFileContentOut(path=row.path, content=row.content, status=_workspace_file_status(row), dataset_id=row.dataset_id, version=row.version, generator=row.generator, updated_at=row.updated_at)
-
-
-@router.get("/{pid}/workspace/file/diff", response_model=WorkspaceFileDiffOut)
-def get_workspace_file_diff(path: str, against: str = "base", db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
-    if against not in ("base", "active_version"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="`against` doit être « base » ou « active_version ».")
-    _ensure_workspace(db, project)
-    row = db.query(ProjectFile).filter(ProjectFile.project_id == project.id, ProjectFile.path == path).first()
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier introuvable dans l'espace de travail.")
-
-    if against == "base":
-        other_content = row.base_content or ""
-        other_label = f"{path} (base)"
-    else:
-        binding = project.home_binding
-        version = db.get(MedallionVersion, binding.active_version_id) if binding.active_version_id else None
-        snapshot = (version.dbt_project_snapshot or {}) if version else {}
-        other_content = snapshot.get(path, "")
-        other_label = f"{path} (version active)"
-
-    diff_lines = difflib.unified_diff(
-        other_content.splitlines(keepends=True), row.content.splitlines(keepends=True),
-        fromfile=other_label, tofile=f"{path} (actuel)",
-    )
-    return WorkspaceFileDiffOut(path=path, against=against, diff="".join(diff_lines))
 
 
 # ---------------- Versions (Module 8) ----------------
@@ -1228,12 +1166,14 @@ def build_lineage_graph(db: Session, datasets: list[MedallionDataset]) -> Lineag
     # extension's own canvas-UX addition, not in the original spec text).
     payload_backed = payload_structure.bulk_payload_backed(db, datasets)
     structured = payload_structure.bulk_structured(db, datasets)
+    code_modified = workspace.bulk_code_modified(db, [d.id for d in datasets])
 
     nodes = [
         LineageNode(
             id=d.id, name=d.name, node_type="dataset", layer=d.layer, transform_type=d.transform_type, ml_objective=d.ml_objective,
             last_row_count=d.last_row_count, last_loaded_at=d.last_loaded_at, last_test_status=d.last_test_status,
             payload_backed=payload_backed.get(d.id, False), structured=structured.get(d.id, False),
+            code_modified=code_modified.get(d.id, False),
         )
         for d in datasets
     ]

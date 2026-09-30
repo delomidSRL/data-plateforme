@@ -121,6 +121,16 @@ class Settings(BaseSettings):
     # rather than continuing to hammer a broken location/credential unsupervised.
     watch_max_consecutive_failures: int = 3
 
+    # Module 19 — workspace (éditeur de code). Local `dbt parse`/`compile` runs in a throwaway
+    # temp dir per call, never against the tenant's own Airflow/warehouse — see
+    # services/workspace_sync.py. A project whose packages.yml needs dbt-utils/dbt-expectations
+    # gets them copied from this cache instead of `dbt deps` hitting the network (§1 "aucun
+    # accès à dbt Hub au runtime"); the cache itself is seeded once, lazily, the first time any
+    # project actually needs it (see _ensure_packages_cache).
+    workspace_max_file_bytes: int = 512_000
+    dbt_runner_timeout_s: int = 60
+    dbt_packages_cache_dir: str = "./.dbt_packages_cache"
+
     @field_validator("smtp_host", "smtp_user", "smtp_from", mode="before")
     @classmethod
     def _strip_whitespace(cls, v: str) -> str:

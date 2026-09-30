@@ -3,8 +3,8 @@ from app.models.server import Server, AuthMethod, ServerStatus, Environment
 from app.models.infra_stack import InfraStack, StackStatus
 from app.models.data_source import DataSource, DataSourceType, DataSourceOrigin, DataSourceStatus
 from app.models.medallion import (
-    MedallionProject, ProjectTarget, ProjectStatus,
-    MedallionDataset, MedallionLayer, LoadMode, Materialization, TestStatus,
+    MedallionProject, ProjectTarget, ProjectStatus, WorkspaceParseStatus,
+    MedallionDataset, MedallionLayer, LoadMode, Materialization, TestStatus, DatasetOrigin,
     MedallionRun, RunState,
     MedallionVersion,
 )
@@ -33,14 +33,15 @@ from app.models.project_environment_binding import ProjectEnvironmentBinding
 from app.models.binding_source_mapping import BindingSourceMapping
 from app.models.dbt_macro import DbtMacro
 from app.models.project_file import ProjectFile
+from app.models.project_file_audit import ProjectFileAudit, ProjectFileAuditAction
 
 __all__ = [
     "User", "UserRole", "UserStatus",
     "Server", "AuthMethod", "ServerStatus", "Environment",
     "InfraStack", "StackStatus",
     "DataSource", "DataSourceType", "DataSourceOrigin", "DataSourceStatus",
-    "MedallionProject", "ProjectTarget", "ProjectStatus",
-    "MedallionDataset", "MedallionLayer", "LoadMode", "Materialization", "TestStatus",
+    "MedallionProject", "ProjectTarget", "ProjectStatus", "WorkspaceParseStatus",
+    "MedallionDataset", "MedallionLayer", "LoadMode", "Materialization", "TestStatus", "DatasetOrigin",
     "MedallionRun", "RunState",
     "MedallionVersion",
     "DataQualitySnapshot", "DataQualityRule", "DataQualityAlert", "AlertType", "AlertSeverity", "AlertStatus",
@@ -59,4 +60,5 @@ __all__ = [
     "BindingSourceMapping",
     "DbtMacro",
     "ProjectFile",
+    "ProjectFileAudit", "ProjectFileAuditAction",
 ]

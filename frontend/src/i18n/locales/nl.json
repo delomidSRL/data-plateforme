@@ -1037,10 +1037,29 @@
       "status": {
         "modified": "Gewijzigd in code",
         "code": "Aangemaakt in code"
-      }
+      },
+      "newFile": "Nieuw bestand",
+      "newFilePrompt": "Pad voor het nieuwe bestand (bv. models/gold/mijn_mart.sql):",
+      "rename": "Hernoemen",
+      "renamePrompt": "Nieuw pad:",
+      "delete": "Verwijderen",
+      "deleteConfirm": "« {{path}} » verwijderen?",
+      "deleteConfirmDataset": "Dit bestand is gekoppeld aan de dataset « {{name}} » — ook verwijderen?",
+      "discardConfirm": "Niet-opgeslagen wijzigingen gaan verloren. Toch sluiten?",
+      "save": "Opslaan",
+      "saving": "Opslaan…",
+      "saved": "Bestand opgeslagen.",
+      "savedWithErrors": "Bestand opgeslagen — maar het project bevat nu fouten (zie hieronder).",
+      "saveFailed": "Opslaan mislukt.",
+      "guardBlocked": "Opslaan geweigerd — een verboden constructie gevonden (zie de gemarkeerde regel).",
+      "conflict": "Dit bestand is intussen gewijzigd.",
+      "conflictReload": "De huidige versie herladen? Uw lokale wijzigingen gaan verloren.",
+      "syncErrors": "Het project bevat fouten — de build is geblokkeerd tot ze zijn opgelost:",
+      "projectParseError": "De code van dit project bevat fouten — de build is geblokkeerd:"
     },
     "panel": {
       "viewCode": "Code bekijken",
+      "codeModifiedNotice": "Deze dataset is rechtstreeks in de code gewijzigd — dit formulier is alleen-lezen. Gebruik \"Code bekijken\" om het te wijzigen.",
       "editTitle": "Bewerken — {{name}}",
       "viewTitle": "Details — {{name}}",
       "tabConfig": "Configuratie",

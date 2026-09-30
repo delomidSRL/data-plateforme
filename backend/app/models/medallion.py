@@ -51,6 +51,22 @@ class TransformType(str, enum.Enum):
     python = "python"
 
 
+class DatasetOrigin(str, enum.Enum):
+    """Module 19 §8 — visual (built/edited through the canvas forms, the default for every
+    pre-existing dataset) vs code (its model file was created directly in the Code tab, no
+    declarative form ever backed it). Orthogonal to `code_modified` (derived, never stored,
+    see DatasetOut): a `visual` dataset can still drift into `code_modified=true` once its
+    generated file is hand-edited; a `code` one always reads as modified/code since it never
+    had a generated base to begin with."""
+    visual = "visual"
+    code = "code"
+
+
+class WorkspaceParseStatus(str, enum.Enum):
+    ok = "ok"
+    error = "error"
+
+
 class MLObjective(str, enum.Enum):
     none = "none"
     anomaly = "anomaly"
@@ -104,6 +120,12 @@ class MedallionProject(Base):
     superset_instance_id: Mapped[int | None] = mapped_column(ForeignKey("superset_instances.id", ondelete="SET NULL"), nullable=True)
     dbt_project_name: Mapped[str] = mapped_column(String(120), nullable=False)
     has_pending_changes: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Module 19 §8 — set by workspace_sync.sync() after every workspace write (étape 2);
+    # "error" blocks the build (see _build_binding) until a fix makes it "ok" again. A project
+    # that's never had its workspace touched through the Code tab stays "ok" forever, since
+    # nothing else ever sets this — zero regression for every project edited visually only.
+    workspace_parse_status: Mapped[WorkspaceParseStatus] = mapped_column(Enum(WorkspaceParseStatus, name="medallion_workspace_parse_status"), default=WorkspaceParseStatus.ok, nullable=False)
+    workspace_parse_errors: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Module 17 — object_store_source_id, warehouse_source_id, airflow_instance_id, target,
@@ -245,6 +267,9 @@ class MedallionDataset(Base):
     upstream_dataset_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     tests: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Module 19 §8 — see DatasetOrigin's own docstring.
+    origin: Mapped[DatasetOrigin] = mapped_column(Enum(DatasetOrigin, name="medallion_dataset_origin"), default=DatasetOrigin.visual, nullable=False)
 
     last_row_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_loaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

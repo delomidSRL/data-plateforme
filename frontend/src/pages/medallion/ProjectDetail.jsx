@@ -124,6 +124,21 @@ export default function ProjectDetail({ readOnly = false }) {
     }
   };
 
+  // Module 19 étape 2 — refreshes just what a workspace write can change (the project's
+  // workspace_parse_status/errors, and every dataset's code_modified/origin/lineage), without
+  // `load()`'s full-page loading gate — a save in the Code tab must never unmount it.
+  const refreshWorkspaceState = async () => {
+    if (readOnly) return;
+    try {
+      const [p, ds, lg] = await Promise.all([medallionApi.getProject(id), medallionApi.listDatasets(id), medallionApi.getLineage(id)]);
+      setProject(p);
+      setDatasets(ds);
+      setLineage(lg);
+    } catch {
+      // best-effort — the Code tab already reflects its own save result regardless
+    }
+  };
+
   const loadQuality = async () => {
     try {
       const [q, alerts] = await Promise.all([qualityApi.getProjectQuality(id), qualityApi.listQualityAlerts(id, "open")]);
@@ -587,8 +602,9 @@ export default function ProjectDetail({ readOnly = false }) {
       {tab === "code" && (
         <Suspense fallback={<div className="card" style={{ padding: 16, color: "var(--text-muted)", fontSize: 12.5 }}>{t("medallion.code.loading")}</div>}>
           <CodeTab
-            project={project} initialDatasetId={codeInitialDatasetId}
+            project={project} readOnly={readOnly} initialDatasetId={codeInitialDatasetId}
             onConsumedInitialDataset={() => setCodeInitialDatasetId(null)}
+            onSynced={refreshWorkspaceState}
           />
         </Suspense>
       )}

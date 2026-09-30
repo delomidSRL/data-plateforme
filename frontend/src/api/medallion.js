@@ -73,6 +73,13 @@ export const listDashboards = (pid) => apiFetch(`${base}/${pid}/dashboards`);
 export const getWorkspaceTree = (pid) => apiFetch(`${base}/${pid}/workspace/tree`);
 export const getWorkspaceFile = (pid, path) => apiFetch(`${base}/${pid}/workspace/file?path=${encodeURIComponent(path)}`);
 export const getWorkspaceFileDiff = (pid, path, against = "base") => apiFetch(`${base}/${pid}/workspace/file/diff?path=${encodeURIComponent(path)}&against=${against}`);
+// Module 19 étape 2 — writes. `apiFetch` throws on a non-2xx response with `.status` and
+// `.detail` set from the JSON body (see api/client.js) — callers switch on `err.status` for
+// 409 (stale version / confirmation needed) and 422 (jinja guard violations).
+export const putWorkspaceFile = (pid, path, content, ifVersion) => apiFetch(`${base}/${pid}/workspace/file`, { method: "PUT", body: { path, content, if_version: ifVersion } });
+export const createWorkspaceFile = (pid, path, content = "") => apiFetch(`${base}/${pid}/workspace/file`, { method: "POST", body: { path, content } });
+export const moveWorkspaceFile = (pid, fromPath, toPath, ifVersion) => apiFetch(`${base}/${pid}/workspace/file/move`, { method: "POST", body: { from_path: fromPath, to_path: toPath, if_version: ifVersion } });
+export const deleteWorkspaceFile = (pid, path, ifVersion, confirm = false) => apiFetch(`${base}/${pid}/workspace/file`, { method: "DELETE", body: { path, if_version: ifVersion, confirm } });
 
 // Module 9 — admin, read-only supervision across every engineer's projects.
 const adminBase = "/api/medallion/admin";

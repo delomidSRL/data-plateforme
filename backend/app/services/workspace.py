@@ -39,12 +39,27 @@ def _dataset_path_map(datasets: list[MedallionDataset]) -> dict[str, int]:
     return mapping
 
 
+def is_modified(row: ProjectFile) -> bool:
+    """A file with no base at all (`base_hash is None`, a human-created file that's never
+    been through a generator pass) counts as modified too — there is nothing "intact" about
+    it to silently update. Shared by materialize() and the workspace status endpoints."""
+    return row.base_hash is None or row.content_hash != row.base_hash
+
+
 def materialize(db: Session, project: MedallionProject, files: dict[str, str], datasets: list[MedallionDataset] | None = None, generator: str = "dbt_project") -> None:
     """Writes `files` (a generator's output — NEVER pass `profiles.yml`, §2) into the
     workspace as the new base. Idempotent: a file whose content is unchanged does not bump
-    `version` (§3.3). A file no longer produced by the generator (dataset renamed/removed) is
-    dropped — safe in étape 1 only, since every row here is generator-owned; étape 3's
-    workspace_merge is what stops doing that once human-authored files exist."""
+    `version` (§3.3).
+
+    Module 19 étape 2 — the non-negotiable invariant from §0: "la plateforme ne réécrit
+    jamais silencieusement un fichier modifié par un humain". A file that has diverged from
+    its base (`is_modified`) never has its `content` touched here, no matter what the
+    generator would now produce — only `base_content`/`base_hash` slide forward, so the file
+    keeps reading as "modifié" against an up-to-date baseline until étape 3's workspace_merge
+    exists to actually reconcile the two. Same for deletion: a file the generator no longer
+    produces (dataset renamed/removed) is only dropped here while it was still intact —
+    dropping a human-modified file without a merge conversation would be exactly the
+    silent-overwrite this invariant forbids."""
     if "profiles.yml" in files:
         files = {path: content for path, content in files.items() if path != "profiles.yml"}
     path_to_dataset = _dataset_path_map(datasets or [])
@@ -62,7 +77,7 @@ def materialize(db: Session, project: MedallionProject, files: dict[str, str], d
                 project_id=project.id, path=path, content=content, content_hash=h,
                 base_content=content, base_hash=h, generator=generator, dataset_id=dataset_id, version=1,
             ))
-        else:
+        elif not is_modified(row):
             if row.content_hash != h:
                 row.content = content
                 row.content_hash = h
@@ -72,9 +87,19 @@ def materialize(db: Session, project: MedallionProject, files: dict[str, str], d
                 row.version += 1
             if row.dataset_id != dataset_id:
                 row.dataset_id = dataset_id
+        else:
+            # Human-modified: `content`/`version` are theirs, never moved here. Only the
+            # base baseline advances, so a later étape-3 merge diffs against what the
+            # generator would produce TODAY, not against whatever it produced originally.
+            if row.base_hash != h:
+                row.base_content = content
+                row.base_hash = h
+                row.generator = generator
+            if row.dataset_id != dataset_id:
+                row.dataset_id = dataset_id
 
     for path, row in existing.items():
-        if path not in seen:
+        if path not in seen and not is_modified(row):
             db.delete(row)
 
     db.flush()
@@ -83,6 +108,18 @@ def materialize(db: Session, project: MedallionProject, files: dict[str, str], d
 def export_tree(db: Session, project: MedallionProject) -> dict[str, str]:
     rows = db.query(ProjectFile).filter(ProjectFile.project_id == project.id).all()
     return {row.path: row.content for row in rows}
+
+
+def bulk_code_modified(db: Session, dataset_ids: list[int]) -> dict[int, bool]:
+    """Module 19 §4.4 — `MedallionDataset.code_modified` (computed, never stored, same
+    pattern as payload_structure.bulk_payload_backed): true once a dataset's linked file
+    diverges from its base (or never had one, `origin=code`). Datasets with no linked file
+    at all (bronze, python/ML nodes) are simply absent from the result — callers default
+    to False."""
+    if not dataset_ids:
+        return {}
+    rows = db.query(ProjectFile).filter(ProjectFile.dataset_id.in_(dataset_ids)).all()
+    return {row.dataset_id: is_modified(row) for row in rows}
 
 
 def has_workspace(db: Session, project: MedallionProject) -> bool:
