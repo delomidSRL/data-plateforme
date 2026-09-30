@@ -58,7 +58,7 @@ function substitutePlaceholders(code, expectedInputs, values) {
   return result;
 }
 
-export default function DatasetPanel({ project, datasets, dataset, defaultLayer, sources, onClose, onSaved, onDeleted, onStructurationSaved, readOnly = false, initialTab, prefill = null }) {
+export default function DatasetPanel({ project, datasets, dataset, defaultLayer, sources, onClose, onSaved, onDeleted, onStructurationSaved, readOnly = false, initialTab, prefill = null, onViewCode }) {
   const { t } = useTranslation();
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
   const ML_OBJECTIVES = [
@@ -592,6 +592,11 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
           {dataset.layer === "gold" && (
             <button type="button" className="btn-ghost" style={{ opacity: panelTab === "indicators" ? 1 : 0.6 }} onClick={() => setPanelTab("indicators")}>
               {Icon.wand()} {t("medallion.suggest.tab")}
+            </button>
+          )}
+          {onViewCode && dataset.layer !== "bronze" && dataset.transform_type !== "python" && (
+            <button type="button" className="btn-ghost" style={{ marginLeft: "auto" }} onClick={() => onViewCode(dataset.id)}>
+              {Icon.code()} {t("medallion.panel.viewCode")}
             </button>
           )}
         </div>

@@ -69,6 +69,11 @@ export const getDashboardStatus = (pid, did) => apiFetch(`${base}/${pid}/dataset
 export const deleteDashboard = (pid, did) => apiFetch(`${base}/${pid}/datasets/${did}/dashboard`, { method: "DELETE" });
 export const listDashboards = (pid) => apiFetch(`${base}/${pid}/dashboards`);
 
+// Module 19 étape 1 — persisted dbt workspace, read-only explorer (Code tab).
+export const getWorkspaceTree = (pid) => apiFetch(`${base}/${pid}/workspace/tree`);
+export const getWorkspaceFile = (pid, path) => apiFetch(`${base}/${pid}/workspace/file?path=${encodeURIComponent(path)}`);
+export const getWorkspaceFileDiff = (pid, path, against = "base") => apiFetch(`${base}/${pid}/workspace/file/diff?path=${encodeURIComponent(path)}&against=${against}`);
+
 // Module 9 — admin, read-only supervision across every engineer's projects.
 const adminBase = "/api/medallion/admin";
 export const getAdminOverview = () => apiFetch(`${adminBase}/overview`);

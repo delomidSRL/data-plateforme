@@ -781,6 +781,7 @@
     "tabQuality": "Quality",
     "tabVersions": "Versions",
     "tabAgent": "AI Assistant",
+    "tabCode": "Code",
     "buildTitle": "Build & deploy",
     "buildSteps": ["Generating the dbt project", "Creating Airflow connections", "Depositing the DAG", "Confirmation"],
     "airflowDetecting": "Airflow: detecting the DAG… ({{elapsed}}s)",
@@ -1027,7 +1028,19 @@
       "restoreFailed": "Restore failed.",
       "restoredBanner": "Pipeline restored from v{{n}} — rerun when you're ready."
     },
+    "code": {
+      "loading": "Loading…",
+      "loadFailed": "Could not load the project's workspace.",
+      "noFiles": "No files.",
+      "selectFile": "Select a file in the tree to view it.",
+      "rootGroup": "Root",
+      "status": {
+        "modified": "Modified in code",
+        "code": "Created in code"
+      }
+    },
     "panel": {
+      "viewCode": "View code",
       "editTitle": "Edit — {{name}}",
       "viewTitle": "Details — {{name}}",
       "tabConfig": "Configuration",

@@ -781,6 +781,7 @@
     "tabQuality": "Kwaliteit",
     "tabVersions": "Versies",
     "tabAgent": "AI-assistent",
+    "tabCode": "Code",
     "buildTitle": "Bouwen & implementeren",
     "buildSteps": ["dbt-project genereren", "Airflow-verbindingen aanmaken", "DAG plaatsen", "Bevestiging"],
     "airflowDetecting": "Airflow: DAG wordt gedetecteerd… ({{elapsed}}s)",
@@ -1027,7 +1028,19 @@
       "restoreFailed": "Herstellen mislukt.",
       "restoredBanner": "Pipeline hersteld vanaf v{{n}} — voer opnieuw uit wanneer u klaar bent."
     },
+    "code": {
+      "loading": "Laden…",
+      "loadFailed": "De werkruimte van het project kon niet worden geladen.",
+      "noFiles": "Geen bestanden.",
+      "selectFile": "Selecteer een bestand in de boomstructuur om het te bekijken.",
+      "rootGroup": "Basis",
+      "status": {
+        "modified": "Gewijzigd in code",
+        "code": "Aangemaakt in code"
+      }
+    },
     "panel": {
+      "viewCode": "Code bekijken",
       "editTitle": "Bewerken — {{name}}",
       "viewTitle": "Details — {{name}}",
       "tabConfig": "Configuratie",

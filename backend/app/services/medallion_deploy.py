@@ -9,7 +9,7 @@ from app.models.data_source import DataSource, DataSourceOrigin, DataSourceType
 from app.models.medallion import MedallionDataset, MedallionLayer, MedallionProject
 from app.models.payload_structuration import PayloadStructuration
 from app.models.project_environment_binding import ProjectEnvironmentBinding
-from app.services import airflow_api, dag_render, dbt_project, ssh
+from app.services import airflow_api, dag_render, dbt_project, ssh, workspace
 from app.services.airflow_instances import DeployTarget
 from app.core.security import decrypt_secret
 
@@ -149,7 +149,17 @@ async def build_project(
     )
     dbt_files = dbt_project.generate_project_files(db, project, datasets, warehouse_dict, structurations)
 
-    await run_in_threadpool(_deploy_files_via_ssh, target, target.dbt_dir, target.plugins_dir, dbt_files)
+    # Module 19 étape 1 — the workspace (`project_files`) becomes the base for every one of
+    # these files except profiles.yml (never persisted, §2); materialize() is idempotent, so
+    # calling it on every build is exactly what keeps the workspace in sync with canvas/agent
+    # changes, first-build backfill included. export_tree() is then what actually gets
+    # deployed below — always byte-identical to `dbt_files` here, since materialize() just
+    # wrote it from that same dict (§3.3's "déploie l'espace de travail").
+    workspace.materialize(db, project, dbt_files, datasets=datasets)
+    deploy_files = workspace.export_tree(db, project)
+    deploy_files["profiles.yml"] = dbt_files["profiles.yml"]
+
+    await run_in_threadpool(_deploy_files_via_ssh, target, target.dbt_dir, target.plugins_dir, deploy_files)
 
     # 2. create/refresh Airflow connections. Warehouse/object store use a project-role conn_id
     # (stable across environments, §2) — the credentials pushed are THIS binding's own,
@@ -211,7 +221,7 @@ async def build_project(
             activation_error = str(exc)
 
     return {
-        "dbt_files": list(dbt_files.keys()),
+        "dbt_files": list(deploy_files.keys()),
         "connections_created": connections_created,
         # what's actually LIVE now — goes on binding.dag_id/dag_file_path
         "dag_id": deployed_dag_id,
@@ -220,7 +230,7 @@ async def build_project(
         # dbt_files either way (dbt_project.yml/profiles.yml/models carry no dag_id at all).
         "dag_id_base": base_dag_id,
         "dag_content": base_dag_content,
-        "dbt_files_content": dbt_files,
+        "dbt_files_content": deploy_files,
         "activated": activated,
         "activation_error": activation_error,
     }

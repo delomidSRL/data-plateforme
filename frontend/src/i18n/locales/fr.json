@@ -781,6 +781,7 @@
     "tabQuality": "Qualité",
     "tabVersions": "Versions",
     "tabAgent": "Assistant IA",
+    "tabCode": "Code",
     "buildTitle": "Build & déployer",
     "buildSteps": ["Génération du projet dbt", "Création des connexions Airflow", "Dépôt du DAG", "Confirmation"],
     "airflowDetecting": "Airflow : détection du DAG en cours… ({{elapsed}}s)",
@@ -1027,7 +1028,19 @@
       "restoreFailed": "Restauration impossible.",
       "restoredBanner": "Pipeline restauré depuis v{{n}} — relancez quand vous êtes prêt."
     },
+    "code": {
+      "loading": "Chargement…",
+      "loadFailed": "Impossible de charger l'espace de travail du projet.",
+      "noFiles": "Aucun fichier.",
+      "selectFile": "Sélectionnez un fichier dans l'arborescence pour l'afficher.",
+      "rootGroup": "Racine",
+      "status": {
+        "modified": "Modifié en code",
+        "code": "Créé en code"
+      }
+    },
     "panel": {
+      "viewCode": "Voir le code",
       "editTitle": "Modifier — {{name}}",
       "viewTitle": "Détail — {{name}}",
       "tabConfig": "Configuration",

@@ -471,3 +471,37 @@ class LineageEdge(BaseModel):
 class LineageGraph(BaseModel):
     nodes: list[LineageNode]
     edges: list[LineageEdge]
+
+
+# ---------------- Module 19 étape 1 — workspace (read-only explorer) ----------------
+
+class WorkspaceFileOut(BaseModel):
+    path: str
+    # "generated" (content == base, the normal case in étape 1) | "modified" (diverges from
+    # base — only possible from étape 2 on) | "code" (no base at all, human-created file —
+    # only possible from étape 2 on).
+    status: str
+    dataset_id: int | None
+    version: int
+    generator: str | None
+    updated_at: datetime
+
+
+class WorkspaceTreeOut(BaseModel):
+    files: list[WorkspaceFileOut]
+
+
+class WorkspaceFileContentOut(BaseModel):
+    path: str
+    content: str
+    status: str
+    dataset_id: int | None
+    version: int
+    generator: str | None
+    updated_at: datetime
+
+
+class WorkspaceFileDiffOut(BaseModel):
+    path: str
+    against: str
+    diff: str

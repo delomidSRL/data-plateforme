@@ -1,3 +1,4 @@
+import difflib
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -17,6 +18,7 @@ from app.models.file_watch import FileWatch
 from app.models.infra_stack import InfraStack
 from app.models.payload_structuration import PayloadStructuration
 from app.models.project_environment_binding import ProjectEnvironmentBinding
+from app.models.project_file import ProjectFile
 from app.models.server import Environment, Server
 from app.models.medallion import (
     MedallionDataset,
@@ -73,6 +75,10 @@ from app.schemas.medallion import (
     VersionDetailOut,
     VersionDiffOut,
     VersionOut,
+    WorkspaceFileContentOut,
+    WorkspaceFileDiffOut,
+    WorkspaceFileOut,
+    WorkspaceTreeOut,
 )
 from app.schemas.environment_binding import BindingOut
 from app.schemas.promotion import (
@@ -89,7 +95,7 @@ from app.schemas.payload_structuration import (
     StructurationUpdate,
 )
 from app.schemas.file_import import ColumnsOut, FileImportOut, ImportFromObjectStoreCreate, ObjectStoreColumnsRequest
-from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, file_import as file_import_service, gold_export, gold_profile, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot
+from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, file_import as file_import_service, gold_export, gold_profile, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot, workspace
 from app.services.ai_config import get_ai_config
 from app.services.superset_instances import get_superset_config
 from app.services.medallion_crud import create_dataset_internal, validate_lineage
@@ -995,6 +1001,71 @@ async def get_deploy_status(db: Session = Depends(get_db), project: MedallionPro
                 activated = False
 
     return DeployStatusOut(known_to_airflow=dag is not None, activated=activated)
+
+
+# ---------------- Workspace — Code tab, read-only explorer (Module 19 étape 1) ----------------
+
+def _workspace_file_status(pf: ProjectFile) -> str:
+    if pf.base_hash is None:
+        return "code"
+    if pf.content_hash != pf.base_hash:
+        return "modified"
+    return "generated"
+
+
+def _ensure_workspace(db: Session, project: MedallionProject) -> None:
+    """§3.4's backfill, done lazily on first touch of the Code tab rather than as an Alembic
+    data migration (see workspace.materialize_if_empty's own docstring for why) — commits only
+    when it actually had to materialize something, so an already-backfilled project's GET stays
+    a plain read."""
+    datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
+    if workspace.materialize_if_empty(db, project, datasets):
+        db.commit()
+
+
+@router.get("/{pid}/workspace/tree", response_model=WorkspaceTreeOut)
+def get_workspace_tree(db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+    _ensure_workspace(db, project)
+    rows = db.query(ProjectFile).filter(ProjectFile.project_id == project.id).order_by(ProjectFile.path).all()
+    return WorkspaceTreeOut(files=[
+        WorkspaceFileOut(path=r.path, status=_workspace_file_status(r), dataset_id=r.dataset_id, version=r.version, generator=r.generator, updated_at=r.updated_at)
+        for r in rows
+    ])
+
+
+@router.get("/{pid}/workspace/file", response_model=WorkspaceFileContentOut)
+def get_workspace_file(path: str, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+    _ensure_workspace(db, project)
+    row = db.query(ProjectFile).filter(ProjectFile.project_id == project.id, ProjectFile.path == path).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier introuvable dans l'espace de travail.")
+    return WorkspaceFileContentOut(path=row.path, content=row.content, status=_workspace_file_status(row), dataset_id=row.dataset_id, version=row.version, generator=row.generator, updated_at=row.updated_at)
+
+
+@router.get("/{pid}/workspace/file/diff", response_model=WorkspaceFileDiffOut)
+def get_workspace_file_diff(path: str, against: str = "base", db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+    if against not in ("base", "active_version"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="`against` doit être « base » ou « active_version ».")
+    _ensure_workspace(db, project)
+    row = db.query(ProjectFile).filter(ProjectFile.project_id == project.id, ProjectFile.path == path).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fichier introuvable dans l'espace de travail.")
+
+    if against == "base":
+        other_content = row.base_content or ""
+        other_label = f"{path} (base)"
+    else:
+        binding = project.home_binding
+        version = db.get(MedallionVersion, binding.active_version_id) if binding.active_version_id else None
+        snapshot = (version.dbt_project_snapshot or {}) if version else {}
+        other_content = snapshot.get(path, "")
+        other_label = f"{path} (version active)"
+
+    diff_lines = difflib.unified_diff(
+        other_content.splitlines(keepends=True), row.content.splitlines(keepends=True),
+        fromfile=other_label, tofile=f"{path} (actuel)",
+    )
+    return WorkspaceFileDiffOut(path=path, against=against, diff="".join(diff_lines))
 
 
 # ---------------- Versions (Module 8) ----------------

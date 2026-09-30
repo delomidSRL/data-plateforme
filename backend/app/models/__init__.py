@@ -32,6 +32,7 @@ from app.models.payload_structuration import PayloadStructuration, QuarantinePol
 from app.models.project_environment_binding import ProjectEnvironmentBinding
 from app.models.binding_source_mapping import BindingSourceMapping
 from app.models.dbt_macro import DbtMacro
+from app.models.project_file import ProjectFile
 
 __all__ = [
     "User", "UserRole", "UserStatus",
@@ -57,4 +58,5 @@ __all__ = [
     "ProjectEnvironmentBinding",
     "BindingSourceMapping",
     "DbtMacro",
+    "ProjectFile",
 ]

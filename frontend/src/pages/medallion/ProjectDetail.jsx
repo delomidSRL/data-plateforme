@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import * as medallionApi from "../../api/medallion.js";
@@ -21,6 +21,9 @@ import RunsTab from "./RunsTab.jsx";
 import QualityTab from "./QualityTab.jsx";
 import VersionsTab from "./VersionsTab.jsx";
 import AgentTab from "./AgentTab.jsx";
+// Module 19 — lazy: Monaco (~4 MB) must never land in the app's main bundle for users who
+// never open the Code tab (§1 "chargement local des workers", not "chargé au démarrage").
+const CodeTab = lazy(() => import("./CodeTab.jsx"));
 import ScheduleField, { describeSchedule, isValidSchedule } from "./ScheduleField.jsx";
 import ImportWizardDrawer from "../imports/ImportWizardDrawer.jsx";
 import SchemaValidationModal from "../imports/SchemaValidationModal.jsx";
@@ -50,6 +53,7 @@ export default function ProjectDetail({ readOnly = false }) {
   const [view, setView] = useState("canvas");
   const [tab, setTab] = useState("pipeline");
   const [panel, setPanel] = useState(null); // { dataset } | { defaultLayer } | null
+  const [codeInitialDatasetId, setCodeInitialDatasetId] = useState(null); // Module 19 — "Voir le code" from a node
   const [previewData, setPreviewData] = useState(null);
   const [previewing, setPreviewing] = useState(false);
   const [building, setBuilding] = useState(false);
@@ -485,6 +489,7 @@ export default function ProjectDetail({ readOnly = false }) {
           <button className="btn-ghost" style={{ opacity: tab === "quality" ? 1 : 0.6 }} onClick={() => setTab("quality")}>{t("medallion.tabQuality")}</button>
           <button className="btn-ghost" style={{ opacity: tab === "versions" ? 1 : 0.6 }} onClick={() => setTab("versions")}>{t("medallion.tabVersions")}</button>
           <button className="btn-ghost" style={{ opacity: tab === "agent" ? 1 : 0.6 }} onClick={() => setTab("agent")}>{t("medallion.tabAgent")}</button>
+          <button className="btn-ghost" style={{ opacity: tab === "code" ? 1 : 0.6 }} onClick={() => setTab("code")}>{Icon.code()} {t("medallion.tabCode")}</button>
         </div>
       </div>
 
@@ -579,6 +584,14 @@ export default function ProjectDetail({ readOnly = false }) {
         <VersionsTab project={project} readOnly={readOnly} onRestored={(v) => { setRestoredBanner(v.is_restore_of_version_number); load(); }} />
       )}
       {tab === "agent" && <AgentTab project={project} readOnly={readOnly} onExecutionUpdate={handleExecutionUpdate} />}
+      {tab === "code" && (
+        <Suspense fallback={<div className="card" style={{ padding: 16, color: "var(--text-muted)", fontSize: 12.5 }}>{t("medallion.code.loading")}</div>}>
+          <CodeTab
+            project={project} initialDatasetId={codeInitialDatasetId}
+            onConsumedInitialDataset={() => setCodeInitialDatasetId(null)}
+          />
+        </Suspense>
+      )}
 
       {previewData && (
         <div className="card" style={{ padding: 16, marginTop: 16 }}>
@@ -624,6 +637,7 @@ export default function ProjectDetail({ readOnly = false }) {
           onDeleted={onDatasetDeleted}
           onStructurationSaved={() => medallionApi.getLineage(id).then(setLineage)}
           readOnly={readOnly}
+          onViewCode={(datasetId) => { setPanel(null); setCodeInitialDatasetId(datasetId); setTab("code"); }}
         />
       )}
 
