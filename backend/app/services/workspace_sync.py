@@ -59,7 +59,7 @@ class SyncResult:
     errors: list[SyncError] = field(default_factory=list)
 
 
-def _dbt_bin() -> str:
+def dbt_bin() -> str:
     """The control plane's OWN pinned dbt (requirements.txt), sibling of the running
     interpreter — never Airflow's dbt_venv (dag_render.DBT_BIN), a completely different
     container this process has no access to."""
@@ -82,7 +82,7 @@ def _fake_profiles_yml(project: MedallionProject) -> str:
     }, sort_keys=False)
 
 
-def _ensure_packages_cache(settings) -> Path:
+def ensure_packages_cache(settings) -> Path:
     """Seeds DBT_PACKAGES_CACHE_DIR once — real network call to dbt Hub — the first time any
     project's packages.yml needs dbt-utils/dbt-expectations; every later sync/compile just
     copies from here (§1: no network at parse/compile time once seeded). Pins the exact same
@@ -108,7 +108,7 @@ def _ensure_packages_cache(settings) -> Path:
             }}},
         }), encoding="utf-8")
         result = subprocess.run(
-            [_dbt_bin(), "deps", "--project-dir", str(tmp), "--profiles-dir", str(tmp)],
+            [dbt_bin(), "deps", "--project-dir", str(tmp), "--profiles-dir", str(tmp)],
             capture_output=True, text=True, timeout=settings.dbt_runner_timeout_s,
         )
         if result.returncode != 0 or not (tmp / "dbt_packages").exists():
@@ -151,7 +151,7 @@ def _run_dbt_parse(tree: dict[str, str], project: MedallionProject, settings) ->
         (tmpdir / "profiles.yml").write_text(_fake_profiles_yml(project), encoding="utf-8")
 
         if "packages.yml" in tree:
-            cache_dir = _ensure_packages_cache(settings)
+            cache_dir = ensure_packages_cache(settings)
             pkg_dir = tmpdir / "dbt_packages"
             pkg_dir.mkdir(exist_ok=True)
             for child in cache_dir.iterdir():
@@ -161,7 +161,7 @@ def _run_dbt_parse(tree: dict[str, str], project: MedallionProject, settings) ->
 
         try:
             result = subprocess.run(
-                [_dbt_bin(), "parse", "--project-dir", str(tmpdir), "--profiles-dir", str(tmpdir), "--no-use-colors", "--log-format", "json"],
+                [dbt_bin(), "parse", "--project-dir", str(tmpdir), "--profiles-dir", str(tmpdir), "--no-use-colors", "--log-format", "json"],
                 capture_output=True, text=True, timeout=settings.dbt_runner_timeout_s,
             )
         except subprocess.TimeoutExpired:

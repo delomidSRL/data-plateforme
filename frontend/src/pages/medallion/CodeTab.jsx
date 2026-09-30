@@ -9,6 +9,14 @@ import { Button } from "../../components/ui/Button.jsx";
 import { Icon } from "../../components/icons.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
 import ConflictsPanel from "./ConflictsPanel.jsx";
+import DataPreviewPanel from "./DataPreviewPanel.jsx";
+
+// Module 19 étape 4 — compile/run-dev only make sense for an actual dbt model file; the dbt
+// model name is exactly its filename stem (dbt's own convention, mirrored by _model_sql()).
+function dbtModelNameFor(path) {
+  const m = /^models\/(?:silver|gold)\/(.+)\.sql$/.exec(path || "");
+  return m ? m[1] : null;
+}
 
 // Module 19 §3.6/§4.6 — a real, collapsible folder tree (VSCode-style), built from the flat
 // file list the backend returns. `profiles.yml` never appears here — the workspace never
@@ -120,6 +128,12 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
   const [markers, setMarkers] = useState([]); // markers for the CURRENTLY ACTIVE file only
   const [conflicts, setConflicts] = useState([]); // Module 19 étape 3 — "À arbitrer"
   const [view, setView] = useState("tree"); // "tree" | "conflicts"
+  const [compiling, setCompiling] = useState(false);
+  const [runningDev, setRunningDev] = useState(false);
+  const [compiledByPath, setCompiledByPath] = useState({}); // path -> compiled SQL text
+  const [showCompiled, setShowCompiled] = useState(false);
+  const [runResult, setRunResult] = useState(null); // { ok, nodes, datasetId } for the active file's last run-dev
+  const [showPreview, setShowPreview] = useState(false);
 
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
@@ -221,6 +235,50 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
       }
     } finally {
       setSavingPaths((prev) => { const next = new Set(prev); next.delete(path); return next; });
+    }
+  };
+
+  const doCompile = async (path) => {
+    const select = dbtModelNameFor(path);
+    if (!select) return;
+    setCompiling(true);
+    setRunResult(null);
+    try {
+      const out = await medallionApi.compileWorkspace(project.id, select);
+      if (out.ok) {
+        setCompiledByPath((prev) => ({ ...prev, [path]: out.compiled_sql[path] || Object.values(out.compiled_sql)[0] || "" }));
+        setShowCompiled(true);
+        setMarkers([]);
+        showToast(t("medallion.code.compileOk"));
+      } else {
+        setMarkers(out.errors.filter((e) => !e.path || e.path === path).map((e) => ({ line: e.line || 1, message: e.message })));
+        setLastSync({ ok: false, errors: out.errors, path });
+        showToast(t("medallion.code.compileFailed"));
+      }
+    } catch (err) {
+      showToast(err.message || t("medallion.code.compileFailed"));
+    } finally {
+      setCompiling(false);
+    }
+  };
+
+  const doRunDev = async (path) => {
+    const select = dbtModelNameFor(path);
+    if (!select) return;
+    setRunningDev(true);
+    try {
+      const out = await medallionApi.runDev(project.id, select);
+      const datasetId = contents[path]?.dataset_id ?? null;
+      setRunResult({ ok: out.ok, nodes: out.nodes, datasetId, path });
+      if (!out.ok) {
+        setMarkers(out.errors.filter((e) => !e.path || e.path === path).map((e) => ({ line: e.line || 1, message: e.message })));
+        setLastSync({ ok: false, errors: out.errors, path });
+      }
+      showToast(out.ok ? t("medallion.code.runDevOk") : t("medallion.code.runDevFailed"));
+    } catch (err) {
+      showToast(err.message || t("medallion.code.runDevFailed"));
+    } finally {
+      setRunningDev(false);
     }
   };
 
@@ -384,6 +442,25 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
             </div>
           )}
 
+          {activePath && dbtModelNameFor(activePath) && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+              <Badge tone="neutral">{t("medallion.code.devBadge")}</Badge>
+              <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} disabled={compiling} onClick={() => doCompile(activePath)}>
+                {compiling ? t("medallion.code.compiling") : t("medallion.code.compile")}
+              </button>
+              {compiledByPath[activePath] && (
+                <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 12, opacity: showCompiled ? 1 : 0.6 }} onClick={() => setShowCompiled((s) => !s)}>
+                  {t("medallion.code.toggleCompiled")}
+                </button>
+              )}
+              {canEdit && (
+                <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} disabled={runningDev} onClick={() => doRunDev(activePath)}>
+                  {runningDev ? t("medallion.code.runningDev") : t("medallion.code.runDev")}
+                </button>
+              )}
+            </div>
+          )}
+
           {!activePath && (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 12.5, textAlign: "center", padding: 20 }}>
               {t("medallion.code.selectFile")}
@@ -401,17 +478,54 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
           )}
 
           {activePath && active && !active.loading && !active.error && (
-            <div style={{ flex: 1, minHeight: 0 }}>
-              <Editor
-                height="100%"
-                path={activePath}
-                language={languageFor(activePath)}
-                value={active.draft}
-                theme="vs"
-                onMount={handleEditorMount}
-                onChange={(value) => setContents((prev) => ({ ...prev, [activePath]: { ...prev[activePath], draft: value ?? "" } }))}
-                options={{ readOnly: !canEdit, minimap: { enabled: false }, fontFamily: "JetBrains Mono, monospace", fontSize: 12.5, scrollBeyondLastLine: false }}
-              />
+            <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Editor
+                  height="100%"
+                  path={activePath}
+                  language={languageFor(activePath)}
+                  value={active.draft}
+                  theme="vs"
+                  onMount={handleEditorMount}
+                  onChange={(value) => setContents((prev) => ({ ...prev, [activePath]: { ...prev[activePath], draft: value ?? "" } }))}
+                  options={{ readOnly: !canEdit, minimap: { enabled: false }, fontFamily: "JetBrains Mono, monospace", fontSize: 12.5, scrollBeyondLastLine: false }}
+                />
+              </div>
+              {showCompiled && compiledByPath[activePath] && (
+                <div style={{ flex: 1, minWidth: 0, borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column" }}>
+                  <div style={{ padding: "5px 10px", fontSize: 11, color: "var(--text-muted)", borderBottom: "1px solid var(--border)", fontFamily: "var(--font-m)" }}>
+                    {t("medallion.code.compiledSqlLabel")}
+                  </div>
+                  <div style={{ flex: 1, minHeight: 0 }}>
+                    <Editor
+                      height="100%" language="sql" value={compiledByPath[activePath]} theme="vs"
+                      options={{ readOnly: true, minimap: { enabled: false }, fontFamily: "JetBrains Mono, monospace", fontSize: 12.5, scrollBeyondLastLine: false }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {runResult && runResult.path === activePath && (
+            <div style={{ borderTop: "1px solid var(--border)", padding: 10, flexShrink: 0 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                {runResult.nodes.map((n) => (
+                  <Badge key={n.unique_id} tone={n.status === "success" || n.status === "pass" ? "accent" : "danger"}>
+                    {n.name} · {n.status}
+                  </Badge>
+                ))}
+                {runResult.ok && runResult.datasetId != null && (
+                  <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setShowPreview((s) => !s)}>
+                    {Icon.eye()} {showPreview ? t("medallion.dataPreview.hidePreview") : t("medallion.dataPreview.previewSource")}
+                  </button>
+                )}
+              </div>
+              {showPreview && runResult.ok && runResult.datasetId != null && (
+                <div style={{ marginTop: 10 }}>
+                  <DataPreviewPanel project={project} datasetId={runResult.datasetId} />
+                </div>
+              )}
             </div>
           )}
         </div>

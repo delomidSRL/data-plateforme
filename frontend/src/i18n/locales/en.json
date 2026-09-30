@@ -1056,7 +1056,18 @@
       "conflict": "This file was changed in the meantime.",
       "conflictReload": "Reload the current version? Your local changes will be lost.",
       "syncErrors": "The project has errors — the build is blocked until they're fixed:",
-      "projectParseError": "This project's code has errors — the build is blocked:"
+      "projectParseError": "This project's code has errors — the build is blocked:",
+      "devBadge": "DEV",
+      "compile": "Compile",
+      "compiling": "Compiling…",
+      "compileOk": "Compiled successfully.",
+      "compileFailed": "Could not compile.",
+      "toggleCompiled": "Compiled SQL",
+      "compiledSqlLabel": "Compiled SQL (Jinja resolved)",
+      "runDev": "Run in dev",
+      "runningDev": "Running…",
+      "runDevOk": "Ran successfully in dev.",
+      "runDevFailed": "Could not run in dev."
     },
     "conflicts": {
       "banner": "{{count}} file(s) need arbitration before you can deploy.",

@@ -593,3 +593,33 @@ class ConflictActionOut(BaseModel):
     conflict: ConflictOut
     file: WorkspaceFileContentOut
     sync: WorkspaceSyncOut
+
+
+# ---------------- Module 19 étape 4 — compiler & exécuter en dev ----------------
+
+class CompileRequest(BaseModel):
+    select: str | None = None
+
+
+class CompileOut(BaseModel):
+    ok: bool
+    compiled_sql: dict[str, str] = Field(default_factory=dict)
+    errors: list[SyncErrorOut] = Field(default_factory=list)
+
+
+class RunDevRequest(BaseModel):
+    select: str
+
+
+class RunDevNodeOut(BaseModel):
+    unique_id: str
+    name: str
+    resource_type: str
+    status: str
+    execution_time: float | None = None
+
+
+class RunDevOut(BaseModel):
+    ok: bool
+    nodes: list[RunDevNodeOut] = Field(default_factory=list)
+    errors: list[SyncErrorOut] = Field(default_factory=list)

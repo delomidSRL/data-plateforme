@@ -1056,7 +1056,18 @@
       "conflict": "Dit bestand is intussen gewijzigd.",
       "conflictReload": "De huidige versie herladen? Uw lokale wijzigingen gaan verloren.",
       "syncErrors": "Het project bevat fouten — de build is geblokkeerd tot ze zijn opgelost:",
-      "projectParseError": "De code van dit project bevat fouten — de build is geblokkeerd:"
+      "projectParseError": "De code van dit project bevat fouten — de build is geblokkeerd:",
+      "devBadge": "DEV",
+      "compile": "Compileren",
+      "compiling": "Compileren…",
+      "compileOk": "Compilatie geslaagd.",
+      "compileFailed": "Compileren mislukt.",
+      "toggleCompiled": "Gecompileerde SQL",
+      "compiledSqlLabel": "Gecompileerde SQL (Jinja opgelost)",
+      "runDev": "Uitvoeren in dev",
+      "runningDev": "Bezig…",
+      "runDevOk": "Succesvol uitgevoerd in dev.",
+      "runDevFailed": "Uitvoeren in dev mislukt."
     },
     "conflicts": {
       "banner": "{{count}} bestand(en) moeten worden beoordeeld voordat u kunt deployen.",

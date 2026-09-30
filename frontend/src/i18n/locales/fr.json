@@ -1056,7 +1056,18 @@
       "conflict": "Ce fichier a été modifié entretemps.",
       "conflictReload": "Recharger la version actuelle ? Vos modifications locales seront perdues.",
       "syncErrors": "Le projet contient des erreurs — le build est bloqué jusqu'à leur correction :",
-      "projectParseError": "Le code de ce projet contient des erreurs — le build est bloqué :"
+      "projectParseError": "Le code de ce projet contient des erreurs — le build est bloqué :",
+      "devBadge": "DEV",
+      "compile": "Compiler",
+      "compiling": "Compilation…",
+      "compileOk": "Compilation réussie.",
+      "compileFailed": "Compilation impossible.",
+      "toggleCompiled": "SQL compilé",
+      "compiledSqlLabel": "SQL compilé (Jinja résolu)",
+      "runDev": "Exécuter en dev",
+      "runningDev": "Exécution…",
+      "runDevOk": "Exécution en dev réussie.",
+      "runDevFailed": "Exécution en dev impossible."
     },
     "conflicts": {
       "banner": "{{count}} fichier(s) à arbitrer avant de pouvoir déployer.",

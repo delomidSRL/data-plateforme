@@ -89,6 +89,10 @@ export const acceptConflict = (pid, cid) => apiFetch(`${base}/${pid}/workspace/c
 export const resolveConflict = (pid, cid, content) => apiFetch(`${base}/${pid}/workspace/conflicts/${cid}/resolve`, { method: "POST", body: { content } });
 export const discardConflict = (pid, cid) => apiFetch(`${base}/${pid}/workspace/conflicts/${cid}/discard`, { method: "POST" });
 
+// Module 19 étape 4 — compiler & exécuter en dev.
+export const compileWorkspace = (pid, select) => apiFetch(`${base}/${pid}/workspace/compile`, { method: "POST", body: { select } });
+export const runDev = (pid, select) => apiFetch(`${base}/${pid}/workspace/run-dev`, { method: "POST", body: { select } });
+
 // Module 9 — admin, read-only supervision across every engineer's projects.
 const adminBase = "/api/medallion/admin";
 export const getAdminOverview = () => apiFetch(`${adminBase}/overview`);

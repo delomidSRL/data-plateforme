@@ -17,9 +17,14 @@ from app.models.project_file_audit import ProjectFileAudit, ProjectFileAuditActi
 from app.models.project_file_conflict import ConflictStatus, ProjectFileConflict
 from app.models.user import User
 from app.schemas.medallion import (
+    CompileOut,
+    CompileRequest,
     ConflictActionOut,
     ConflictOut,
     ConflictResolveRequest,
+    RunDevNodeOut,
+    RunDevOut,
+    RunDevRequest,
     SyncErrorOut,
     WorkspaceFileContentOut,
     WorkspaceFileCreate,
@@ -32,7 +37,7 @@ from app.schemas.medallion import (
     WorkspaceTreeOut,
     WorkspaceWriteOut,
 )
-from app.services import jinja_guard, workspace, workspace_merge, workspace_sync
+from app.services import dbt_runner, jinja_guard, workspace, workspace_merge, workspace_sync
 
 router = APIRouter(prefix="/api/medallion/projects", tags=["medallion-workspace"])
 
@@ -380,3 +385,44 @@ def discard_conflict_endpoint(cid: int, db: Session = Depends(get_db), current_u
     db.add(ProjectFileAudit(project_id=project.id, path=row.path, action=ProjectFileAuditAction.discard, actor_id=current_user.id, content_hash_before=row.content_hash, content_hash_after=row.content_hash))
     db.commit()
     return _conflict_action_out(db, project, conflict, row)
+
+
+# ---------------- Compile & run dev (étape 4) ----------------
+
+def _default_compile_select(db: Session, project: MedallionProject) -> str | None:
+    """§6.4 — no explicit `select` compiles "les fichiers modifiés depuis le dernier build".
+    Nothing modified -> None (no --select at all, compiles the whole project) rather than an
+    empty, meaningless selection."""
+    rows = db.query(ProjectFile).filter(ProjectFile.project_id == project.id, ProjectFile.dataset_id.isnot(None)).all()
+    modified_dataset_ids = [r.dataset_id for r in rows if workspace.is_modified(r)]
+    if not modified_dataset_ids:
+        return None
+    names = [
+        d.dbt_model_name for d in db.query(MedallionDataset).filter(MedallionDataset.id.in_(modified_dataset_ids)).all()
+        if d.dbt_model_name
+    ]
+    return " ".join(names) if names else None
+
+
+@router.post("/{pid}/workspace/compile", response_model=CompileOut)
+def post_compile(payload: CompileRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+    """§6.4 — read-only (no side effect), available to a non-owner too, unlike run-dev."""
+    select = payload.select if payload.select is not None else _default_compile_select(db, project)
+    result = dbt_runner.compile(db, project, select=select)
+    return CompileOut(ok=result.ok, compiled_sql=result.compiled_sql, errors=[SyncErrorOut(**e.as_dict()) for e in result.errors])
+
+
+@router.post("/{pid}/workspace/run-dev", response_model=RunDevOut)
+def post_run_dev(payload: RunDevRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_owned_project)):
+    """§6.4 — owner-only (unlike compile): this one actually materializes on the dev warehouse."""
+    try:
+        result = dbt_runner.run_dev(db, project, select=payload.select)
+    except dbt_runner.RunnerBusyError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except dbt_runner.DbtRunnerError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return RunDevOut(
+        ok=result.ok,
+        nodes=[RunDevNodeOut(unique_id=n.unique_id, name=n.name, resource_type=n.resource_type, status=n.status, execution_time=n.execution_time) for n in result.nodes],
+        errors=[SyncErrorOut(**e.as_dict()) for e in result.errors],
+    )
