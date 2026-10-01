@@ -530,7 +530,7 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
               </div>
               {showCompiled && compiledByPath[activePath] && (
                 <div style={{ flex: 1, minWidth: 0, borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column" }}>
-                  <div style={{ padding: "5px 10px", fontSize: 11, color: "var(--text-muted)", borderBottom: "1px solid var(--border)", fontFamily: "var(--font-m)" }}>
+                  <div style={{ padding: "5px 10px", fontSize: 11, color: "var(--text-muted)", borderBottom: "1px solid var(--border)", background: "var(--surface)", fontFamily: "var(--font-m)", flexShrink: 0 }}>
                     {t("medallion.code.compiledSqlLabel")}
                   </div>
                   <div style={{ flex: 1, minHeight: 0 }}>
@@ -552,12 +552,17 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
                     {n.name} · {n.status}
                   </Badge>
                 ))}
-                {runResult.ok && runResult.datasetId != null && (
-                  <button type="button" className="btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setShowPreview((s) => !s)}>
-                    {Icon.eye()} {showPreview ? t("medallion.dataPreview.hidePreview") : t("medallion.dataPreview.previewSource")}
-                  </button>
-                )}
               </div>
+              {runResult.ok && runResult.datasetId != null && (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, padding: "5px 12px", fontSize: 12, border: "1px solid var(--border)", borderRadius: 7 }}
+                  onClick={() => setShowPreview((s) => !s)}
+                >
+                  {Icon.eye()} {showPreview ? t("medallion.dataPreview.hidePreview") : t("medallion.dataPreview.previewSource")}
+                </button>
+              )}
               {showPreview && runResult.ok && runResult.datasetId != null && (
                 <div style={{ marginTop: 10 }}>
                   <DataPreviewPanel project={project} datasetId={runResult.datasetId} />
