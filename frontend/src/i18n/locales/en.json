@@ -51,6 +51,8 @@
     "dataEngineer": "Data Engineer",
     "logout": "Log out",
     "openMenu": "Open menu",
+    "collapse": "Collapse menu",
+    "expand": "Expand menu",
     "language": "Language"
   },
   "breadcrumbs": {

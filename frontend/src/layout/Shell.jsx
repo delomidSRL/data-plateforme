@@ -14,12 +14,33 @@ const initials = (name) => (name || "").split(" ").map((w) => w[0]).slice(0, 2).
 const IDLE_MINUTES = 30;
 const IDLE_WARNING_SECONDS = 20;
 
+const SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
+
 export default function Shell() {
   const { t } = useTranslation();
   const { user, logout, isAdmin } = useAuth();
   const [sideOpen, setSideOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const location = useLocation();
   const navigate = useNavigate();
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0");
+      } catch {
+        // per-viewer convenience only — ignore storage failures (private mode, quota, etc.)
+      }
+      return next;
+    });
+  }, []);
 
   const handleIdleTimeout = useCallback(() => {
     logout();
@@ -53,8 +74,8 @@ export default function Shell() {
     || t("breadcrumbs.default");
 
   const navItem = (to, icon, label) => (
-    <NavLink to={to} className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={() => setSideOpen(false)}>
-      {icon}{label}
+    <NavLink to={to} className={({ isActive }) => "nav-item" + (isActive ? " active" : "")} onClick={() => setSideOpen(false)} title={collapsed ? label : undefined}>
+      {icon}<span className="nav-text">{label}</span>
     </NavLink>
   );
 
@@ -63,15 +84,24 @@ export default function Shell() {
   // up both items at once. Compute this one item's active state manually, excluding overview.
   const medallionActive = location.pathname === "/medallion" || (location.pathname.startsWith("/medallion/") && !location.pathname.startsWith("/medallion/overview"));
   const medallionNavItem = (to, icon, label) => (
-    <Link to={to} className={"nav-item" + (medallionActive ? " active" : "")} onClick={() => setSideOpen(false)}>
-      {icon}{label}
+    <Link to={to} className={"nav-item" + (medallionActive ? " active" : "")} onClick={() => setSideOpen(false)} title={collapsed ? label : undefined}>
+      {icon}<span className="nav-text">{label}</span>
     </Link>
   );
 
   return (
     <div className="app-shell">
       {sideOpen && <div className="scrim" onClick={() => setSideOpen(false)} />}
-      <aside className={"sidebar" + (sideOpen ? " open" : "")}>
+      <aside className={"sidebar" + (sideOpen ? " open" : "") + (collapsed ? " collapsed" : "")}>
+        <button
+          type="button"
+          className="sidebar-toggle"
+          onClick={toggleCollapsed}
+          title={collapsed ? t("sidebar.expand") : t("sidebar.collapse")}
+          aria-label={collapsed ? t("sidebar.expand") : t("sidebar.collapse")}
+        >
+          {Icon.arrowLeft()}
+        </button>
         <div className="side-brand">
           <div className="side-mark"><Logo size={19} /></div>
           <div>
@@ -97,28 +127,28 @@ export default function Shell() {
             navItem("/settings/users", Icon.users(), t("sidebar.users"))
           ) : (
             <button className="nav-item disabled" disabled title={t("common.reservedToAdmins")}>
-              {Icon.users()}{t("sidebar.users")} {Icon.lockSm()}
+              {Icon.users()}<span className="nav-text">{t("sidebar.users")} {Icon.lockSm()}</span>
             </button>
           )}
           {isAdmin ? (
             navItem("/settings/ml-templates", Icon.wand(), t("sidebar.mlLibrary"))
           ) : (
             <button className="nav-item disabled" disabled title={t("common.reservedToAdmins")}>
-              {Icon.wand()}{t("sidebar.mlLibrary")} {Icon.lockSm()}
+              {Icon.wand()}<span className="nav-text">{t("sidebar.mlLibrary")} {Icon.lockSm()}</span>
             </button>
           )}
           {isAdmin ? (
             navItem("/settings/dbt-macros", Icon.code(), t("sidebar.dbtMacros"))
           ) : (
             <button className="nav-item disabled" disabled title={t("common.reservedToAdmins")}>
-              {Icon.code()}{t("sidebar.dbtMacros")} {Icon.lockSm()}
+              {Icon.code()}<span className="nav-text">{t("sidebar.dbtMacros")} {Icon.lockSm()}</span>
             </button>
           )}
           {isAdmin ? (
             navItem("/settings/dq-flag-registry", Icon.warn(), t("sidebar.dqFlagRegistry"))
           ) : (
             <button className="nav-item disabled" disabled title={t("common.reservedToAdmins")}>
-              {Icon.warn()}{t("sidebar.dqFlagRegistry")} {Icon.lockSm()}
+              {Icon.warn()}<span className="nav-text">{t("sidebar.dqFlagRegistry")} {Icon.lockSm()}</span>
             </button>
           )}
         </nav>

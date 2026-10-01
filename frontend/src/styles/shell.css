@@ -5,7 +5,31 @@
   width: 250px; flex-shrink: 0; background: var(--ink-900); color: #fff;
   border-right: 1px solid var(--line); display: flex; flex-direction: column;
   padding: 18px 14px; position: sticky; top: 0; height: 100vh;
-  transition: transform .28s ease; z-index: 40;
+  transition: transform .28s ease, width .2s ease; z-index: 40;
+}
+
+.sidebar-toggle {
+  position: absolute; top: 26px; right: -12px; width: 24px; height: 24px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; z-index: 41;
+  background: var(--surface); border: 1px solid var(--border); color: var(--text-muted);
+  transition: color .15s, background .15s;
+}
+.sidebar-toggle:hover { color: var(--text); background: var(--bg); }
+.sidebar-toggle svg { transition: transform .25s ease; }
+.sidebar.collapsed .sidebar-toggle svg { transform: rotate(180deg); }
+
+/* collapse is a desktop-only affordance — the mobile drawer (burger-controlled)
+   always renders the sidebar at full width, so these rules are scoped accordingly */
+@media (min-width: 861px) {
+  .sidebar.collapsed { width: 76px; }
+  .sidebar.collapsed .side-brand { justify-content: center; padding-left: 0; padding-right: 0; }
+  .sidebar.collapsed .side-brand > div,
+  .sidebar.collapsed .nav-label,
+  .sidebar.collapsed .nav-text,
+  .sidebar.collapsed .lang-switcher,
+  .sidebar.collapsed .side-user-meta { display: none; }
+  .sidebar.collapsed .nav-item { justify-content: center; gap: 0; padding: 10px 0; }
+  .sidebar.collapsed .side-user { justify-content: center; padding-left: 0; padding-right: 0; }
 }
 .side-brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 20px; }
 .side-mark { width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0; background: linear-gradient(140deg, var(--ember), var(--ember-600)); display: flex; align-items: center; justify-content: center; box-shadow: 0 6px 16px -6px var(--ember-glow); }
@@ -74,6 +98,7 @@
 @media (max-width: 860px) {
   .sidebar { position: fixed; transform: translateX(-100%); box-shadow: 0 0 60px rgba(0, 0, 0, .3); }
   .sidebar.open { transform: translateX(0); }
+  .sidebar-toggle { display: none; }
   .burger { display: flex; }
   .stats { grid-template-columns: 1fr; }
 }
