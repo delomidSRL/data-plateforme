@@ -597,7 +597,10 @@ export default function ProjectDetail({ readOnly = false }) {
               sqlByDataset={sqlByDataset}
             />
           ) : (
-            <ThreeColumnView nodes={lineage.nodes} selectedId={selectedDataset?.id} onSelect={handleSelectNode} qualityByDataset={qualityByDataset} />
+            <ThreeColumnView
+              nodes={lineage.nodes} selectedId={selectedDataset?.id} onSelect={handleSelectNode} qualityByDataset={qualityByDataset}
+              onOpenSilverPreview={(datasetId, stage) => setSilverPreviewTarget({ datasetId, stage })}
+            />
           )}
         </>
       )}

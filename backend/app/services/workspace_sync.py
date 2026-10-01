@@ -31,6 +31,10 @@ from app.services.medallion_crud import layer_rank
 # is a real, saved, deployed file (never silently dropped), but it must never spawn a
 # duplicate "dataset" of its own just because it happens to sit in models/silver/*.sql.
 _STRUCTURATION_FILE_RE = re.compile(r"^models/silver/(01_unpacked|02_typed)_.+\.sql$")
+# Same two stages, matched against a dbt model NAME (not a file path) — used by resolve()
+# below to map a ref('01_unpacked_<bronze>')/ref('02_typed_<bronze>') back to the bronze
+# dataset it's derived from, since neither stage is ever a MedallionDataset of its own.
+_STRUCTURATION_REF_RE = re.compile(r"^(?:01_unpacked|02_typed)_(.+)$")
 # Module 19 bugfix — NOT anchored to the very start of the file (re.MULTILINE `^` matches any
 # line start): a human edit routinely adds a comment or anything else *before* the generated
 # `{{ config(...) }}` line (e.g. étape 3's own merge output, which puts the human's addition
@@ -256,14 +260,28 @@ def sync(db: Session, project: MedallionProject) -> SyncResult:
     def resolve(node_id: str) -> int | None:
         parts = node_id.split(".")
         if parts[0] == "model":
-            return dataset_by_name.get(parts[-1])
+            model_name = parts[-1]
+            direct = dataset_by_name.get(model_name)
+            if direct is not None:
+                return direct
+            # 01_unpacked_<bronze>/02_typed_<bronze> are never their own MedallionDataset row —
+            # only LineageCanvas's synthetic preview nodes (see its rerouteThroughStage, which
+            # expects exactly this: the real upstream_dataset_ids recording the BRONZE, then
+            # rerouting that edge through whichever stage the target's SQL actually references).
+            # Falling through to `return None` here (as before) silently dropped the dependency
+            # instead, leaving a hand-written model referencing a structuration stage with no
+            # upstream at all.
+            stage_match = _STRUCTURATION_REF_RE.match(model_name)
+            if stage_match:
+                return dataset_by_bronze_name.get(stage_match.group(1))
+            return None
         if parts[0] == "source":
             source_name, table = parts[-2], parts[-1]
             if source_name == "bronze":
                 return dataset_by_bronze_name.get(table)
             if source_name == "gold_ml":
                 return dataset_by_ml_output.get(table)
-        return None  # unmapped ref (e.g. a structuration stage) — not tracked, not an error
+        return None  # unmapped ref — not tracked, not an error
 
     # Pass 2 — sql/materialization/description/upstream_dataset_ids, and the same
     # equal-or-lower-layer rule the canvas's own CRUD enforces (medallion_crud.layer_rank).

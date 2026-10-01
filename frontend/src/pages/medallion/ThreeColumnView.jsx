@@ -5,11 +5,22 @@ const LAYER_COLOR = { bronze: "#a9702f", silver: "#5b7a94", gold: "#c98a1c" };
 const TEST_COLOR = { passed: "#2f9e6e", failed: "#c53d3d", none: "#c7cdd3" };
 const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "Oracle", minio: "MinIO" };
 
-export default function ThreeColumnView({ nodes, onSelect, selectedId, qualityByDataset = {} }) {
+export default function ThreeColumnView({ nodes, onSelect, selectedId, qualityByDataset = {}, onOpenSilverPreview }) {
   const { t } = useTranslation();
   const LAYER_LABEL = { bronze: "Bronze", silver: "Silver", gold: "Gold" };
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
   const origins = nodes.filter((n) => n.node_type === "origin");
+
+  // Mirrors LineageCanvas's own synthetic 01_unpacked_<name>/02_typed_<name> preview boxes —
+  // neither stage is ever a real MedallionDataset (see workspace_sync.resolve()), so they're
+  // absent from `nodes` and have to be synthesized here too, or this view silently shows fewer
+  // silver boxes than the canvas does for the exact same project.
+  const structurationPreviews = nodes
+    .filter((n) => n.node_type !== "origin" && n.layer === "bronze" && n.structured)
+    .flatMap((n) => [
+      { id: `silver-unpacked-${n.id}`, name: `01_unpacked_${n.name}`, stage: "unpacked", bronzeId: n.id },
+      { id: `silver-typed-${n.id}`, name: `02_typed_${n.name}`, stage: "typed", bronzeId: n.id },
+    ]);
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "0.8fr repeat(3, 1fr)", gap: 14 }}>
@@ -48,6 +59,27 @@ export default function ThreeColumnView({ nodes, onSelect, selectedId, qualityBy
             <div className="field-label" style={{ margin: 0 }}>{LAYER_LABEL[layer]}</div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {layer === "silver" && structurationPreviews.map((p) => (
+              <div
+                key={p.id}
+                onClick={() => onOpenSilverPreview?.(p.bronzeId, p.stage)}
+                style={{
+                  padding: "10px 12px", borderRadius: 10, border: "1px dashed var(--text-muted)",
+                  borderLeft: `3px dashed ${LAYER_COLOR.silver}`, cursor: onOpenSilverPreview ? "pointer" : "default",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{p.name}</div>
+                  <span
+                    className="badge"
+                    title={t("medallion.structuration.instantPreviewHint")}
+                    style={{ fontSize: 9.5, padding: "1px 6px", border: "1px solid var(--ember)", color: "var(--ember)", background: "var(--ember-soft)" }}
+                  >
+                    {p.stage}
+                  </span>
+                </div>
+              </div>
+            ))}
             {nodes.filter((n) => n.layer === layer).map((n) => (
               <div
                 key={n.id}
@@ -79,7 +111,7 @@ export default function ThreeColumnView({ nodes, onSelect, selectedId, qualityBy
                 </div>
               </div>
             ))}
-            {nodes.filter((n) => n.layer === layer).length === 0 && (
+            {nodes.filter((n) => n.layer === layer).length === 0 && (layer !== "silver" || structurationPreviews.length === 0) && (
               <div style={{ fontSize: 12.5, color: "var(--text-muted)", textAlign: "center", padding: "20px 0" }}>{t("medallion.noDataset")}</div>
             )}
           </div>
