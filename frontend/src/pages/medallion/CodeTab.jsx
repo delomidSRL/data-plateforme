@@ -78,15 +78,26 @@ function TreeNode({ node, depth, activePath, dirtyPaths, collapsed, onToggle, on
     return (
       <button
         type="button" onClick={() => onOpenFile(f.path)} onContextMenu={(e) => onContextMenu(e, f.path)}
+        title={node.name}
         style={rowStyle(isActive)}
       >
         <span style={{ width: 14, flexShrink: 0 }} />
         <span style={{ flexShrink: 0, opacity: .6, display: "flex" }}>{Icon.file()}</span>
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
           {dirtyPaths.has(f.path) && <span style={{ color: "var(--ember)" }}>● </span>}
           {node.name}
         </span>
-        {STATUS_TONE[f.status] && <Badge tone={STATUS_TONE[f.status]}>{t(`medallion.code.status.${f.status}`)}</Badge>}
+        {/* A full-text badge here would starve the filename of room in a 260px-wide tree (it
+            doesn't shrink, so flexbox had nowhere left to take space from but the name) — a
+            dot conveys the same "won't be silently regenerated" status without that fight;
+            the full label it used to show inline is still one hover away. */}
+        {STATUS_TONE[f.status] && (
+          <span
+            className="badge-dot"
+            style={{ background: "var(--ember)", flexShrink: 0 }}
+            title={t(`medallion.code.status.${f.status}`)}
+          />
+        )}
       </button>
     );
   }
