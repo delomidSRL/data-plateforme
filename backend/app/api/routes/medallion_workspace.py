@@ -50,6 +50,11 @@ _ALLOWED_EXTENSIONS = (".sql", ".yml", ".yaml", ".md", ".csv")
 # versions); profiles.yml never even exists in the workspace (§2), listed here too so a
 # would-be write gets the same clear "géré" message instead of a confusing 404.
 _MANAGED_FILES = {"packages.yml", "profiles.yml"}
+# A folder has no identity of its own here — only files do (§ the whole ProjectFile model) —
+# so an otherwise-empty one can only be represented by a placeholder inside it, same convention
+# as git's own .gitkeep. Empty, never shown as a real file by the Code tab's tree (CodeTab.jsx's
+# buildTree), and never picked up as a dbt model (workspace_sync only looks at *.sql).
+FOLDER_MARKER = ".gitkeep"
 
 
 def _validate_path(path: str) -> None:
@@ -58,7 +63,7 @@ def _validate_path(path: str) -> None:
     parts = path.split("/")
     if any(p in ("", ".", "..") for p in parts):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Chemin de fichier invalide.")
-    if not path.endswith(_ALLOWED_EXTENSIONS):
+    if not path.endswith(_ALLOWED_EXTENSIONS) and parts[-1] != FOLDER_MARKER:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Extension non autorisée — extensions acceptées : {', '.join(_ALLOWED_EXTENSIONS)}.")
     if path in _MANAGED_FILES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"« {path} » est géré par la plateforme et n'est pas modifiable ici.")

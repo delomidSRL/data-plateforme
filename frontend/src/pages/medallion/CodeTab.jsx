@@ -22,6 +22,10 @@ function dbtModelNameFor(path) {
 // file list the backend returns. `profiles.yml` never appears here — the workspace never
 // stores it (§2).
 const INDENT = 16;
+// Mirrors the backend's medallion_workspace.FOLDER_MARKER — the only way an otherwise-empty
+// folder (created via "New folder") can exist at all, since only files have identity here.
+// Never rendered as a file of its own; its folder still is, even with zero other children.
+const FOLDER_MARKER = ".gitkeep";
 
 function buildTree(files) {
   const root = { type: "folder", name: "", path: "", children: new Map() };
@@ -33,6 +37,7 @@ function buildTree(files) {
       acc = acc ? `${acc}/${part}` : part;
       const isFile = i === parts.length - 1;
       if (isFile) {
+        if (part === FOLDER_MARKER) return;
         node.children.set(part, { type: "file", name: part, path: acc, file: f });
       } else {
         if (!node.children.has(part)) node.children.set(part, { type: "folder", name: part, path: acc, children: new Map() });
@@ -326,6 +331,23 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
       .catch((err) => showToast(err.message || t("medallion.code.saveFailed")));
   };
 
+  const newFolder = (parentPath) => {
+    const suggestion = parentPath ? `${parentPath}/` : "models/gold/";
+    // eslint-disable-next-line no-alert
+    const input = window.prompt(t("medallion.code.newFolderPrompt"), suggestion);
+    if (!input) return;
+    const folderPath = input.trim().replace(/\/+$/, "");
+    if (!folderPath) return;
+    // An empty folder has no identity of its own (only files do) — a hidden placeholder
+    // keeps it visible in the tree; never opened, never shown as a file (buildTree filters it).
+    medallionApi.createWorkspaceFile(project.id, `${folderPath}/${FOLDER_MARKER}`, "")
+      .then((out) => {
+        loadTree();
+        applySyncResult({ path: out.path }, out.sync);
+      })
+      .catch((err) => showToast(err.message || t("medallion.code.saveFailed")));
+  };
+
   const rename = (path) => {
     // eslint-disable-next-line no-alert
     const toPath = window.prompt(t("medallion.code.renamePrompt"), path);
@@ -400,9 +422,12 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
       <div className="card" style={{ padding: 0, display: "flex", height: 560, overflow: "hidden" }}>
         <div style={{ width: 260, borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
           {canEdit && (
-            <div style={{ padding: 8, borderBottom: "1px solid var(--border)" }}>
-              <button type="button" className="btn-ghost" style={{ width: "100%", padding: "5px 8px", fontSize: 12 }} onClick={() => newFile(null)}>
+            <div style={{ padding: 8, borderBottom: "1px solid var(--border)", display: "flex", gap: 6 }}>
+              <button type="button" className="btn-ghost" style={{ flex: 1, padding: "5px 8px", fontSize: 12 }} onClick={() => newFile(null)}>
                 {Icon.plus()} {t("medallion.code.newFile")}
+              </button>
+              <button type="button" className="btn-ghost" style={{ flex: 1, padding: "5px 8px", fontSize: 12 }} onClick={() => newFolder(null)}>
+                {Icon.folder()} {t("medallion.code.newFolder")}
               </button>
             </div>
           )}
@@ -610,6 +635,12 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
             <button type="button" className="btn-ghost" style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 10px" }}
               onClick={() => { newFile(contextMenu.path); setContextMenu(null); }}>
               {Icon.plus()} {t("medallion.code.newFile")}
+            </button>
+          )}
+          {contextMenu.isFolder && (
+            <button type="button" className="btn-ghost" style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 10px" }}
+              onClick={() => { newFolder(contextMenu.path); setContextMenu(null); }}>
+              {Icon.folder()} {t("medallion.code.newFolder")}
             </button>
           )}
           {!contextMenu.isFolder && (

@@ -1057,6 +1057,8 @@
       },
       "newFile": "Nouveau fichier",
       "newFilePrompt": "Chemin du nouveau fichier (ex. models/gold/mon_mart.sql) :",
+      "newFolder": "Nouveau dossier",
+      "newFolderPrompt": "Chemin du nouveau dossier (ex. models/gold/mon_dossier) :",
       "rename": "Renommer",
       "renamePrompt": "Nouveau chemin :",
       "delete": "Supprimer",

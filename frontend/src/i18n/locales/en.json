@@ -1057,6 +1057,8 @@
       },
       "newFile": "New file",
       "newFilePrompt": "Path for the new file (e.g. models/gold/my_mart.sql):",
+      "newFolder": "New folder",
+      "newFolderPrompt": "Path for the new folder (e.g. models/gold/my_folder):",
       "rename": "Rename",
       "renamePrompt": "New path:",
       "delete": "Delete",

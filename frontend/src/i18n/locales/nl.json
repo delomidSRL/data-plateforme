@@ -1057,6 +1057,8 @@
       },
       "newFile": "Nieuw bestand",
       "newFilePrompt": "Pad voor het nieuwe bestand (bv. models/gold/mijn_mart.sql):",
+      "newFolder": "Nieuwe map",
+      "newFolderPrompt": "Pad voor de nieuwe map (bv. models/gold/mijn_map):",
       "rename": "Hernoemen",
       "renamePrompt": "Nieuw pad:",
       "delete": "Verwijderen",
