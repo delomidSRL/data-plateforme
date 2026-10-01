@@ -797,7 +797,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
             )}
             {s3Result && (
               <div className="error-banner" style={{ background: "rgba(47,158,110,.08)", borderColor: "rgba(47,158,110,.3)", color: "#2f9e6e", marginBottom: 14 }}>
-                {Icon.check()}<span>{t("medallion.panel.s3ImportDone", { table: `${s3Result.target_schema}.${s3Result.target_table}` })}</span>
+                {Icon.check({ width: 16, height: 16, style: { flexShrink: 0 } })}<span>{t("medallion.panel.s3ImportDone", { table: `${s3Result.target_schema}.${s3Result.target_table}` })}</span>
               </div>
             )}
             {!browsing && browseTables.length > 0 && (
@@ -1103,7 +1103,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                         borderColor: sqlValidation.valid ? "rgba(47,158,110,.3)" : undefined, color: sqlValidation.valid ? "#2f9e6e" : undefined,
                       }}
                     >
-                      {sqlValidation.valid ? Icon.check() : Icon.warn()}
+                      {sqlValidation.valid ? Icon.check({ width: 16, height: 16, style: { flexShrink: 0 } }) : Icon.warn({ width: 16, height: 16, style: { flexShrink: 0 } })}
                       <span>{sqlValidation.valid ? t("medallion.panel.sqlValidateOk") : sqlValidation.message}</span>
                     </div>
                   )}

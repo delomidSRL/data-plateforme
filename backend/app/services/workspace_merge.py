@@ -39,14 +39,20 @@ class MergeOutcome:
         return bool(self.proposed or self.conflicted)
 
 
-def _three_way_merge(ours: str, base: str, theirs: str) -> tuple[str, bool]:
+def _three_way_merge(ours: str, base: str | None, theirs: str) -> tuple[str, bool]:
     """Returns (merged_text, has_conflicts). No repository needed — `git merge-file` operates
-    on three plain files. Exit 0 = clean; a positive count = that many conflicting hunks."""
+    on three plain files. Exit 0 = clean; a positive count = that many conflicting hunks.
+
+    `base` is None for a file that was authored by hand (Code tab) and never had a generator
+    pass of its own (same "no base at all" case workspace.is_modified() already treats as
+    modified) — there is no common ancestor to diff against, so it's treated as empty: ours
+    and theirs are compared with no shared history, which `git merge-file` correctly resolves
+    as a conflict unless one side happens to match the empty base exactly."""
     with tempfile.TemporaryDirectory(prefix="wsmerge_") as tmp_str:
         tmp = Path(tmp_str)
         ours_f, base_f, theirs_f = tmp / "ours", tmp / "base", tmp / "theirs"
         ours_f.write_text(ours, encoding="utf-8")
-        base_f.write_text(base, encoding="utf-8")
+        base_f.write_text(base or "", encoding="utf-8")
         theirs_f.write_text(theirs, encoding="utf-8")
         result = subprocess.run(
             [
@@ -151,7 +157,10 @@ def apply_generated(
             conflict.trigger = trigger
         else:
             db.add(ProjectFileConflict(
-                project_id=project.id, path=path, base_content=row.base_content, ours_content=row.content,
+                # base_content is NOT NULL here (unlike ProjectFile's own, nullable column) —
+                # a file with no base of its own is recorded as having an empty one, matching
+                # what _three_way_merge just actually diffed against.
+                project_id=project.id, path=path, base_content=row.base_content or "", ours_content=row.content,
                 theirs_content=content, merged_content=merged_text, status=status, generator=generator, trigger=trigger,
             ))
         (outcome.conflicted if has_conflicts else outcome.proposed).append(path)

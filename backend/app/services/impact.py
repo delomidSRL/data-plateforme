@@ -148,7 +148,11 @@ def analyze(db: Session, project: MedallionProject) -> ImpactResult:
         if dataset is None:
             continue
 
-        old_cols = _static_output_columns(old_snapshot[path])
+        # A path absent from the active version's own snapshot is a file authored entirely
+        # since the last build — never captured "before", so there is nothing to diff it
+        # against (same as any other case this module treats as "unknown": None, not a crash).
+        old_content = old_snapshot.get(path)
+        old_cols = _static_output_columns(old_content) if old_content is not None else None
         new_cols = _static_output_columns(current_tree[path])
         if new_cols is None and compiled.ok and warehouse is not None:
             new_cols = _live_output_columns(warehouse, compiled.compiled_sql.get(path, ""))
