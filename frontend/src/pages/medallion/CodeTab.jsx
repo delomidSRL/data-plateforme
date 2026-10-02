@@ -59,8 +59,15 @@ function languageFor(path) {
   if (path.endsWith(".sql")) return "sql";
   if (path.endsWith(".yml") || path.endsWith(".yaml")) return "yaml";
   if (path.endsWith(".md")) return "markdown";
+  if (path.endsWith(".py")) return "python";
   return "plaintext";
 }
+
+// Mirrors the backend's medallion_workspace.AIRFLOW_DAG_PATH — never a ProjectFile row, always
+// rendered live from the project's current state (same render_dag() call the "Preview" button's
+// own dag_py already uses). Read-only here: there is no base to save it against, and the next
+// deploy regenerates it from scratch regardless of anything typed into this view.
+const AIRFLOW_DAG_PATH = "airflow/dag.py";
 
 const STATUS_TONE = { modified: "accent", code: "accent" };
 
@@ -449,7 +456,7 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
                 key={child.path} node={child} depth={0} activePath={activePath} dirtyPaths={dirtyPaths} collapsed={collapsed}
                 onToggle={toggleFolder} onOpenFile={openFile}
                 onContextMenu={(e, path, isFolder) => {
-                  if (!canEdit) return;
+                  if (!canEdit || path === AIRFLOW_DAG_PATH) return;
                   e.preventDefault(); e.stopPropagation();
                   setContextMenu({ x: e.clientX, y: e.clientY, path, isFolder: !!isFolder });
                 }}
@@ -561,7 +568,7 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
                   theme="vs"
                   onMount={handleEditorMount}
                   onChange={(value) => setContents((prev) => ({ ...prev, [activePath]: { ...prev[activePath], draft: value ?? "" } }))}
-                  options={{ readOnly: !canEdit, minimap: { enabled: false }, fontFamily: "JetBrains Mono, monospace", fontSize: 12.5, scrollBeyondLastLine: false }}
+                  options={{ readOnly: !canEdit || activePath === AIRFLOW_DAG_PATH, minimap: { enabled: false }, fontFamily: "JetBrains Mono, monospace", fontSize: 12.5, scrollBeyondLastLine: false }}
                 />
               </div>
               {showCompiled && compiledByPath[activePath] && (

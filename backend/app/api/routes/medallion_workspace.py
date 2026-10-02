@@ -3,6 +3,7 @@ edits, synced back onto the canvas (étape 2). Split out of routes/medallion.py,
 already large before this — same `/api/medallion/projects` prefix, mounted as its own router
 (same pattern as medallion_admin.py's `/api/medallion/admin`)."""
 import difflib
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -11,6 +12,7 @@ from app.api.deps import get_current_user
 from app.api.deps_medallion import get_owned_project, get_readable_project
 from app.core.config import get_settings
 from app.db.session import get_db
+from app.models.data_source import DataSource
 from app.models.medallion import MedallionDataset, MedallionProject, MedallionVersion, WorkspaceParseStatus
 from app.models.project_file import ProjectFile
 from app.models.project_file_audit import ProjectFileAudit, ProjectFileAuditAction
@@ -41,15 +43,22 @@ from app.schemas.medallion import (
     WorkspaceTreeOut,
     WorkspaceWriteOut,
 )
-from app.services import dbt_runner, impact, jinja_guard, workspace, workspace_merge, workspace_sync
+from app.services import dag_render, dbt_runner, impact, jinja_guard, workspace, workspace_merge, workspace_sync
 
 router = APIRouter(prefix="/api/medallion/projects", tags=["medallion-workspace"])
 
 _ALLOWED_EXTENSIONS = (".sql", ".yml", ".yaml", ".md", ".csv")
+# Never a file of the workspace's own (never in `project_files`, never written through this
+# router at all) — rendered live from the project's current datasets/schedule/connections, the
+# same way the "Preview" button's dag_py already is (see medallion.py's preview_project). Shown
+# in the Code tab purely so a user can read what the next deploy will ship to Airflow, right next
+# to the dbt SQL it was generated from, without needing the separate preview popup for it.
+AIRFLOW_DAG_PATH = "airflow/dag.py"
 # §4.5 — generator-managed, never a direct human write: packages.yml (M16 ext, pinned
 # versions); profiles.yml never even exists in the workspace (§2), listed here too so a
-# would-be write gets the same clear "géré" message instead of a confusing 404.
-_MANAGED_FILES = {"packages.yml", "profiles.yml"}
+# would-be write gets the same clear "géré" message instead of a confusing 404. The Airflow DAG
+# is the same story as profiles.yml — generated, never persisted — just surfaced for reading.
+_MANAGED_FILES = {"packages.yml", "profiles.yml", AIRFLOW_DAG_PATH}
 # A folder has no identity of its own here — only files do (§ the whole ProjectFile model) —
 # so an otherwise-empty one can only be represented by a placeholder inside it, same convention
 # as git's own .gitkeep. Empty, never shown as a real file by the Code tab's tree (CodeTab.jsx's
@@ -63,10 +72,12 @@ def _validate_path(path: str) -> None:
     parts = path.split("/")
     if any(p in ("", ".", "..") for p in parts):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Chemin de fichier invalide.")
-    if not path.endswith(_ALLOWED_EXTENSIONS) and parts[-1] != FOLDER_MARKER:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Extension non autorisée — extensions acceptées : {', '.join(_ALLOWED_EXTENSIONS)}.")
+    # Checked before the extension allow-list below — dag.py's own .py extension would otherwise
+    # 400 with a confusing "extension not allowed" instead of the clear "managed" message.
     if path in _MANAGED_FILES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"« {path} » est géré par la plateforme et n'est pas modifiable ici.")
+    if not path.endswith(_ALLOWED_EXTENSIONS) and parts[-1] != FOLDER_MARKER:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Extension non autorisée — extensions acceptées : {', '.join(_ALLOWED_EXTENSIONS)}.")
 
 
 def _validate_size(content: str) -> None:
@@ -96,6 +107,25 @@ def _file_out(row: ProjectFile) -> WorkspaceFileContentOut:
     return WorkspaceFileContentOut(
         path=row.path, content=row.content, status=_workspace_file_status(row),
         dataset_id=row.dataset_id, version=row.version, generator=row.generator, updated_at=row.updated_at,
+    )
+
+
+def _render_airflow_dag_file(db: Session, project: MedallionProject) -> WorkspaceFileContentOut:
+    """GET-only, never a ProjectFile row — same render_dag() call the "Preview" button's
+    dag_py already uses (medallion.py's preview_project), just reached from the Code tab so the
+    DAG that will actually be deployed sits next to the dbt SQL it was generated from, with
+    Monaco's syntax highlighting instead of the preview popup's plain <pre>."""
+    datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
+    object_store = db.get(DataSource, project.object_store_source_id) if project.object_store_source_id else None
+    if object_store is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucun object store configuré pour ce projet — le DAG ne peut pas être généré.")
+    try:
+        dag_py = dag_render.render_dag(project, datasets, object_store)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Génération du DAG impossible : {exc}")
+    return WorkspaceFileContentOut(
+        path=AIRFLOW_DAG_PATH, content=dag_py, status="generated",
+        dataset_id=None, version=0, generator="airflow_dag", updated_at=datetime.now(timezone.utc),
     )
 
 
@@ -139,14 +169,23 @@ def _write_out(row: ProjectFile, sync_result: workspace_sync.SyncResult) -> Work
 def get_workspace_tree(db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
     _ensure_workspace(db, project)
     rows = db.query(ProjectFile).filter(ProjectFile.project_id == project.id).order_by(ProjectFile.path).all()
-    return WorkspaceTreeOut(files=[
+    files = [
         WorkspaceFileOut(path=r.path, status=_workspace_file_status(r), dataset_id=r.dataset_id, version=r.version, generator=r.generator, updated_at=r.updated_at)
         for r in rows
-    ])
+    ]
+    # Never a ProjectFile row (see _render_airflow_dag_file) — listed here too so it shows up in
+    # the Code tab's tree next to the real workspace files, not just readable by exact path.
+    files.append(WorkspaceFileOut(
+        path=AIRFLOW_DAG_PATH, status="generated", dataset_id=None, version=0,
+        generator="airflow_dag", updated_at=datetime.now(timezone.utc),
+    ))
+    return WorkspaceTreeOut(files=files)
 
 
 @router.get("/{pid}/workspace/file", response_model=WorkspaceFileContentOut)
 def get_workspace_file(path: str, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+    if path == AIRFLOW_DAG_PATH:
+        return _render_airflow_dag_file(db, project)
     _ensure_workspace(db, project)
     row = db.query(ProjectFile).filter(ProjectFile.project_id == project.id, ProjectFile.path == path).first()
     if row is None:
