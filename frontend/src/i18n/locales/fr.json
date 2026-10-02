@@ -1188,7 +1188,12 @@
       "saving": "Enregistrement…",
       "save": "Enregistrer",
       "saveFailed": "Enregistrement impossible.",
-      "deleteFailed": "Suppression impossible."
+      "deleteFailed": "Suppression impossible.",
+      "deleteTitle": "Supprimer « {{name}} » ?",
+      "deleteWarning": "Son SQL, ses tests et ses publications éventuelles seront définitivement supprimés. Cette action est irréversible.",
+      "deleteWarningWithDependents": "{{count}} dataset(s) en dépendent et ne pourront plus être construits tant qu'ils ne seront pas mis à jour : {{names}}. Son SQL, ses tests et ses publications éventuelles seront définitivement supprimés. Cette action est irréversible.",
+      "confirmDelete": "Supprimer le dataset",
+      "deleting": "Suppression…"
     },
     "structuration": {
       "tab": "Structuration",

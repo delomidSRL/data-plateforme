@@ -71,6 +71,10 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   ];
 
   const isEdit = !!dataset;
+  // UX ask — deleting a dataset used to fire straight from the trash icon, no confirmation at
+  // all (every other destructive action in the app — a folder, a file in the Code tab — asks
+  // first). This just makes the dataset drawer consistent with those.
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [panelTab, setPanelTab] = useState(initialTab || "config"); // "config" | "preview" (Module 10) | "publish" (Module 11, gold only) | "indicators" (Module 12)
   const [layer, setLayer] = useState(dataset?.layer || defaultLayer || "bronze");
   // UX ask — the "02 typed" node's "+" opens this same panel pre-seeded (name, upstream, a
@@ -555,6 +559,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
 
   const remove = async () => {
     setBusy(true);
+    setError("");
     try {
       await medallionApi.deleteDataset(project.id, dataset.id);
       onDeleted(dataset.id);
@@ -1183,7 +1188,7 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
             <Button type="button" variant="ghost" onClick={onClose}>{t("common.close")}</Button>
           ) : (
             <>
-              {isEdit && <button type="button" className="btn-icon" onClick={remove} disabled={busy} title={t("common.delete")}>{Icon.trash()}</button>}
+              {isEdit && <button type="button" className="btn-icon-danger" onClick={() => { setError(""); setConfirmDelete(true); }} disabled={busy} title={t("common.delete")}>{Icon.trash()}</button>}
               <Button type="button" variant="ghost" onClick={onClose}>{t("medallion.panel.cancel")}</Button>
               <Button type="submit" disabled={!valid || busy || (isEdit && dataset.code_modified)}>{busy ? t("medallion.panel.saving") : t("medallion.panel.save")}</Button>
             </>
@@ -1220,6 +1225,23 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
         onValidated={(fi) => { setS3Validating(null); applyS3ImportResult(fi); }}
       />
     )}
+    {confirmDelete && (() => {
+      const dependents = (datasets || []).filter((d) => d.id !== dataset.id && (d.upstream_dataset_ids || []).includes(dataset.id));
+      return (
+        <Modal title={t("medallion.panel.deleteTitle", { name: dataset.name })} onClose={() => setConfirmDelete(false)} maxWidth={440}>
+          {error && <div className="error-banner">{Icon.warn()}<span>{error}</span></div>}
+          <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 0 }}>
+            {dependents.length > 0
+              ? t("medallion.panel.deleteWarningWithDependents", { count: dependents.length, names: dependents.map((d) => d.name).join(", ") })
+              : t("medallion.panel.deleteWarning")}
+          </p>
+          <div className="modal-actions">
+            <Button type="button" variant="ghost" onClick={() => setConfirmDelete(false)} disabled={busy}>{t("medallion.panel.cancel")}</Button>
+            <Button type="button" variant="danger" disabled={busy} onClick={remove}>{busy ? t("medallion.panel.deleting") : t("medallion.panel.confirmDelete")}</Button>
+          </div>
+        </Modal>
+      );
+    })()}
     </>
   );
 }

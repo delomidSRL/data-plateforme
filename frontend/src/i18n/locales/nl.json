@@ -1188,7 +1188,12 @@
       "saving": "Opslaan…",
       "save": "Opslaan",
       "saveFailed": "Opslaan mislukt.",
-      "deleteFailed": "Verwijderen mislukt."
+      "deleteFailed": "Verwijderen mislukt.",
+      "deleteTitle": "« {{name}} » verwijderen?",
+      "deleteWarning": "De SQL, tests en eventuele publicaties worden definitief verwijderd. Deze actie kan niet ongedaan worden gemaakt.",
+      "deleteWarningWithDependents": "{{count}} dataset(s) zijn hiervan afhankelijk en kunnen niet meer gebouwd worden totdat ze zijn bijgewerkt: {{names}}. De SQL, tests en eventuele publicaties worden definitief verwijderd. Deze actie kan niet ongedaan worden gemaakt.",
+      "confirmDelete": "Dataset verwijderen",
+      "deleting": "Verwijderen…"
     },
     "structuration": {
       "tab": "Structurering",

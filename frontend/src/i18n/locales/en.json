@@ -1188,7 +1188,12 @@
       "saving": "Saving…",
       "save": "Save",
       "saveFailed": "Save failed.",
-      "deleteFailed": "Delete failed."
+      "deleteFailed": "Delete failed.",
+      "deleteTitle": "Delete « {{name}} »?",
+      "deleteWarning": "Its SQL, tests and any publications will be permanently deleted. This cannot be undone.",
+      "deleteWarningWithDependents": "{{count}} dataset(s) depend on it and won't build until they're updated: {{names}}. Its SQL, tests and any publications will be permanently deleted. This cannot be undone.",
+      "confirmDelete": "Delete dataset",
+      "deleting": "Deleting…"
     },
     "structuration": {
       "tab": "Structuring",
