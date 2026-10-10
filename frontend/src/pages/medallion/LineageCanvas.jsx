@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ReactFlow, Background, Controls, Panel, Handle, Position } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { StatusDot } from "../../components/ui/Badge.jsx";
+import { RunButton, RunErrorBanner, RUN_STATUS_COLOR } from "./RunButton.jsx";
 
 const ORIGIN_X = -320;
 const LAYER_X = { bronze: 40, silver: 760, gold: 1100 };
@@ -51,16 +52,20 @@ function OriginNode({ data }) {
 
 function DatasetNode({ data }) {
   const { t } = useTranslation();
+  const runColor = RUN_STATUS_COLOR[data.runStatus];
   return (
     <div
       className="card"
       style={{
-        padding: "10px 14px", minWidth: 190, borderLeft: `3px solid ${LAYER_COLOR[data.layer]}`,
+        padding: "10px 14px", minWidth: 190, borderLeft: `3px solid ${runColor || LAYER_COLOR[data.layer]}`,
         boxShadow: data.selected ? "0 0 0 2px var(--ember)" : "0 1px 3px rgba(0,0,0,.08)", cursor: "pointer",
         position: "relative",
       }}
       onClick={data.onClick}
     >
+      {data.onRun && (
+        <RunButton onRun={data.onRun} status={data.runStatus} title={t("medallion.run.button")} />
+      )}
       {data.layer === "bronze" && data.payloadBacked && (
         // Module 6 extension (payload & structuration) — a shortcut straight to profiling,
         // available the moment the bronze node exists. Module 18 §7 UX — its guided popup is
@@ -199,6 +204,7 @@ function DatasetNode({ data }) {
       {data.layer === "gold" && data.dashboard && (
         <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 4, fontFamily: "var(--font-m)" }}>{data.dashboardDate}</div>
       )}
+      {data.runStatus === "failed" && <RunErrorBanner error={data.runError} />}
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
     </div>
   );
@@ -251,8 +257,8 @@ function rerouteThroughStage(bronzeNode, targetSql) {
 
 export default function LineageCanvas({
   nodes: rawNodes, edges: rawEdges, onSelect, selectedId, projectId, onOpenStructuration, onOpenSilverPreview,
-  onCreateStandardized, onCreateAnnotated, onCreateValidated, onCreateQuarantine,
-  qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {}, sqlByDataset = {},
+  onCreateStandardized, onCreateAnnotated, onCreateValidated, onCreateQuarantine, onRunNode,
+  qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {}, sqlByDataset = {}, runStatuses = {},
 }) {
   const { t, i18n } = useTranslation();
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
@@ -333,6 +339,8 @@ export default function LineageCanvas({
               ? () => onCreateValidated(n.id, n.name) : undefined,
             onCreateQuarantine: n.layer === "silver" && n.name.startsWith("04_annotated_") && onCreateQuarantine
               ? () => onCreateQuarantine(n.id, n.name) : undefined,
+            onRun: onRunNode ? () => onRunNode(n.id, null) : undefined,
+            runStatus: runStatuses[String(n.id)]?.status, runError: runStatuses[String(n.id)]?.error,
             selected: selectedId === n.id, onClick: () => onSelect(n.id),
           },
         });
@@ -364,6 +372,8 @@ export default function LineageCanvas({
         data: {
           layer: "silver", name: `01_unpacked_${n.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
           previewStageLabel: "unpacked", isInstantPreview: true,
+          onRun: onRunNode ? () => onRunNode(n.id, "unpacked") : undefined,
+          runStatus: runStatuses[silverUnpackedId]?.status, runError: runStatuses[silverUnpackedId]?.error,
           selected: false, onClick: () => onOpenSilverPreview?.(n.id, "unpacked"),
         },
       });
@@ -374,6 +384,8 @@ export default function LineageCanvas({
         data: {
           layer: "silver", name: `02_typed_${n.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
           previewStageLabel: "typed", isInstantPreview: true,
+          onRun: onRunNode ? () => onRunNode(n.id, "typed") : undefined,
+          runStatus: runStatuses[silverTypedId]?.status, runError: runStatuses[silverTypedId]?.error,
           selected: false, onClick: () => onOpenSilverPreview?.(n.id, "typed"),
           onCreateStandardized: onCreateStandardized ? () => onCreateStandardized(n.id, n.name) : undefined,
         },
@@ -395,7 +407,7 @@ export default function LineageCanvas({
     // every node-pushing branch above stays oblivious to it.
     const positionedNodes = flowNodes.map((n) => (positionOverrides[n.id] ? { ...n, position: positionOverrides[n.id] } : n));
     return { nodes: positionedNodes, edges: flowEdges };
-  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, onCreateAnnotated, onCreateValidated, onCreateQuarantine, qualityByDataset, publishedByDataset, dashboardByDataset, sqlByDataset, publishedLabel, dashboardLabel, codeModifiedLabel, i18n.language, t, positionOverrides]);
+  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, onCreateAnnotated, onCreateValidated, onCreateQuarantine, onRunNode, qualityByDataset, publishedByDataset, dashboardByDataset, sqlByDataset, runStatuses, publishedLabel, dashboardLabel, codeModifiedLabel, i18n.language, t, positionOverrides]);
 
   const hasCustomLayout = Object.keys(positionOverrides).length > 0;
 

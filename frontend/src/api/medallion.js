@@ -53,6 +53,11 @@ export const unpauseProject = (pid) => apiFetch(`${base}/${pid}/unpause`, { meth
 export const getLineage = (pid) => apiFetch(`${base}/${pid}/lineage`);
 export const listRuns = (pid) => apiFetch(`${base}/${pid}/runs`);
 export const getRun = (pid, runId) => apiFetch(`${base}/${pid}/runs/${runId}`);
+// Bouton RUN du canvas — `stage` ("unpacked"|"typed") cible une étape de structuration
+// synthétique du bronze `did` ; omis, `did` est le vrai dataset à construire.
+export const runDatasetNode = (pid, did, stage) => apiFetch(`${base}/${pid}/datasets/${did}/run`, { method: "POST", body: { stage: stage || null } });
+export const getRunNodeStatus = (pid, runId) => apiFetch(`${base}/${pid}/runs/${runId}/node-status`);
+export const getDatasetRunHistory = (pid, did, stage) => apiFetch(`${base}/${pid}/datasets/${did}/run-history${stage ? `?stage=${stage}` : ""}`);
 
 export const listVersions = (pid) => apiFetch(`${base}/${pid}/versions`);
 export const getVersion = (pid, vid) => apiFetch(`${base}/${pid}/versions/${vid}`);

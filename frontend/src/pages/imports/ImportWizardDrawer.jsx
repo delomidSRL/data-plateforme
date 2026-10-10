@@ -1,20 +1,12 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Drawer } from "../../components/ui/Drawer.jsx";
-import { Field, Input } from "../../components/ui/Input.jsx";
+import { Field } from "../../components/ui/Input.jsx";
 import { Button } from "../../components/ui/Button.jsx";
 import { Icon } from "../../components/icons.jsx";
 import * as sourcesApi from "../../api/sources.js";
 import * as importsApi from "../../api/imports.js";
-
-const FORMATS = [
-  { value: "csv", label: "CSV" },
-  { value: "excel", label: "Excel" },
-  { value: "json", label: "JSON" },
-  { value: "xml", label: "XML" },
-];
-
-const PAYLOAD_FORMATS = new Set(["csv", "excel"]);
+import ImportConfigFields, { PAYLOAD_FORMATS } from "./ImportConfigFields.jsx";
 
 export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
   const { t } = useTranslation();
@@ -56,15 +48,6 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
     else if (/\.csv$/i.test(f.name)) setFormat("csv");
     else if (/\.(json|ndjson)$/i.test(f.name)) { setFormat("json"); setImportMode("typed"); }
     else if (/\.xml$/i.test(f.name)) { setFormat("xml"); setImportMode("typed"); }
-  };
-
-  // Client-side preview only — the backend re-derives this itself (schema_infer's own
-  // slugifier) at import time; this mirrors it just closely enough to show the user where
-  // the file will land before they commit.
-  const previewTableName = (n) => {
-    const ascii = (n || "").normalize("NFKD").replace(/[̀-ͯ]/g, "");
-    const slug = ascii.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-    return slug ? (/^[0-9]/.test(slug) ? `col_${slug}` : slug) : "col";
   };
 
   useEffect(() => {
@@ -159,108 +142,20 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
         </div>
       </Field>
 
-      <Field label={t("imports.wizard.format")}>
-        <div className="seg" style={{ flexWrap: "wrap" }}>
-          {FORMATS.map((f) => (
-            <button key={f.value} type="button" className={"seg-opt" + (format === f.value ? " selected" : "")} style={{ flex: "1 1 45%" }} onClick={() => setFormat(f.value)}>
-              <div className="seg-role">{format === f.value && <span style={{ color: "var(--ember)" }}>{Icon.check({ width: 14, height: 14 })}</span>}{f.label}</div>
-            </button>
-          ))}
-        </div>
-      </Field>
-
-      {PAYLOAD_FORMATS.has(format) && (
-        <Field label={t("imports.wizard.importModeLabel")}>
-          <div className="seg">
-            <button type="button" className={"seg-opt" + (importMode === "typed" ? " selected" : "")} onClick={() => setImportMode("typed")}>
-              <div className="seg-role">{t("imports.wizard.modeTyped")}</div>
-            </button>
-            <button type="button" className={"seg-opt" + (importMode === "payload" ? " selected" : "")} onClick={() => setImportMode("payload")}>
-              <div className="seg-role">{t("imports.wizard.modePayload")}</div>
-            </button>
-          </div>
-          <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>
-            {importMode === "typed" ? t("imports.wizard.modeTypedHelp") : t("imports.wizard.modePayloadHelp")}
-          </div>
-        </Field>
-      )}
-
-      {isPayload && (
-        <>
-          <Field label={t("imports.wizard.writeMode")}>
-            <select className="input" value={payloadWriteMode} onChange={(e) => setPayloadWriteMode(e.target.value)}>
-              <option value="create">{t("imports.modal.writeModeCreate")}</option>
-              <option value="replace">{t("imports.modal.writeModeReplace")}</option>
-              <option value="append">{t("imports.modal.writeModeAppend")}</option>
-            </select>
-          </Field>
-          <Field label={t("imports.wizard.sourcePk")}>
-            {pkLoading && <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 6 }}>{t("imports.wizard.sourcePkAnalyzing")}</div>}
-            {pkCandidates.length > 0 && (
-              <select
-                multiple className="input" style={{ marginBottom: 8, minHeight: 90 }}
-                value={sourcePk ? sourcePk.split(",").map((s) => s.trim()).filter(Boolean) : []}
-                onChange={(e) => setSourcePk(Array.from(e.target.selectedOptions, (o) => o.value).join(","))}
-              >
-                {pkCandidates.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            )}
-            <Input placeholder={t("imports.wizard.sourcePkPlaceholder")} value={sourcePk} onChange={(e) => setSourcePk(e.target.value)} />
-            <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>{t("imports.wizard.sourcePkHelp")}</div>
-          </Field>
-          <Field label={t("imports.wizard.sourceSystem")}>
-            <Input placeholder={t("imports.wizard.sourceSystemPlaceholder")} value={sourceSystem} onChange={(e) => setSourceSystem(e.target.value)} />
-            <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>{t("imports.wizard.sourceSystemHelp")}</div>
-          </Field>
-          <Field label={t("imports.wizard.bronzeTableName")}>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={previewTableName(file?.name || "")} />
-            <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6, fontFamily: "var(--font-m)" }}>
-              {previewTableName(name.trim() || file?.name || "")}
-            </div>
-          </Field>
-        </>
-      )}
-
-      {format === "csv" && (
-        <div style={{ display: "flex", gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <Field label={t("imports.wizard.delimiter")}>
-              <Input placeholder="," value={delimiter} onChange={(e) => setDelimiter(e.target.value)} />
-            </Field>
-          </div>
-          <div style={{ flex: 1 }}>
-            <Field label={t("imports.wizard.encoding")}>
-              <Input placeholder="utf-8" value={encoding} onChange={(e) => setEncoding(e.target.value)} />
-            </Field>
-          </div>
-        </div>
-      )}
-
-      {format === "excel" && (
-        <Field label={t("imports.wizard.sheet")}>
-          <Input placeholder="0" value={sheet} onChange={(e) => setSheet(e.target.value)} />
-        </Field>
-      )}
-
-      {format === "json" && (
-        <Field label={t("imports.wizard.rootPath")}>
-          <Input placeholder="data.results" value={rootPath} onChange={(e) => setRootPath(e.target.value)} />
-        </Field>
-      )}
-
-      {format === "xml" && (
-        <Field label={t("imports.wizard.recordXpath")}>
-          {xpathLoading && <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 6 }}>{t("imports.wizard.xpathAnalyzing")}</div>}
-          {xpathCandidates.length > 0 && (
-            <select className="input" style={{ marginBottom: 8 }} value={recordXpath} onChange={(e) => setRecordXpath(e.target.value)}>
-              {xpathCandidates.map((c) => (
-                <option key={c.xpath} value={c.xpath}>{c.xpath} ({t("imports.wizard.xpathOccurrences", { count: c.count })})</option>
-              ))}
-            </select>
-          )}
-          <Input placeholder="//commande" value={recordXpath} onChange={(e) => setRecordXpath(e.target.value)} />
-        </Field>
-      )}
+      <ImportConfigFields
+        format={format} onFormatChange={setFormat}
+        importMode={importMode} onImportModeChange={setImportMode}
+        payloadWriteMode={payloadWriteMode} onPayloadWriteModeChange={setPayloadWriteMode}
+        delimiter={delimiter} onDelimiterChange={setDelimiter}
+        encoding={encoding} onEncodingChange={setEncoding}
+        sheet={sheet} onSheetChange={setSheet}
+        rootPath={rootPath} onRootPathChange={setRootPath}
+        recordXpath={recordXpath} onRecordXpathChange={setRecordXpath} xpathCandidates={xpathCandidates} xpathLoading={xpathLoading}
+        sourcePk={sourcePk} onSourcePkChange={setSourcePk} pkCandidates={pkCandidates} pkLoading={pkLoading}
+        sourceSystem={sourceSystem} onSourceSystemChange={setSourceSystem}
+        name={name} onNameChange={setName}
+        fileLabel={file?.name || ""}
+      />
 
       <Field label={t("imports.wizard.targetSource")}>
         <select className="input" value={targetSourceId} onChange={(e) => setTargetSourceId(e.target.value)}>
@@ -275,12 +170,6 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
           {minioSources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
       </Field>
-
-      {!isPayload && (
-        <Field label={t("imports.wizard.importName")}>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={file?.name || ""} />
-        </Field>
-      )}
 
       <div className="modal-actions">
         <Button type="button" variant="ghost" onClick={onClose}>{t("imports.wizard.cancel")}</Button>

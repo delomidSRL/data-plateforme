@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import get_current_user
 from app.api.deps_medallion import get_owned_project, get_project_binding, get_readable_project
@@ -66,6 +67,10 @@ from app.schemas.medallion import (
     ProjectOut,
     ProjectUpdate,
     RestoreRequest,
+    RunNodeHistoryEntry,
+    RunNodeRequest,
+    RunNodeStatusEntry,
+    RunNodeStatusOut,
     RunOut,
     RunTriggerRequest,
     SqlValidationOut,
@@ -91,7 +96,7 @@ from app.schemas.payload_structuration import (
     StructurationUpdate,
 )
 from app.schemas.file_import import ColumnsOut, FileImportOut, ImportFromObjectStoreCreate, ObjectStoreColumnsRequest
-from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, file_import as file_import_service, gold_export, gold_profile, impact, indicator_suggest, payload_structure, preview, promotion, schedule, superset_publish, version_diff, version_restore, version_snapshot, workspace, workspace_merge, workspace_sync
+from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, file_import as file_import_service, gold_export, gold_profile, impact, indicator_suggest, payload_structure, preview, promotion, run_progress, run_scope, schedule, superset_publish, version_diff, version_restore, version_snapshot, workspace, workspace_merge, workspace_sync
 from app.services.ai_config import get_ai_config
 from app.services.superset_instances import get_superset_config
 from app.services.medallion_crud import create_dataset_internal, validate_lineage
@@ -440,6 +445,198 @@ def preview_structuration_silver_table(
         rows=outcome.rows or [], truncated=outcome.truncated,
         target=DataSampleTargetOut(kind=outcome.target.kind, schema_name=outcome.target.schema_name, table=outcome.target.table, source_name=outcome.target.source_name) if outcome.target else None,
     )
+
+
+@router.post("/{pid}/datasets/{did}/run", response_model=RunOut, status_code=status.HTTP_201_CREATED)
+async def run_to_node(did: int, payload: RunNodeRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_owned_project)):
+    """Bouton RUN du canvas — déclenche le DAG du projet, borné (via dag_run.conf, voir
+    run_scope.py) à ce nœud et tout ce qui est en amont. `did` est toujours un vrai dataset ;
+    pour les deux étapes de structuration synthétiques (01_unpacked/02_typed, jamais une
+    MedallionDataset — voir workspace_sync.resolve()), c'est le bronze lui-même + `stage`,
+    même convention que GET .../structuration/preview."""
+    if not project.dag_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Déployez le projet avant de l'exécuter.")
+    dataset = _get_dataset(db, project.id, did)
+    if payload.stage and dataset.layer != MedallionLayer.bronze:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="L'étape de structuration n'est disponible que pour un dataset bronze.")
+
+    datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
+    structured = payload_structure.bulk_structured(db, datasets)
+    structured_bronze_ids = {did for did, is_structured in structured.items() if is_structured}
+    scope = run_scope.compute_run_scope(datasets, dataset, payload.stage, structured_bronze_ids)
+
+    airflow_conf = _resolve_airflow_config(db, project)
+    try:
+        dag = await airflow_api.get_dag(airflow_conf.base_url, airflow_conf.username, airflow_conf.password, project.dag_id)
+        if dag is not None and dag.get("is_paused"):
+            await airflow_api.set_dag_paused(airflow_conf.base_url, airflow_conf.username, airflow_conf.password, project.dag_id, False)
+    except airflow_api.AirflowAPIError:
+        pass  # best-effort — if this fails, trigger_dag_run below surfaces its own clear error
+
+    try:
+        result = await airflow_api.trigger_dag_run(
+            airflow_conf.base_url, airflow_conf.username, airflow_conf.password, project.dag_id, conf=scope.conf(),
+        )
+    except airflow_api.AirflowAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+    run = MedallionRun(
+        project_id=project.id, dag_run_id=result.get("dag_run_id"), state=RunState.queued, started_at=datetime.now(timezone.utc),
+        node_plan={"target_key": scope.target_key, "nodes": scope.node_task_map, "models": scope.node_model_map},
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+_RUNNING_TASK_STATES = {"scheduled", "queued", "running", "up_for_retry", "up_for_reschedule", "restarting", "deferred"}
+_FAILED_TASK_STATES = {"failed", "upstream_failed"}
+
+
+def _extract_error_snippet(log_text: str, max_len: int = 500) -> str:
+    for line in reversed(log_text.splitlines()):
+        stripped = line.strip()
+        if stripped and "error" in stripped.lower():
+            return stripped[:max_len]
+    tail = log_text.strip()[-max_len:]
+    return tail or "Échec — aucun détail disponible dans les logs Airflow."
+
+
+@router.get("/{pid}/runs/{run_id}/node-status", response_model=RunNodeStatusOut)
+async def get_run_node_status(run_id: int, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+    """Bouton RUN du canvas — statut en direct de chaque nœud couvert par ce run (voir
+    node_plan, posé au déclenchement). Les nœuds bronze/ML ont chacun leur propre tâche
+    Airflow (statut exact, par simple lecture de l'état de la tâche). Les nœuds silver/gold
+    partagent une tâche dbt par couche (dbt_run_silver/dbt_run_gold) — affiné via le fichier de
+    progression incrémental de cette tâche pendant qu'elle tourne, puis son propre instantané
+    de run_results.json une fois terminée (voir run_progress.py / dbt_run.py.j2), pour que
+    chaque modèle de cette couche s'allume quand DBT le termine, pas seulement quand la tâche
+    Airflow entière se termine."""
+    run = db.query(MedallionRun).filter(MedallionRun.id == run_id, MedallionRun.project_id == project.id).first()
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run introuvable.")
+
+    target = _resolve_deploy_target(db, project)
+    run = await run_status.refresh_run_state(db, project, run, target)
+
+    node_plan = run.node_plan or {}
+    nodes_map = node_plan.get("nodes", {})
+    node_model_map = node_plan.get("models", {})
+
+    # Historique par nœud (GET .../run-history) — une fois le run dans un état terminal, son
+    # statut par nœud ne changera plus jamais ; le persister évite de re-solliciter Airflow/SSH
+    # à chaque consultation de l'historique, et sert de seule source fiable une fois que les
+    # fichiers de progression/run_results partagés (un par TÂCHE, pas par run) ont été écrasés
+    # par un run plus récent sur ce même projet.
+    cached_results = node_plan.get("results")
+    if cached_results is not None and run.state in (RunState.success, RunState.failed):
+        return RunNodeStatusOut(run_id=run.id, run_state=run.state, nodes={k: RunNodeStatusEntry(**v) for k, v in cached_results.items()})
+
+    result: dict[str, RunNodeStatusEntry] = {}
+    if run.dag_run_id and nodes_map:
+        try:
+            task_instances = await airflow_api.list_task_instances(target.airflow.base_url, target.airflow.username, target.airflow.password, project.dag_id, run.dag_run_id)
+        except airflow_api.AirflowAPIError:
+            task_instances = []
+        ti_by_task = {ti["task_id"]: ti for ti in task_instances}
+        progress_cache: dict[str, dict[str, str]] = {}
+        result_cache: dict[str, dict[str, dict]] = {}
+
+        for node_key, task_id in nodes_map.items():
+            ti = ti_by_task.get(task_id)
+            state = ti.get("state") if ti else None
+            if state in _RUNNING_TASK_STATES:
+                node_status = "running"
+            elif state == "success":
+                node_status = "success"
+            elif state in _FAILED_TASK_STATES:
+                node_status = "failed"
+            else:
+                node_status = "pending"
+            error = None
+
+            model_name = node_model_map.get(node_key)
+            if model_name and node_status == "running":
+                if task_id not in progress_cache:
+                    progress_cache[task_id] = await run_in_threadpool(run_progress.fetch_incremental_progress, target, task_id)
+                model_status = progress_cache[task_id].get(model_name)
+                if model_status in ("success", "pass"):
+                    node_status = "success"
+                elif model_status in ("error", "fail"):
+                    node_status = "failed"
+                # else: stays "running" — dbt hasn't reached this model yet within the task,
+                # or the progress file isn't readable yet (task just started).
+            elif model_name and node_status in ("success", "failed"):
+                if task_id not in result_cache:
+                    result_cache[task_id] = await run_in_threadpool(run_progress.fetch_final_results, target, task_id)
+                entry = result_cache[task_id].get(model_name)
+                if entry:
+                    model_status = entry.get("status")
+                    if model_status in ("success", "pass"):
+                        node_status = "success"
+                    elif model_status in ("error", "fail"):
+                        node_status = "failed"
+                        if entry.get("message"):
+                            error = str(entry["message"])[:500]
+
+            if node_status == "failed" and error is None:
+                try:
+                    log_text = await airflow_api.get_task_log(
+                        target.airflow.base_url, target.airflow.username, target.airflow.password,
+                        project.dag_id, run.dag_run_id, task_id, try_number=ti.get("try_number") or 1,
+                    )
+                    error = _extract_error_snippet(log_text)
+                except airflow_api.AirflowAPIError:
+                    error = "Échec — logs Airflow indisponibles."
+            result[node_key] = RunNodeStatusEntry(status=node_status, error=error)
+
+        if run.state in (RunState.success, RunState.failed):
+            run.node_plan = {**node_plan, "results": {k: v.model_dump() for k, v in result.items()}}
+            db.commit()
+
+    return RunNodeStatusOut(run_id=run.id, run_state=run.state, nodes=result)
+
+
+@router.get("/{pid}/datasets/{did}/run-history", response_model=list[RunNodeHistoryEntry])
+def get_dataset_run_history(did: int, stage: str | None = None, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+    """Onglet "Historique" du détail d'un nœud — tous les runs (RUN-button ciblé, "Exécuter
+    maintenant", planifié ou déclenché par l'Agent) qui ont touché ce nœud, le plus récent en
+    premier. `did` + `stage` suivent la même convention que POST .../run (bronze + stage pour
+    les étapes de structuration synthétiques, sinon le dataset réel directement)."""
+    if stage and stage not in ("unpacked", "typed"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Étape invalide.")
+    dataset = _get_dataset(db, project.id, did)
+    node_key = f"silver-{stage}-{dataset.id}" if stage else str(dataset.id)
+
+    candidates = (
+        db.query(MedallionRun)
+        .filter(MedallionRun.project_id == project.id, MedallionRun.node_plan.isnot(None))
+        .order_by(MedallionRun.created_at.desc())
+        .limit(200)
+        .all()
+    )
+    out: list[RunNodeHistoryEntry] = []
+    for run in candidates:
+        plan = run.node_plan or {}
+        if node_key not in plan.get("nodes", {}):
+            continue
+        cached = plan.get("results", {}).get(node_key)
+        if cached:
+            node_status, error = cached["status"], cached.get("error")
+        elif run.state in (RunState.queued, RunState.running):
+            node_status, error = "running", None
+        else:
+            # Terminal but never resolved (e.g. node-status was never polled for this run) —
+            # fall back to the run's own overall state rather than guess at this one node's.
+            node_status, error = ("success" if run.state == RunState.success else "failed"), None
+        out.append(RunNodeHistoryEntry(
+            run_id=run.id, started_at=run.started_at, finished_at=run.finished_at,
+            status=node_status, error=error, full_run=plan.get("target_key") == "full",
+        ))
+        if len(out) >= 20:
+            break
+    return out
 
 
 def _structuration_out(row: PayloadStructuration) -> StructurationOut:
@@ -1145,6 +1342,14 @@ async def run_project(payload: RunTriggerRequest, db: Session = Depends(get_db),
         span = (payload.backfill_to - payload.backfill_from).days
         dates = [payload.backfill_from + timedelta(days=i) for i in range(span + 1)]
 
+    # UX ask — per-node run history (GET .../run-history) must also show an ordinary
+    # "Exécuter maintenant"/scheduled run, not only RUN-button clicks: an unscoped run
+    # touches every node, so it gets the same kind of node_plan a targeted one does.
+    datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
+    structured = payload_structure.bulk_structured(db, datasets)
+    structured_bronze_ids = {did for did, is_structured in structured.items() if is_structured}
+    full_scope = run_scope.compute_full_scope(datasets, structured_bronze_ids)
+
     runs = []
     for d in dates:
         logical_date = datetime.combine(d, datetime.min.time(), tzinfo=timezone.utc) if d else None
@@ -1153,7 +1358,10 @@ async def run_project(payload: RunTriggerRequest, db: Session = Depends(get_db),
         except airflow_api.AirflowAPIError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
-        run = MedallionRun(project_id=project.id, dag_run_id=result.get("dag_run_id"), state=RunState.queued, started_at=datetime.now(timezone.utc))
+        run = MedallionRun(
+            project_id=project.id, dag_run_id=result.get("dag_run_id"), state=RunState.queued, started_at=datetime.now(timezone.utc),
+            node_plan={"target_key": "full", **full_scope},
+        )
         db.add(run)
         runs.append(run)
 

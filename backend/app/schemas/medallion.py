@@ -1,4 +1,5 @@
 from datetime import datetime, date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -448,6 +449,35 @@ class RunOut(BaseModel):
     tests_summary: dict
     logs_url: str | None = None
     created_at: datetime
+
+
+class RunNodeRequest(BaseModel):
+    """Bouton RUN du canvas — `stage` cible une des deux étapes de structuration
+    synthétiques (01_unpacked/02_typed), jamais une vraie MedallionDataset ; absent pour un
+    clic sur n'importe quel autre nœud, où `did` est déjà le dataset réel à construire."""
+    stage: Literal["unpacked", "typed"] | None = None
+
+
+class RunNodeStatusEntry(BaseModel):
+    status: Literal["pending", "running", "success", "failed"]
+    error: str | None = None
+
+
+class RunNodeStatusOut(BaseModel):
+    run_id: int
+    run_state: RunState
+    nodes: dict[str, RunNodeStatusEntry]
+
+
+class RunNodeHistoryEntry(BaseModel):
+    """Onglet "Historique" du détail d'un nœud — un run (RUN-button ciblé, "Exécuter
+    maintenant" ou planifié) qui a touché ce nœud, le plus récent en premier."""
+    run_id: int
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    status: Literal["pending", "running", "success", "failed"]
+    error: str | None = None
+    full_run: bool = False
 
 
 class LineageNode(BaseModel):

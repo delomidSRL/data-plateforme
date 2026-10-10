@@ -198,3 +198,11 @@ async def get_task_log(base_url: str, username: str, password: str, dag_id: str,
     resp = await _request(base_url, username, password, "GET", f"/api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/logs/{try_number}")
     _raise_for_error(resp, "Lire les logs")
     return resp.text
+
+
+async def list_task_instances(base_url: str, username: str, password: str, dag_id: str, dag_run_id: str) -> list[dict]:
+    """Bouton RUN par nœud — une tâche par appel suffirait mais la liste complète coûte la
+    même requête HTTP et évite un aller-retour par nœud affiché sur le canvas."""
+    resp = await _request(base_url, username, password, "GET", f"/api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances")
+    _raise_for_error(resp, "Lister les tâches")
+    return resp.json().get("task_instances", [])

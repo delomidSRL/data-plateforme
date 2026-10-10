@@ -13,6 +13,7 @@ import IndicatorsPanel from "./IndicatorsPanel.jsx";
 import PublishPanel from "./PublishPanel.jsx";
 import StructurationPanel from "./StructurationPanel.jsx";
 import StructurationPopup from "./StructurationPopup.jsx";
+import RunHistoryPanel from "./RunHistoryPanel.jsx";
 import SchemaValidationModal from "../imports/SchemaValidationModal.jsx";
 import { BUILTIN_MACROS } from "./builtinMacros.js";
 
@@ -599,6 +600,9 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
               {Icon.wand()} {t("medallion.suggest.tab")}
             </button>
           )}
+          <button type="button" className="btn-ghost" style={{ opacity: panelTab === "history" ? 1 : 0.6 }} onClick={() => setPanelTab("history")}>
+            {Icon.refresh()} {t("medallion.run.historyTab")}
+          </button>
           {onViewCode && dataset.layer !== "bronze" && dataset.transform_type !== "python" && (
             <button type="button" className="btn-ghost" style={{ marginLeft: "auto" }} onClick={() => onViewCode(dataset.id)}>
               {Icon.code()} {t("medallion.panel.viewCode")}
@@ -615,6 +619,8 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
         <PublishPanel project={project} dataset={dataset} readOnly={readOnly} />
       ) : panelTab === "indicators" && isEdit ? (
         <IndicatorsPanel project={project} dataset={dataset} readOnly={readOnly} />
+      ) : panelTab === "history" && isEdit ? (
+        <RunHistoryPanel project={project} datasetId={dataset.id} />
       ) : (
       <>
       {error && <div className="error-banner">{Icon.warn()}<span>{error}</span></div>}

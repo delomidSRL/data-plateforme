@@ -40,6 +40,7 @@ def _resolve_endpoint(source: DataSource, target: DeployTarget) -> tuple[str, in
 def _deploy_files_via_ssh(target: DeployTarget, dbt_dir: str, plugins_dir: str, dbt_files: dict[str, str]) -> None:
     ingest_code = _env.get_template("medallion/ingest_bronze.py.j2").render()
     ml_transform_code = _env.get_template("medallion/ml_transform.py.j2").render()
+    dbt_run_code = _env.get_template("medallion/dbt_run.py.j2").render()
 
     with ssh.ssh_session(target.ssh_host, target.ssh_port, target.ssh_user, target.ssh_auth_method, target.ssh_secret) as client:
         # Wipe the previous build's model files before depositing the current set — otherwise
@@ -69,6 +70,8 @@ def _deploy_files_via_ssh(target: DeployTarget, dbt_dir: str, plugins_dir: str, 
                 f.write(ingest_code)
             with sftp.file(posixpath.join(plugins_dir, "dataplateforme_ml_transform.py"), "w") as f:
                 f.write(ml_transform_code)
+            with sftp.file(posixpath.join(plugins_dir, "dataplateforme_dbt_run.py"), "w") as f:
+                f.write(dbt_run_code)
         finally:
             sftp.close()
 

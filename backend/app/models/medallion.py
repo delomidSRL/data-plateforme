@@ -289,6 +289,12 @@ class MedallionRun(Base):
     layer_stats: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     tests_summary: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     logs_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Bouton RUN par nœud — {"target_key": "dataset:<id>"|"structuration:<bronze_id>:<stage>",
+    # "nodes": {<canvas node id>: <airflow task_id>}}, set at trigger time (run_scope.py) so
+    # GET /runs/{id}/node-status can resolve each node's live color without recomputing the
+    # upstream closure. null for a run triggered the normal way ("Exécuter maintenant"/
+    # schedule) — nothing to show per-node for those, same today as before this feature.
+    node_plan: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

@@ -20,7 +20,7 @@ from app.models.medallion import LoadMode, MedallionDataset, MedallionLayer, Med
 from app.models.pipeline_plan import PipelinePlan, PipelinePlanStatus
 from app.models.user import User
 from app.schemas.medallion import DatasetCreate
-from app.services import airflow_api, airflow_instances, gold_profile, indicator_suggest, superset_publish, version_snapshot, run_status
+from app.services import airflow_api, airflow_instances, gold_profile, indicator_suggest, payload_structure, run_scope, superset_publish, version_snapshot, run_status
 from app.services.ai_config import get_ai_config
 from app.services.medallion_crud import upsert_dataset_internal
 from app.services.medallion_deploy import build_project
@@ -232,7 +232,16 @@ async def execute_plan(db: Session, project: MedallionProject, plan_row: Pipelin
                     db.refresh(plan_row)
                     return plan_row
                 raise ExecutionError("run", str(exc)) from exc
-            run = MedallionRun(project_id=project.id, dag_run_id=result.get("dag_run_id"), state=RunState.queued, started_at=datetime.now(timezone.utc))
+            # UX ask — an Agent-triggered run touches every node same as "Exécuter maintenant"
+            # does; give it the same node_plan so it shows up in per-node run history too.
+            all_datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
+            structured = payload_structure.bulk_structured(db, all_datasets)
+            structured_bronze_ids = {did for did, is_structured in structured.items() if is_structured}
+            full_scope = run_scope.compute_full_scope(all_datasets, structured_bronze_ids)
+            run = MedallionRun(
+                project_id=project.id, dag_run_id=result.get("dag_run_id"), state=RunState.queued, started_at=datetime.now(timezone.utc),
+                node_plan={"target_key": "full", **full_scope},
+            )
             db.add(run)
             db.commit()
             db.refresh(run)

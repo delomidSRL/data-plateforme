@@ -5,7 +5,9 @@ from datetime import datetime
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.bash import BashOperator
+from airflow.utils.trigger_rule import TriggerRule
 from dataplateforme_ingest import ingest_bronze
+from dataplateforme_dbt_run import run_dbt
 {% if ml_nodes %}
 from dataplateforme_ml_transform import run_ml_transform
 {% endif %}
@@ -68,32 +70,63 @@ with DAG(
     # (it's declared as a dbt source, populated by the ingest_bronze operators above), but a
     # payload dataset's structuration (01_unpacked_<name>/02_typed_<name>, and any hand-written
     # 03_standardized/04_annotated/05_validated/05_quarantine an engineer authored on top) IS
-    # one — all of it lives under models/silver/, so the plain `silver` selector below picks up
-    # the whole chain, whatever length it happens to be for a given bronze dataset.
-    dbt_run_silver = BashOperator(
+    # one — all of it lives under models/silver/, so the plain `silver` selector picks up the
+    # whole chain, whatever length it happens to be for a given bronze dataset. PythonOperator
+    # (not Bash) so run_dbt can read dag_run.conf directly for the RUN-button's scoped runs
+    # (see dataplateforme_dbt_run.py) without any Airflow-Jinja templating in the command —
+    # an empty/absent conf (every run before this feature, and every scheduled one since)
+    # behaves exactly like the plain `--select silver`/`gold` BashOperator did.
+    # trigger_rule=NONE_FAILED (not the default ALL_SUCCESS) on every task from here down —
+    # a scoped run's ingest_bronze/ml tasks for datasets outside the target's closure skip
+    # themselves (AirflowSkipException), and ALL_SUCCESS treats an upstream "skipped" the
+    # same as a failure, auto-skipping every downstream task in turn even when it legitimately
+    # has its own work to do (e.g. dbt_run_silver still has real models to build even though
+    # some unrelated bronze ingest was skipped). Each task's own run_dbt()/skip-check is what
+    # actually decides whether there's anything to do — this just stops Airflow's default
+    # propagation from deciding that for them first.
+    dbt_run_silver = PythonOperator(
         task_id="dbt_run_silver",
-        bash_command=f"{DBT_BIN} run --select silver --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR} --target {{ project.target.value }}",
+        python_callable=run_dbt,
+        trigger_rule=TriggerRule.NONE_FAILED,
+        op_kwargs={
+            "dbt_bin": DBT_BIN, "project_dir": DBT_PROJECT_DIR, "profiles_dir": DBT_PROJECT_DIR,
+            "dbt_target": "{{ project.target.value }}", "subcommand": "run", "layer": "silver",
+            "progress_file": "dp_progress_silver.jsonl", "result_snapshot": "dp_results_silver.json",
+        },
     )
 
-    dbt_run_gold = BashOperator(
+    dbt_run_gold = PythonOperator(
         task_id="dbt_run_gold",
-        bash_command=f"{DBT_BIN} run --select gold --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR} --target {{ project.target.value }}",
+        python_callable=run_dbt,
+        trigger_rule=TriggerRule.NONE_FAILED,
+        op_kwargs={
+            "dbt_bin": DBT_BIN, "project_dir": DBT_PROJECT_DIR, "profiles_dir": DBT_PROJECT_DIR,
+            "dbt_target": "{{ project.target.value }}", "subcommand": "run", "layer": "gold",
+            "progress_file": "dp_progress_gold.jsonl", "result_snapshot": "dp_results_gold.json",
+        },
     )
 
-    dbt_test = BashOperator(
+    dbt_test = PythonOperator(
         task_id="dbt_test",
-        bash_command=f"{DBT_BIN} test --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR} --target {{ project.target.value }}",
+        python_callable=run_dbt,
+        trigger_rule=TriggerRule.NONE_FAILED,
+        op_kwargs={
+            "dbt_bin": DBT_BIN, "project_dir": DBT_PROJECT_DIR, "profiles_dir": DBT_PROJECT_DIR,
+            "dbt_target": "{{ project.target.value }}", "subcommand": "test",
+        },
     )
 
 {% for m in ml_nodes %}
     ml_{{ m.safe_name }} = PythonOperator(
         task_id="ml_{{ m.safe_name }}",
         python_callable=run_ml_transform,
+        trigger_rule=TriggerRule.NONE_FAILED,
         op_kwargs={
             "warehouse_conn_id": "{{ warehouse_conn_id }}",
             "input_schemas": {{ m.input_schemas | tojson }},
             "output_schema": "gold",
             "python_code": {{ m.python_code_repr | safe }},
+            "node_name": "{{ m.output_table }}",
         },
     )
 {% endfor %}

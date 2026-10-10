@@ -28,6 +28,7 @@ const CodeTab = lazy(() => import("./CodeTab.jsx"));
 import ScheduleField, { describeSchedule, isValidSchedule } from "./ScheduleField.jsx";
 import ImportWizardDrawer from "../imports/ImportWizardDrawer.jsx";
 import SchemaValidationModal from "../imports/SchemaValidationModal.jsx";
+import BulkImportWizard from "./BulkImportWizard.jsx";
 
 const STATUS_TONE = { draft: "neutral", built: "accent", deployed: "accent", paused: "neutral", error: "neutral" };
 
@@ -70,6 +71,7 @@ export default function ProjectDetail({ readOnly = false }) {
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [importWizardOpen, setImportWizardOpen] = useState(false);
   const [importValidating, setImportValidating] = useState(null);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [structurationTargetId, setStructurationTargetId] = useState(null); // Module 6 extension — canvas node click
   const [structurationStage, setStructurationStage] = useState(null); // Module 18 §7 — which 01..05 stage node was clicked
   const [structurationGuided, setStructurationGuided] = useState(false); // Module 18 §7 UX — "+" button: walk 01..05 step by step
@@ -328,6 +330,45 @@ export default function ProjectDetail({ readOnly = false }) {
     setPanel({ selectedId: nid });
   };
 
+  // Bouton RUN par nœud — un clic déclenche un run Airflow borné à ce nœud (voir
+  // run_scope.py côté backend) et poll son statut par nœud en quasi temps réel (même idée
+  // que AgentTab.jsx : un setTimeout qui se replanifie lui-même tant que le run n'est pas
+  // terminé, pas un setInterval qui continuerait à tourner après démontage sans le clearTimeout
+  // ci-dessous).
+  const [nodeRunStatus, setNodeRunStatus] = useState({}); // { [nodeKey]: {status, error} }
+  const runPollTimer = useRef(null);
+  useEffect(() => () => { if (runPollTimer.current) clearTimeout(runPollTimer.current); }, []);
+
+  const pollNodeRunStatus = (runId) => {
+    medallionApi.getRunNodeStatus(id, runId).then((res) => {
+      setNodeRunStatus((prev) => ({ ...prev, ...res.nodes }));
+      if (res.run_state === "queued" || res.run_state === "running") {
+        runPollTimer.current = setTimeout(() => pollNodeRunStatus(runId), 2500);
+      } else {
+        if (res.run_state === "success") showToast(t("medallion.run.success"));
+        else if (res.run_state === "failed") showToast(t("medallion.run.failed"));
+        load();
+      }
+    }).catch(() => {
+      runPollTimer.current = setTimeout(() => pollNodeRunStatus(runId), 4000);
+    });
+  };
+
+  const handleRunNode = async (datasetId, stage = null) => {
+    // Optimistic: color the clicked node immediately rather than wait for the first poll —
+    // same node-key convention the canvas itself already uses (String(id) / silver-<stage>-<id>).
+    const nodeKey = stage ? `silver-${stage}-${datasetId}` : String(datasetId);
+    setNodeRunStatus((prev) => ({ ...prev, [nodeKey]: { status: "running", error: null } }));
+    try {
+      const run = await medallionApi.runDatasetNode(id, datasetId, stage);
+      if (runPollTimer.current) clearTimeout(runPollTimer.current);
+      pollNodeRunStatus(run.id);
+    } catch (err) {
+      setNodeRunStatus((prev) => ({ ...prev, [nodeKey]: { status: "failed", error: err.message || t("medallion.run.triggerFailed") } }));
+      showToast(err.message || t("medallion.run.triggerFailed"));
+    }
+  };
+
   // UX ask — the "02 typed" node's "+": straight into authoring 03_standardized_<name> as a
   // real silver dataset, upstream already checked and a starter SELECT already pointed at
   // this exact typed table (not 05_validated like referenceSnippetFor elsewhere — the
@@ -503,6 +544,7 @@ export default function ProjectDetail({ readOnly = false }) {
           <>
             <Button variant="ghost" className="inline" onClick={() => setPanel({ defaultLayer: "bronze" })}>{Icon.plus()} {t("medallion.addDataset")}</Button>
             <Button variant="ghost" className="inline" onClick={() => setImportWizardOpen(true)}>{Icon.upload()} {t("medallion.origin.importFile")}</Button>
+            <Button variant="ghost" className="inline" onClick={() => setBulkImportOpen(true)}>{Icon.upload()} {t("medallion.bulkImport.entryButton")}</Button>
             <Button variant="ghost" className="inline" disabled={previewing} onClick={handlePreview}>{previewing ? t("medallion.previewing") : t("medallion.preview")}</Button>
             <Button className="inline" disabled={building} onClick={() => handleBuild()}>{building ? t("medallion.deploying") : t("medallion.buildAndDeploy")}</Button>
           </>
@@ -595,11 +637,13 @@ export default function ProjectDetail({ readOnly = false }) {
               onCreateQuarantine={openQuarantineDataset}
               qualityByDataset={qualityByDataset} publishedByDataset={publishedByDataset} dashboardByDataset={dashboardByDataset}
               sqlByDataset={sqlByDataset}
+              onRunNode={readOnly ? undefined : handleRunNode} runStatuses={nodeRunStatus}
             />
           ) : (
             <ThreeColumnView
               nodes={lineage.nodes} selectedId={selectedDataset?.id} onSelect={handleSelectNode} qualityByDataset={qualityByDataset}
               onOpenSilverPreview={(datasetId, stage) => setSilverPreviewTarget({ datasetId, stage })}
+              onRunNode={readOnly ? undefined : handleRunNode} runStatuses={nodeRunStatus}
             />
           )}
         </>
@@ -676,6 +720,15 @@ export default function ProjectDetail({ readOnly = false }) {
 
       {!readOnly && importWizardOpen && (
         <ImportWizardDrawer onClose={() => setImportWizardOpen(false)} onAnalyzed={handleImportAnalyzed} />
+      )}
+
+      {!readOnly && bulkImportOpen && (
+        <BulkImportWizard
+          project={project}
+          sources={sources}
+          onClose={() => setBulkImportOpen(false)}
+          onImported={async () => { showToast(t("medallion.bulkImport.doneToast")); await load(); }}
+        />
       )}
 
       {!readOnly && importValidating && (

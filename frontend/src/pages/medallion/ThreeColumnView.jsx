@@ -1,11 +1,12 @@
 import { useTranslation } from "react-i18next";
 import { StatusDot } from "../../components/ui/Badge.jsx";
+import { RunButton, RunErrorBanner, RUN_STATUS_COLOR } from "./RunButton.jsx";
 
 const LAYER_COLOR = { bronze: "#a9702f", silver: "#5b7a94", gold: "#c98a1c" };
 const TEST_COLOR = { passed: "#2f9e6e", failed: "#c53d3d", none: "#c7cdd3" };
 const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "Oracle", minio: "MinIO" };
 
-export default function ThreeColumnView({ nodes, onSelect, selectedId, qualityByDataset = {}, onOpenSilverPreview }) {
+export default function ThreeColumnView({ nodes, onSelect, selectedId, qualityByDataset = {}, onOpenSilverPreview, onRunNode, runStatuses = {} }) {
   const { t } = useTranslation();
   const LAYER_LABEL = { bronze: "Bronze", silver: "Silver", gold: "Gold" };
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
@@ -59,58 +60,71 @@ export default function ThreeColumnView({ nodes, onSelect, selectedId, qualityBy
             <div className="field-label" style={{ margin: 0 }}>{LAYER_LABEL[layer]}</div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {layer === "silver" && structurationPreviews.map((p) => (
-              <div
-                key={p.id}
-                onClick={() => onOpenSilverPreview?.(p.bronzeId, p.stage)}
-                style={{
-                  padding: "10px 12px", borderRadius: 10, border: "1px dashed var(--text-muted)",
-                  borderLeft: `3px dashed ${LAYER_COLOR.silver}`, cursor: onOpenSilverPreview ? "pointer" : "default",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{p.name}</div>
-                  <span
-                    className="badge"
-                    title={t("medallion.structuration.instantPreviewHint")}
-                    style={{ fontSize: 9.5, padding: "1px 6px", border: "1px solid var(--ember)", color: "var(--ember)", background: "var(--ember-soft)" }}
-                  >
-                    {p.stage}
-                  </span>
-                </div>
-              </div>
-            ))}
-            {nodes.filter((n) => n.layer === layer).map((n) => (
-              <div
-                key={n.id}
-                onClick={() => onSelect(n.id)}
-                style={{
-                  padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)",
-                  borderLeft: `3px solid ${LAYER_COLOR[layer]}`, cursor: "pointer",
-                  boxShadow: selectedId === n.id ? "0 0 0 2px var(--ember)" : "none",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{n.name}</div>
-                  {n.transform_type === "python" && (
-                    <span className="badge badge-accent" style={{ fontSize: 9.5, padding: "1px 6px" }}>{ML_OBJECTIVE_LABEL[n.ml_objective] || "ML"}</span>
-                  )}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
-                  <span>{n.last_row_count != null ? t("medallion.rows", { count: n.last_row_count }) : "—"}</span>
-                  {layer !== "bronze" && (
-                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                      <StatusDot color={TEST_COLOR[n.last_test_status] || TEST_COLOR.none} /> {t("medallion.tests")}
+            {layer === "silver" && structurationPreviews.map((p) => {
+              const runEntry = runStatuses[p.id];
+              const runColor = RUN_STATUS_COLOR[runEntry?.status];
+              return (
+                <div
+                  key={p.id}
+                  onClick={() => onOpenSilverPreview?.(p.bronzeId, p.stage)}
+                  style={{
+                    position: "relative", padding: "10px 12px", borderRadius: 10,
+                    border: runColor ? `1px solid ${runColor}` : "1px dashed var(--text-muted)",
+                    borderLeft: `3px solid ${runColor || LAYER_COLOR.silver}`, cursor: onOpenSilverPreview ? "pointer" : "default",
+                  }}
+                >
+                  {onRunNode && <RunButton onRun={() => onRunNode(p.bronzeId, p.stage)} status={runEntry?.status} title={t("medallion.run.button")} />}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13.5 }}>{p.name}</div>
+                    <span
+                      className="badge"
+                      title={t("medallion.structuration.instantPreviewHint")}
+                      style={{ fontSize: 9.5, padding: "1px 6px", border: "1px solid var(--ember)", color: "var(--ember)", background: "var(--ember-soft)" }}
+                    >
+                      {p.stage}
                     </span>
-                  )}
-                  {layer === "gold" && qualityByDataset[n.id]?.degraded && (
-                    <span style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--danger)" }}>
-                      <StatusDot color="var(--danger)" /> {t("medallion.quality.degraded")}
-                    </span>
-                  )}
+                  </div>
+                  {runEntry?.status === "failed" && <RunErrorBanner error={runEntry.error} />}
                 </div>
-              </div>
-            ))}
+              );
+            })}
+            {nodes.filter((n) => n.layer === layer).map((n) => {
+              const runEntry = runStatuses[String(n.id)];
+              const runColor = RUN_STATUS_COLOR[runEntry?.status];
+              return (
+                <div
+                  key={n.id}
+                  onClick={() => onSelect(n.id)}
+                  style={{
+                    position: "relative", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)",
+                    borderLeft: `3px solid ${runColor || LAYER_COLOR[layer]}`, cursor: "pointer",
+                    boxShadow: selectedId === n.id ? "0 0 0 2px var(--ember)" : "none",
+                  }}
+                >
+                  {onRunNode && <RunButton onRun={() => onRunNode(n.id, null)} status={runEntry?.status} title={t("medallion.run.button")} />}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13.5 }}>{n.name}</div>
+                    {n.transform_type === "python" && (
+                      <span className="badge badge-accent" style={{ fontSize: 9.5, padding: "1px 6px" }}>{ML_OBJECTIVE_LABEL[n.ml_objective] || "ML"}</span>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
+                    <span>{n.last_row_count != null ? t("medallion.rows", { count: n.last_row_count }) : "—"}</span>
+                    {layer !== "bronze" && (
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <StatusDot color={TEST_COLOR[n.last_test_status] || TEST_COLOR.none} /> {t("medallion.tests")}
+                      </span>
+                    )}
+                    {layer === "gold" && qualityByDataset[n.id]?.degraded && (
+                      <span style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--danger)" }}>
+                        <StatusDot color="var(--danger)" /> {t("medallion.quality.degraded")}
+                      </span>
+                    )}
+                  </div>
+                  {runEntry?.status === "failed" && <RunErrorBanner error={runEntry.error} />}
+                </div>
+              );
+            })}
             {nodes.filter((n) => n.layer === layer).length === 0 && (layer !== "silver" || structurationPreviews.length === 0) && (
               <div style={{ fontSize: 12.5, color: "var(--text-muted)", textAlign: "center", padding: "20px 0" }}>{t("medallion.noDataset")}</div>
             )}

@@ -11,6 +11,7 @@ import sys
 from datetime import date, datetime, timezone
 
 import pandas as pd
+from airflow.exceptions import AirflowSkipException
 from airflow.hooks.base import BaseHook
 from sqlalchemy import create_engine, text
 
@@ -186,6 +187,15 @@ def ingest_bronze(
     chunksize: int = DEFAULT_CHUNKSIZE,
     **context,
 ) -> int:
+    # Bouton RUN par nœud — un clic scope le dagRun à un sous-ensemble de bronze (voir
+    # app.services.run_scope) ; absent/None pour un run normal (planifié ou "Exécuter
+    # maintenant"), qui ingère tout comme aujourd'hui.
+    dag_run = context.get("dag_run")
+    conf = (dag_run.conf if dag_run else None) or {}
+    target_node_names = conf.get("target_node_names")
+    if target_node_names is not None and bronze_table not in target_node_names:
+        raise AirflowSkipException(f"Scoped run: '{bronze_table}' not needed for this target, skipping.")
+
     warehouse_engine = _sql_engine(warehouse_conn_id)
     minio = _minio_client(object_store_conn_id)
 

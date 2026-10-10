@@ -1,0 +1,97 @@
+"""Reusable dbt-invocation operator, deposited once per Airflow stack (plugins/).
+Wraps `dbt run`/`dbt test` so a conf-driven scoped run (the canvas's per-node RUN button)
+can narrow the selection to exactly the models a clicked node needs, computed server-side
+(see app.services.run_scope) and passed through `dag_run.conf` — reading it directly via
+the Airflow context instead of Jinja-templating the bash command keeps this free of any
+dbt-selector-syntax cleverness, and a normal/scheduled run (empty conf) runs the full
+layer exactly like before.
+
+Bouton RUN par nœud §2 — `dbt_run_silver`/`dbt_run_gold` are each ONE Airflow task covering
+every model in their layer, so Airflow's own task state can't tell two of that layer's models
+apart. Streaming dbt's own `--log-format json` output (same event shape
+app.services.dbt_runner already parses for the local "Run dev" feature) and appending each
+finished model to `progress_file` AS IT HAPPENS — not just once at the end — is what lets
+app.services.run_progress (read over SSH, same channel medallion_stats already uses for
+run_results.json) show a node going orange-then-green one at a time while the single Airflow
+task is still "running", instead of the whole layer flipping together only once the task
+itself reaches a terminal state. `result_snapshot` preserves this invocation's own
+run_results.json under its own name right after it finishes — the file itself gets
+overwritten by the NEXT dbt call in the DAG (silver, then gold, then test), so without this
+copy a silver node's final status would read back as whatever gold/test most recently wrote.
+"""
+import json
+import logging
+import os
+import shutil
+import subprocess
+
+from airflow.exceptions import AirflowSkipException
+
+logger = logging.getLogger(__name__)
+
+
+def run_dbt(
+    dbt_bin: str, project_dir: str, profiles_dir: str, dbt_target: str, subcommand: str,
+    layer: str | None = None, progress_file: str | None = None, result_snapshot: str | None = None,
+    **context,
+) -> None:
+    dag_run = context.get("dag_run")
+    conf = (dag_run.conf if dag_run else None) or {}
+
+    models: list[str] | None = None  # None = run everything (default), [] = nothing to do, [..] = scoped
+    if subcommand == "run" and layer in ("silver", "gold"):
+        key = f"{layer}_models"
+        if key in conf:
+            models = conf[key]
+    elif subcommand == "test":
+        if "silver_models" in conf or "gold_models" in conf:
+            models = sorted(set(conf.get("silver_models") or []) | set(conf.get("gold_models") or []))
+
+    if models is not None and len(models) == 0:
+        raise AirflowSkipException(f"Scoped run: nothing to {subcommand} for layer={layer!r}, skipping.")
+
+    cmd = [dbt_bin, subcommand]
+    if models:
+        cmd += ["--select", " ".join(models)]
+    elif subcommand == "run" and layer:
+        cmd += ["--select", layer]
+    cmd += ["--project-dir", project_dir, "--profiles-dir", profiles_dir, "--target", dbt_target, "--no-use-colors", "--log-format", "json"]
+
+    progress_path = os.path.join(project_dir, "target", progress_file) if progress_file else None
+    if progress_path:
+        os.makedirs(os.path.dirname(progress_path), exist_ok=True)
+        open(progress_path, "w").close()  # truncate — a stale entry from a PREVIOUS run on this
+        # same task must never be read as "already done" for the run that's only just starting.
+
+    logger.info("Running: %s", " ".join(cmd))
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+    stdout_lines: list[str] = []
+    for line in proc.stdout:
+        stdout_lines.append(line)
+        if not progress_path:
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        node_info = (event.get("data") or {}).get("node_info")
+        node_status = node_info.get("node_status") if node_info else None
+        # A failed node also emits a later event whose own node_status is the literal string
+        # "None" (dbt-core, verified in app.services.dbt_runner) — never record that over the
+        # real terminal status (success/error/...) its own LogModelResult already gave it.
+        if not node_info or not node_info.get("node_name") or node_status in (None, "None", "started"):
+            continue
+        with open(progress_path, "a") as f:
+            f.write(json.dumps({"name": node_info["node_name"], "status": node_status}) + "\n")
+
+    proc.wait()
+    stderr_text = proc.stderr.read()
+
+    if result_snapshot:
+        src = os.path.join(project_dir, "target", "run_results.json")
+        if os.path.exists(src):
+            shutil.copyfile(src, os.path.join(project_dir, "target", result_snapshot))
+
+    if proc.returncode != 0:
+        tail = "".join(stdout_lines)[-4000:]
+        raise RuntimeError(f"{' '.join(cmd)} failed (exit {proc.returncode}):\n{tail}\n{stderr_text[-2000:]}")
