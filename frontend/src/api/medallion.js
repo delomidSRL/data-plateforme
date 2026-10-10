@@ -58,6 +58,8 @@ export const getRun = (pid, runId) => apiFetch(`${base}/${pid}/runs/${runId}`);
 export const runDatasetNode = (pid, did, stage) => apiFetch(`${base}/${pid}/datasets/${did}/run`, { method: "POST", body: { stage: stage || null } });
 export const getRunNodeStatus = (pid, runId) => apiFetch(`${base}/${pid}/runs/${runId}/node-status`);
 export const getDatasetRunHistory = (pid, did, stage) => apiFetch(`${base}/${pid}/datasets/${did}/run-history${stage ? `?stage=${stage}` : ""}`);
+// Sélection multiple sur le canvas ("Lancer la sélection") — items: [{dataset_id, stage}, ...].
+export const runSelection = (pid, items) => apiFetch(`${base}/${pid}/run-selection`, { method: "POST", body: { items } });
 
 export const listVersions = (pid) => apiFetch(`${base}/${pid}/versions`);
 export const getVersion = (pid, vid) => apiFetch(`${base}/${pid}/versions/${vid}`);

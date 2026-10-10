@@ -72,6 +72,7 @@ from app.schemas.medallion import (
     RunNodeStatusEntry,
     RunNodeStatusOut,
     RunOut,
+    RunSelectionRequest,
     RunTriggerRequest,
     SqlValidationOut,
     SqlValidationRequest,
@@ -447,24 +448,11 @@ def preview_structuration_silver_table(
     )
 
 
-@router.post("/{pid}/datasets/{did}/run", response_model=RunOut, status_code=status.HTTP_201_CREATED)
-async def run_to_node(did: int, payload: RunNodeRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_owned_project)):
-    """Bouton RUN du canvas — déclenche le DAG du projet, borné (via dag_run.conf, voir
-    run_scope.py) à ce nœud et tout ce qui est en amont. `did` est toujours un vrai dataset ;
-    pour les deux étapes de structuration synthétiques (01_unpacked/02_typed, jamais une
-    MedallionDataset — voir workspace_sync.resolve()), c'est le bronze lui-même + `stage`,
-    même convention que GET .../structuration/preview."""
-    if not project.dag_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Déployez le projet avant de l'exécuter.")
-    dataset = _get_dataset(db, project.id, did)
-    if payload.stage and dataset.layer != MedallionLayer.bronze:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="L'étape de structuration n'est disponible que pour un dataset bronze.")
-
-    datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
-    structured = payload_structure.bulk_structured(db, datasets)
-    structured_bronze_ids = {did for did, is_structured in structured.items() if is_structured}
-    scope = run_scope.compute_run_scope(datasets, dataset, payload.stage, structured_bronze_ids)
-
+async def _trigger_scoped_run(db: Session, project: MedallionProject, scope: run_scope.RunScope) -> MedallionRun:
+    """Partagé par le bouton RUN d'un seul nœud et "Lancer la sélection" (plusieurs nœuds à
+    la fois, voir run_scope.merge_scopes) — tout ce qui suit le calcul du `RunScope` est
+    identique dans les deux cas : dépause le DAG si besoin, déclenche le dagRun borné via
+    `scope.conf()`, et pose le node_plan qui alimente le statut par nœud et l'historique."""
     airflow_conf = _resolve_airflow_config(db, project)
     try:
         dag = await airflow_api.get_dag(airflow_conf.base_url, airflow_conf.username, airflow_conf.password, project.dag_id)
@@ -488,6 +476,53 @@ async def run_to_node(did: int, payload: RunNodeRequest, db: Session = Depends(g
     db.commit()
     db.refresh(run)
     return run
+
+
+def _structured_bronze_ids(db: Session, datasets: list[MedallionDataset]) -> set[int]:
+    structured = payload_structure.bulk_structured(db, datasets)
+    return {dataset_id for dataset_id, is_structured in structured.items() if is_structured}
+
+
+@router.post("/{pid}/datasets/{did}/run", response_model=RunOut, status_code=status.HTTP_201_CREATED)
+async def run_to_node(did: int, payload: RunNodeRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_owned_project)):
+    """Bouton RUN du canvas — déclenche le DAG du projet, borné (via dag_run.conf, voir
+    run_scope.py) à ce nœud et tout ce qui est en amont. `did` est toujours un vrai dataset ;
+    pour les deux étapes de structuration synthétiques (01_unpacked/02_typed, jamais une
+    MedallionDataset — voir workspace_sync.resolve()), c'est le bronze lui-même + `stage`,
+    même convention que GET .../structuration/preview."""
+    if not project.dag_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Déployez le projet avant de l'exécuter.")
+    dataset = _get_dataset(db, project.id, did)
+    if payload.stage and dataset.layer != MedallionLayer.bronze:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="L'étape de structuration n'est disponible que pour un dataset bronze.")
+
+    datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
+    scope = run_scope.compute_run_scope(datasets, dataset, payload.stage, _structured_bronze_ids(db, datasets))
+    return await _trigger_scoped_run(db, project, scope)
+
+
+@router.post("/{pid}/run-selection", response_model=RunOut, status_code=status.HTTP_201_CREATED)
+async def run_selection(payload: RunSelectionRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_owned_project)):
+    """Sélection multiple sur le canvas — "Lancer la sélection" : une seule exécution bornée à
+    l'union des pipelines choisies (voir run_scope.merge_scopes), sans rebuild/redéploiement —
+    le projet doit déjà être déployé, exactement comme pour le bouton RUN d'un seul nœud."""
+    if not project.dag_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Déployez le projet avant de l'exécuter.")
+
+    datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
+    by_id = {d.id: d for d in datasets}
+    structured_bronze_ids = _structured_bronze_ids(db, datasets)
+
+    scopes = []
+    for item in payload.items:
+        dataset = by_id.get(item.dataset_id)
+        if dataset is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Dataset {item.dataset_id} introuvable.")
+        if item.stage and dataset.layer != MedallionLayer.bronze:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="L'étape de structuration n'est disponible que pour un dataset bronze.")
+        scopes.append(run_scope.compute_run_scope(datasets, dataset, item.stage, structured_bronze_ids))
+
+    return await _trigger_scoped_run(db, project, run_scope.merge_scopes(scopes))
 
 
 _RUNNING_TASK_STATES = {"scheduled", "queued", "running", "up_for_retry", "up_for_reschedule", "restarting", "deferred"}

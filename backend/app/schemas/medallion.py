@@ -458,6 +458,18 @@ class RunNodeRequest(BaseModel):
     stage: Literal["unpacked", "typed"] | None = None
 
 
+class RunSelectionItem(BaseModel):
+    dataset_id: int
+    stage: Literal["unpacked", "typed"] | None = None
+
+
+class RunSelectionRequest(BaseModel):
+    """Sélection multiple sur le canvas ("Lancer la sélection") — une seule exécution bornée
+    à l'union des chaînes amont de chaque pipeline choisie, même mécanisme que le bouton RUN
+    par nœud (POST .../datasets/{did}/run), juste pour plusieurs cibles à la fois."""
+    items: list[RunSelectionItem] = Field(min_length=1)
+
+
 class RunNodeStatusEntry(BaseModel):
     status: Literal["pending", "running", "success", "failed"]
     error: str | None = None

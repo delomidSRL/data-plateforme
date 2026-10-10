@@ -897,7 +897,11 @@
       "historyScope": "Étendue",
       "historyFullRun": "Run complet",
       "historyTargeted": "Ciblé (bouton RUN)",
-      "status": { "success": "Réussi", "failed": "Échoué", "running": "En cours", "pending": "En attente" }
+      "status": { "success": "Réussi", "failed": "Échoué", "running": "En cours", "pending": "En attente" },
+      "selectionStart": "Lancer plusieurs pipelines",
+      "selectionCancel": "Annuler la sélection",
+      "selectionCount": "{{count}} pipeline(s) sélectionnée(s)",
+      "selectionLaunch": "Lancer la sélection"
     },
     "threeColumns": "3 colonnes",
     "generatedPreview": "Aperçu généré",

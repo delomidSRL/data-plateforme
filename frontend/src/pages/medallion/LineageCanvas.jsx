@@ -155,6 +155,17 @@ function DatasetNode({ data }) {
       )}
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {data.selectionMode && (
+          // UX ask — "Lancer la sélection" : choisir plusieurs pipelines (bronze + sa propre
+          // chaîne amont) à exécuter en une seule fois, sans redéployer. Une checkbox plutôt
+          // qu'une nouvelle couleur de bordure/coche — le bouton RUN (coin haut-gauche) et son
+          // halo de statut gardent leur sens propre, celle-ci n'en est qu'une troisième, sans
+          // ambiguïté visuelle avec les deux autres.
+          <input
+            type="checkbox" checked={!!data.selectedForRun} onClick={(e) => e.stopPropagation()}
+            onChange={() => data.onToggleSelect?.()} style={{ margin: 0, cursor: "pointer" }}
+          />
+        )}
         <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontFamily: "var(--font-m)" }}>{data.layer}</div>
         {data.previewStageLabel && (
           // Module 18 §7 UX — silver.01_unpacked_<name>/silver.02_typed_<name>
@@ -259,6 +270,7 @@ export default function LineageCanvas({
   nodes: rawNodes, edges: rawEdges, onSelect, selectedId, projectId, onOpenStructuration, onOpenSilverPreview,
   onCreateStandardized, onCreateAnnotated, onCreateValidated, onCreateQuarantine, onRunNode,
   qualityByDataset = {}, publishedByDataset = {}, dashboardByDataset = {}, sqlByDataset = {}, runStatuses = {},
+  selectionMode = false, runSelection, onToggleSelect,
 }) {
   const { t, i18n } = useTranslation();
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
@@ -341,7 +353,10 @@ export default function LineageCanvas({
               ? () => onCreateQuarantine(n.id, n.name) : undefined,
             onRun: onRunNode ? () => onRunNode(n.id, null) : undefined,
             runStatus: runStatuses[String(n.id)]?.status, runError: runStatuses[String(n.id)]?.error,
-            selected: selectedId === n.id, onClick: () => onSelect(n.id),
+            selectionMode, selectedForRun: runSelection?.has(String(n.id)),
+            onToggleSelect: () => onToggleSelect?.(n.id, null),
+            selected: selectedId === n.id,
+            onClick: selectionMode ? () => onToggleSelect?.(n.id, null) : () => onSelect(n.id),
           },
         });
       });
@@ -374,7 +389,10 @@ export default function LineageCanvas({
           previewStageLabel: "unpacked", isInstantPreview: true,
           onRun: onRunNode ? () => onRunNode(n.id, "unpacked") : undefined,
           runStatus: runStatuses[silverUnpackedId]?.status, runError: runStatuses[silverUnpackedId]?.error,
-          selected: false, onClick: () => onOpenSilverPreview?.(n.id, "unpacked"),
+          selectionMode, selectedForRun: runSelection?.has(silverUnpackedId),
+          onToggleSelect: () => onToggleSelect?.(n.id, "unpacked"),
+          selected: false,
+          onClick: selectionMode ? () => onToggleSelect?.(n.id, "unpacked") : () => onOpenSilverPreview?.(n.id, "unpacked"),
         },
       });
       flowNodes.push({
@@ -386,7 +404,10 @@ export default function LineageCanvas({
           previewStageLabel: "typed", isInstantPreview: true,
           onRun: onRunNode ? () => onRunNode(n.id, "typed") : undefined,
           runStatus: runStatuses[silverTypedId]?.status, runError: runStatuses[silverTypedId]?.error,
-          selected: false, onClick: () => onOpenSilverPreview?.(n.id, "typed"),
+          selectionMode, selectedForRun: runSelection?.has(silverTypedId),
+          onToggleSelect: () => onToggleSelect?.(n.id, "typed"),
+          selected: false,
+          onClick: selectionMode ? () => onToggleSelect?.(n.id, "typed") : () => onOpenSilverPreview?.(n.id, "typed"),
           onCreateStandardized: onCreateStandardized ? () => onCreateStandardized(n.id, n.name) : undefined,
         },
       });
@@ -407,7 +428,7 @@ export default function LineageCanvas({
     // every node-pushing branch above stays oblivious to it.
     const positionedNodes = flowNodes.map((n) => (positionOverrides[n.id] ? { ...n, position: positionOverrides[n.id] } : n));
     return { nodes: positionedNodes, edges: flowEdges };
-  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, onCreateAnnotated, onCreateValidated, onCreateQuarantine, onRunNode, qualityByDataset, publishedByDataset, dashboardByDataset, sqlByDataset, runStatuses, publishedLabel, dashboardLabel, codeModifiedLabel, i18n.language, t, positionOverrides]);
+  }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, onCreateAnnotated, onCreateValidated, onCreateQuarantine, onRunNode, qualityByDataset, publishedByDataset, dashboardByDataset, sqlByDataset, runStatuses, selectionMode, runSelection, onToggleSelect, publishedLabel, dashboardLabel, codeModifiedLabel, i18n.language, t, positionOverrides]);
 
   const hasCustomLayout = Object.keys(positionOverrides).length > 0;
 

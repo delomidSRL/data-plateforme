@@ -143,3 +143,31 @@ def compute_run_scope(
         node_task_map=node_task_map,
         node_model_map=node_model_map,
     )
+
+
+def merge_scopes(scopes: list[RunScope]) -> RunScope:
+    """Plusieurs pipelines choisies à la fois (sélection multiple sur le canvas) — un seul
+    dagRun borné à l'UNION de leurs chaînes amont respectives, pas un run par pipeline.
+    `target_layer` n'a plus de sens pour une sélection mélangeant des couches : aucun
+    run_dbt()/ingest_bronze/ml_transform ne le lit (seuls target_node_names/silver_models/
+    gold_models pilotent le scoping au runtime) — la valeur ici n'est qu'informative."""
+    target_node_names: set[str] = set()
+    silver_models: set[str] = set()
+    gold_models: set[str] = set()
+    node_task_map: dict[str, str] = {}
+    node_model_map: dict[str, str] = {}
+    for s in scopes:
+        target_node_names.update(s.target_node_names)
+        silver_models.update(s.silver_models)
+        gold_models.update(s.gold_models)
+        node_task_map.update(s.node_task_map)
+        node_model_map.update(s.node_model_map)
+    return RunScope(
+        target_key="selection:" + ",".join(sorted(s.target_key for s in scopes)),
+        target_layer="mixed",
+        target_node_names=sorted(target_node_names),
+        silver_models=sorted(silver_models),
+        gold_models=sorted(gold_models),
+        node_task_map=node_task_map,
+        node_model_map=node_model_map,
+    )

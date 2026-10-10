@@ -6,7 +6,10 @@ const LAYER_COLOR = { bronze: "#a9702f", silver: "#5b7a94", gold: "#c98a1c" };
 const TEST_COLOR = { passed: "#2f9e6e", failed: "#c53d3d", none: "#c7cdd3" };
 const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "Oracle", minio: "MinIO" };
 
-export default function ThreeColumnView({ nodes, onSelect, selectedId, qualityByDataset = {}, onOpenSilverPreview, onRunNode, runStatuses = {} }) {
+export default function ThreeColumnView({
+  nodes, onSelect, selectedId, qualityByDataset = {}, onOpenSilverPreview, onRunNode, runStatuses = {},
+  selectionMode = false, runSelection, onToggleSelect,
+}) {
   const { t } = useTranslation();
   const LAYER_LABEL = { bronze: "Bronze", silver: "Silver", gold: "Gold" };
   const ML_OBJECTIVE_LABEL = t("medallion.mlObjectives", { returnObjects: true });
@@ -66,7 +69,7 @@ export default function ThreeColumnView({ nodes, onSelect, selectedId, qualityBy
               return (
                 <div
                   key={p.id}
-                  onClick={() => onOpenSilverPreview?.(p.bronzeId, p.stage)}
+                  onClick={selectionMode ? () => onToggleSelect?.(p.bronzeId, p.stage) : () => onOpenSilverPreview?.(p.bronzeId, p.stage)}
                   style={{
                     position: "relative", padding: "10px 12px", borderRadius: 10,
                     border: runColor ? `1px solid ${runColor}` : "1px dashed var(--text-muted)",
@@ -75,6 +78,12 @@ export default function ThreeColumnView({ nodes, onSelect, selectedId, qualityBy
                 >
                   {onRunNode && <RunButton onRun={() => onRunNode(p.bronzeId, p.stage)} status={runEntry?.status} title={t("medallion.run.button")} />}
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    {selectionMode && (
+                      <input
+                        type="checkbox" checked={!!runSelection?.has(p.id)} onClick={(e) => e.stopPropagation()}
+                        onChange={() => onToggleSelect?.(p.bronzeId, p.stage)} style={{ margin: 0, cursor: "pointer" }}
+                      />
+                    )}
                     <div style={{ fontWeight: 600, fontSize: 13.5 }}>{p.name}</div>
                     <span
                       className="badge"
@@ -94,7 +103,7 @@ export default function ThreeColumnView({ nodes, onSelect, selectedId, qualityBy
               return (
                 <div
                   key={n.id}
-                  onClick={() => onSelect(n.id)}
+                  onClick={selectionMode ? () => onToggleSelect?.(n.id, null) : () => onSelect(n.id)}
                   style={{
                     position: "relative", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)",
                     borderLeft: `3px solid ${runColor || LAYER_COLOR[layer]}`, cursor: "pointer",
@@ -103,6 +112,12 @@ export default function ThreeColumnView({ nodes, onSelect, selectedId, qualityBy
                 >
                   {onRunNode && <RunButton onRun={() => onRunNode(n.id, null)} status={runEntry?.status} title={t("medallion.run.button")} />}
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    {selectionMode && (
+                      <input
+                        type="checkbox" checked={!!runSelection?.has(String(n.id))} onClick={(e) => e.stopPropagation()}
+                        onChange={() => onToggleSelect?.(n.id, null)} style={{ margin: 0, cursor: "pointer" }}
+                      />
+                    )}
                     <div style={{ fontWeight: 600, fontSize: 13.5 }}>{n.name}</div>
                     {n.transform_type === "python" && (
                       <span className="badge badge-accent" style={{ fontSize: 9.5, padding: "1px 6px" }}>{ML_OBJECTIVE_LABEL[n.ml_objective] || "ML"}</span>

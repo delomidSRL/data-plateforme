@@ -897,7 +897,11 @@
       "historyScope": "Scope",
       "historyFullRun": "Full run",
       "historyTargeted": "Targeted (RUN button)",
-      "status": { "success": "Succeeded", "failed": "Failed", "running": "Running", "pending": "Pending" }
+      "status": { "success": "Succeeded", "failed": "Failed", "running": "Running", "pending": "Pending" },
+      "selectionStart": "Run several pipelines",
+      "selectionCancel": "Cancel selection",
+      "selectionCount": "{{count}} pipeline(s) selected",
+      "selectionLaunch": "Launch selection"
     },
     "threeColumns": "3 columns",
     "generatedPreview": "Generated preview",

@@ -897,7 +897,11 @@
       "historyScope": "Bereik",
       "historyFullRun": "Volledige run",
       "historyTargeted": "Gericht (RUN-knop)",
-      "status": { "success": "Geslaagd", "failed": "Mislukt", "running": "Bezig", "pending": "In wachtrij" }
+      "status": { "success": "Geslaagd", "failed": "Mislukt", "running": "Bezig", "pending": "In wachtrij" },
+      "selectionStart": "Meerdere pipelines uitvoeren",
+      "selectionCancel": "Selectie annuleren",
+      "selectionCount": "{{count}} pipeline(s) geselecteerd",
+      "selectionLaunch": "Selectie starten"
     },
     "threeColumns": "3 kolommen",
     "generatedPreview": "Gegenereerd voorbeeld",

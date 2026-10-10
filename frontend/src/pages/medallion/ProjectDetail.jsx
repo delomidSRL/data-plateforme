@@ -369,6 +369,47 @@ export default function ProjectDetail({ readOnly = false }) {
     }
   };
 
+  // UX ask — "Lancer la sélection" : plusieurs pipelines (chacune bronze + sa propre chaîne
+  // amont) choisies sur le canvas, exécutées en un seul run borné à leur union (voir
+  // run_scope.merge_scopes côté backend) — pas un clic RUN répété pipeline par pipeline, et
+  // sans rebuild/redéploiement (le projet doit déjà être déployé, comme pour le RUN simple).
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [runSelection, setRunSelection] = useState(new Map()); // nodeKey -> { datasetId, stage }
+
+  const toggleSelectForRun = (datasetId, stage = null) => {
+    const key = stage ? `silver-${stage}-${datasetId}` : String(datasetId);
+    setRunSelection((prev) => {
+      const next = new Map(prev);
+      if (next.has(key)) next.delete(key);
+      else next.set(key, { datasetId, stage });
+      return next;
+    });
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setRunSelection(new Map());
+  };
+
+  const launchSelection = async () => {
+    if (runSelection.size === 0) return;
+    const entries = [...runSelection.entries()];
+    setNodeRunStatus((prev) => {
+      const next = { ...prev };
+      for (const [key] of entries) next[key] = { status: "running", error: null };
+      return next;
+    });
+    const items = entries.map(([, v]) => ({ dataset_id: v.datasetId, stage: v.stage }));
+    try {
+      const run = await medallionApi.runSelection(id, items);
+      exitSelectionMode();
+      if (runPollTimer.current) clearTimeout(runPollTimer.current);
+      pollNodeRunStatus(run.id);
+    } catch (err) {
+      showToast(err.message || t("medallion.run.triggerFailed"));
+    }
+  };
+
   // UX ask — the "02 typed" node's "+": straight into authoring 03_standardized_<name> as a
   // real silver dataset, upstream already checked and a starter SELECT already pointed at
   // this exact typed table (not 05_validated like referenceSnippetFor elsewhere — the
@@ -547,6 +588,12 @@ export default function ProjectDetail({ readOnly = false }) {
             <Button variant="ghost" className="inline" onClick={() => setBulkImportOpen(true)}>{Icon.upload()} {t("medallion.bulkImport.entryButton")}</Button>
             <Button variant="ghost" className="inline" disabled={previewing} onClick={handlePreview}>{previewing ? t("medallion.previewing") : t("medallion.preview")}</Button>
             <Button className="inline" disabled={building} onClick={() => handleBuild()}>{building ? t("medallion.deploying") : t("medallion.buildAndDeploy")}</Button>
+            <Button
+              variant="ghost" className="inline"
+              onClick={() => (selectionMode ? exitSelectionMode() : setSelectionMode(true))}
+            >
+              {Icon.play()} {selectionMode ? t("medallion.run.selectionCancel") : t("medallion.run.selectionStart")}
+            </Button>
           </>
         )}
 
@@ -626,6 +673,16 @@ export default function ProjectDetail({ readOnly = false }) {
             <button className="btn-ghost" style={{ padding: "6px 10px", opacity: view === "columns" ? 1 : 0.6 }} onClick={() => setView("columns")}>{Icon.columns()} {t("medallion.threeColumns")}</button>
           </div>
 
+          {selectionMode && (
+            <div className="card" style={{ padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13 }}>{t("medallion.run.selectionCount", { count: runSelection.size })}</span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button variant="ghost" className="inline" onClick={exitSelectionMode}>{t("common.cancel")}</Button>
+                <Button className="inline" disabled={runSelection.size === 0} onClick={launchSelection}>{t("medallion.run.selectionLaunch")}</Button>
+              </div>
+            </div>
+          )}
+
           {view === "canvas" ? (
             <LineageCanvas
               nodes={lineage.nodes} edges={lineage.edges} selectedId={selectedDataset?.id} onSelect={handleSelectNode}
@@ -638,12 +695,14 @@ export default function ProjectDetail({ readOnly = false }) {
               qualityByDataset={qualityByDataset} publishedByDataset={publishedByDataset} dashboardByDataset={dashboardByDataset}
               sqlByDataset={sqlByDataset}
               onRunNode={readOnly ? undefined : handleRunNode} runStatuses={nodeRunStatus}
+              selectionMode={selectionMode} runSelection={runSelection} onToggleSelect={toggleSelectForRun}
             />
           ) : (
             <ThreeColumnView
               nodes={lineage.nodes} selectedId={selectedDataset?.id} onSelect={handleSelectNode} qualityByDataset={qualityByDataset}
               onOpenSilverPreview={(datasetId, stage) => setSilverPreviewTarget({ datasetId, stage })}
               onRunNode={readOnly ? undefined : handleRunNode} runStatuses={nodeRunStatus}
+              selectionMode={selectionMode} runSelection={runSelection} onToggleSelect={toggleSelectForRun}
             />
           )}
         </>
