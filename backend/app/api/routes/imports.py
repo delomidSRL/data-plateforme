@@ -1,15 +1,14 @@
 import json
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models.data_source import DataSource
-from app.models.file_import import FileImport, FileImportStatus, FileImportWriteMode, ImportMode
+from app.models.data_source import DataSource, DataSourceType
+from app.models.file_import import FileImport, FileImportReimportEvent, FileImportStatus, FileImportWriteMode, ImportMode
 from app.models.user import User, UserRole
-from app.schemas.file_import import ColumnsOut, FileImportOut, FileImportStatusOut, FileImportUpdate, XmlCandidatesOut
+from app.schemas.file_import import ColumnsOut, FileImportOut, FileImportStatusOut, FileImportUpdate, ReimportEventOut, ReimportFromObjectStoreRequest, XmlCandidatesOut
 from app.services import file_import as file_import_service
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
@@ -84,6 +83,7 @@ async def create_import(
         return file_import_service.create_import_from_bytes(
             db, current_user.id, file_bytes, file.filename, format, options,
             target_source, archive_source, name, mode, payload_write_mode,
+            source_location={"transport": "local", "file_name": file.filename},
         )
     except file_import_service.ArchiveError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
@@ -197,56 +197,66 @@ async def reimport(
     _: User = Depends(get_current_user),
 ):
     fi = _get_import(db, import_id)
-    archive_source = _get_source(db, fi.archive_source_id, "Source d'archive")
-
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier vide.")
+    try:
+        return file_import_service.apply_reimport(
+            db, background_tasks, fi, file.filename, file_bytes,
+            source_location={"transport": "local", "file_name": file.filename},
+        )
+    except file_import_service.ArchiveError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    except file_import_service.FileImportError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.post("/{import_id}/reimport-from-object-store", response_model=FileImportOut)
+async def reimport_from_object_store(
+    import_id: int,
+    payload: ReimportFromObjectStoreRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Réimport par nœud bronze — pendant S3/MinIO de POST /{id}/reimport : même choix que
+    pour une création (import_from_object_store, medallion.py), appliqué à une ligne
+    FileImport EXISTANTE plutôt qu'à une toute nouvelle."""
+    fi = _get_import(db, import_id)
+    source = _get_source(db, payload.source_id, "Source MinIO/S3")
+    if source.type != DataSourceType.minio:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Source MinIO/S3 introuvable.")
 
     try:
-        archive_path = file_import_service.archive_raw(archive_source, fi.id, file.filename, file_bytes)
+        file_bytes = file_import_service.fetch_object_bytes(source, payload.bucket, payload.key)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Archivage impossible : {exc}")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Lecture du fichier « {payload.bucket}/{payload.key} » impossible : {exc}")
+    if not file_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier vide.")
 
-    fi.source_file_name = file.filename
-    fi.file_size = len(file_bytes)
-    fi.checksum = file_import_service.compute_checksum(file_bytes)
-    fi.archive_path = archive_path
-    fi.uploaded_at = datetime.now(timezone.utc)
-
-    if fi.import_mode == ImportMode.payload:
-        # §3.5 — payload is shape-agnostic (an added/removed key just lands in the JSONB):
-        # no drift check, no modal, straight re-load under the same write_mode/target_table.
-        db.commit()
-        file_import_service.run_import_payload(fi.id)
-        db.refresh(fi)
-        if fi.status == FileImportStatus.error:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=fi.last_error)
-        return fi
-
+    file_name = payload.key.rsplit("/", 1)[-1]
     try:
-        new_mapping = file_import_service.infer_column_mapping(fi.format.value, file_bytes, fi.format_options or {})
-    except Exception as exc:
-        fi.status = FileImportStatus.error
-        fi.last_error = f"Lecture du fichier impossible : {exc}"
-        db.commit()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=fi.last_error)
+        return file_import_service.apply_reimport(
+            db, background_tasks, fi, file_name, file_bytes,
+            source_location={"transport": "minio", "source_id": source.id, "bucket": payload.bucket, "key": payload.key},
+        )
+    except file_import_service.ArchiveError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    except file_import_service.FileImportError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
-    existing_source_names = {c["source_name"] for c in fi.column_mapping}
-    new_source_names = {c["source_name"] for c in new_mapping}
-    same_shape = new_source_names == existing_source_names
 
-    if same_shape:
-        fi.status = FileImportStatus.importing
-        db.commit()
-        background_tasks.add_task(file_import_service.run_import, fi.id)
-    else:
-        fi.column_mapping = new_mapping
-        fi.status = FileImportStatus.awaiting_validation
-        db.commit()
-
-    db.refresh(fi)
-    return fi
+@router.get("/{import_id}/reimport-history", response_model=list[ReimportEventOut])
+def reimport_history(import_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """Historique d'alimentation — le plus récent en premier, le tout premier import compris
+    (trigger_source="initial")."""
+    _get_import(db, import_id)
+    return (
+        db.query(FileImportReimportEvent)
+        .filter(FileImportReimportEvent.file_import_id == import_id)
+        .order_by(FileImportReimportEvent.occurred_at.desc())
+        .all()
+    )
 
 
 @router.delete("/{import_id}", status_code=status.HTTP_204_NO_CONTENT)

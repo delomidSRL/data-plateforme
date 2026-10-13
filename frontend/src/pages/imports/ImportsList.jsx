@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "../../components/ui/Badge.jsx";
 import { Icon } from "../../components/icons.jsx";
@@ -6,6 +6,7 @@ import { useToast } from "../../context/ToastContext.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import * as importsApi from "../../api/imports.js";
 import ImportWizardDrawer from "./ImportWizardDrawer.jsx";
+import ReimportModal from "./ReimportModal.jsx";
 import SchemaValidationModal from "./SchemaValidationModal.jsx";
 import WatchCreateDrawer from "./WatchCreateDrawer.jsx";
 import WatchesPanel from "./WatchesPanel.jsx";
@@ -24,9 +25,8 @@ export default function ImportsList() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [validating, setValidating] = useState(null);
   const [watchTarget, setWatchTarget] = useState(null);
+  const [reimportTargetId, setReimportTargetId] = useState(null);
   const [view, setView] = useState("imports"); // imports | watches
-  const reimportInputRef = useRef(null);
-  const reimportTargetId = useRef(null);
 
   const STATUS_LABEL = t("imports.status", { returnObjects: true });
 
@@ -70,24 +70,11 @@ export default function ImportsList() {
     }
   };
 
-  const openReimport = (id) => {
-    reimportTargetId.current = id;
-    reimportInputRef.current?.click();
-  };
-
-  const handleReimportFile = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file || !reimportTargetId.current) return;
-    const id = reimportTargetId.current;
-    try {
-      const updated = await importsApi.reimport(id, file);
-      setImports((list) => list.map((x) => (x.id === id ? updated : x)));
-      showToast(updated.status === "awaiting_validation" ? t("imports.reimportReopenModal") : t("imports.reimportSuccess"));
-      if (updated.status === "awaiting_validation") setValidating(updated);
-    } catch (err) {
-      showToast(err.message || t("imports.reimportFailed"));
-    }
+  const handleReimported = (updated) => {
+    setReimportTargetId(null);
+    setImports((list) => list.map((x) => (x.id === updated.id ? updated : x)));
+    if (updated.status === "awaiting_validation") setValidating(updated);
+    else showToast(t("imports.reimportSuccess"));
   };
 
   return (
@@ -105,8 +92,6 @@ export default function ImportsList() {
         <button className="btn-ghost" style={{ opacity: view === "imports" ? 1 : 0.6 }} onClick={() => setView("imports")}>{t("imports.title")}</button>
         <button className="btn-ghost" style={{ opacity: view === "watches" ? 1 : 0.6 }} onClick={() => setView("watches")}>{t("watches.tabLabel")}</button>
       </div>
-
-      <input ref={reimportInputRef} type="file" accept=".csv,.xlsx,.xls" style={{ display: "none" }} onChange={handleReimportFile} />
 
       {view === "watches" && <WatchesPanel />}
 
@@ -155,7 +140,7 @@ export default function ImportsList() {
                     <button className="btn-ghost" style={{ padding: "6px 10px" }} onClick={() => setValidating(imp)}>{t("imports.open")}</button>
                   )}
                   {imp.status === "imported" && (
-                    <button className="btn-ghost" style={{ padding: "6px 10px" }} onClick={() => openReimport(imp.id)}>{t("imports.reimport")}</button>
+                    <button className="btn-ghost" style={{ padding: "6px 10px" }} onClick={() => setReimportTargetId(imp.id)}>{t("imports.reimport")}</button>
                   )}
                   {imp.status === "imported" && WATCHABLE_WRITE_MODES.has(imp.write_mode) && (
                     <button className="btn-ghost" style={{ padding: "6px 10px" }} onClick={() => setWatchTarget(imp)}>{t("watches.watchAction")}</button>
@@ -200,6 +185,10 @@ export default function ImportsList() {
             showToast(t("imports.modal.running"));
           }}
         />
+      )}
+
+      {reimportTargetId != null && (
+        <ReimportModal importId={reimportTargetId} onClose={() => setReimportTargetId(null)} onReimported={handleReimported} />
       )}
     </>
   );

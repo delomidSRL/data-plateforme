@@ -328,6 +328,7 @@ def import_from_object_store(
         return file_import_service.create_import_from_bytes(
             db, current_user.id, file_bytes, file_name, payload.format, payload.format_options,
             warehouse, source, payload.name, ImportMode(payload.import_mode), FileImportWriteMode(payload.write_mode),
+            source_location={"transport": "minio", "source_id": source.id, "bucket": payload.bucket, "key": payload.key},
         )
     except file_import_service.ArchiveError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))

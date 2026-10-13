@@ -14,7 +14,16 @@ from psycopg import sql
 from app.core.security import decrypt_secret
 from app.db.session import SessionLocal
 from app.models.data_source import DataSource, DataSourceType
-from app.models.file_import import FileImport, FileImportFormat, FileImportStatus, FileImportWriteMode, ImportMode
+from app.models.file_import import (
+    FileImport,
+    FileImportFormat,
+    FileImportReimportEvent,
+    FileImportStatus,
+    FileImportWriteMode,
+    ImportMode,
+    ReimportOutcome,
+    ReimportTriggerSource,
+)
 from app.services import connections, schema_infer
 
 logger = logging.getLogger("app.file_import")
@@ -124,6 +133,34 @@ def fetch_archived(archive_source: DataSource, archive_path: str) -> bytes:
     finally:
         response.close()
         response.release_conn()
+
+
+def record_reimport_event(
+    db, fi: FileImport, outcome: ReimportOutcome,
+    row_count: int | None = None, cast_errors: dict | None = None, error: str | None = None,
+) -> None:
+    """Réimport par nœud bronze — historique d'alimentation : une ligne par (ré)import,
+    jamais écrasée (voir FileImportReimportEvent). Appelé depuis le tail commun de
+    _do_run_import/_do_run_import_payload (succès) et run_import/run_import_payload (échec),
+    donc pour TOUT déclenchement (création initiale, réimport local, réimport S3) sans avoir
+    à faire transiter trigger_source à travers ces fonctions partagées — le tout premier
+    événement pour cette ligne FileImport est toujours "initial", peu importe le chemin
+    d'entrée ; `fi.source_location` doit déjà refléter CETTE tentative (mis à jour juste avant
+    par le code appelant)."""
+    already_has_history = db.query(FileImportReimportEvent.id).filter(FileImportReimportEvent.file_import_id == fi.id).first() is not None
+    location = fi.source_location or {"transport": "local", "file_name": fi.source_file_name}
+    if not already_has_history:
+        trigger_source = ReimportTriggerSource.initial
+    elif location.get("transport") == "minio":
+        trigger_source = ReimportTriggerSource.manual_s3
+    else:
+        trigger_source = ReimportTriggerSource.manual_local
+    db.add(FileImportReimportEvent(
+        file_import_id=fi.id, trigger_source=trigger_source, source_location=location,
+        file_name=fi.source_file_name, file_size=fi.file_size, outcome=outcome,
+        row_count=row_count, cast_errors=cast_errors or {}, error=error,
+    ))
+    db.commit()
 
 
 def fetch_object_bytes(source: DataSource, bucket: str, key: str) -> bytes:
@@ -641,6 +678,7 @@ def create_import_from_bytes(
     db, current_user_id: int, file_bytes: bytes, source_file_name: str,
     format_: str, format_options: dict, target_source: DataSource, archive_source: DataSource,
     name: str | None, import_mode: ImportMode, write_mode: FileImportWriteMode,
+    source_location: dict,
 ) -> FileImport:
     """Everything downstream of "we have the file's bytes" — shared by the multipart-upload
     route (imports.py POST /) and the "already sitting in an object-store bucket" entry point
@@ -648,7 +686,12 @@ def create_import_from_bytes(
     of uploading a local file). Raises FileImportError/whatever archive_raw or
     infer_column_mapping raises on failure — the caller's own route turns that into an
     HTTPException with whatever status code fits its context; the FileImport row itself is
-    already left correctly flagged status=error either way, same as the original route did."""
+    already left correctly flagged status=error either way, same as the original route did.
+
+    `source_location` — réimport par nœud bronze : {"transport": "local", "file_name": ...} ou
+    {"transport": "minio", "source_id", "bucket", "key"}, selon le chemin d'entrée du caller.
+    Persisté dès la création (pas seulement au réimport) pour que "toujours reprendre
+    l'emplacement du DERNIER fichier importé" fonctionne même avant tout réimport."""
     if not file_bytes:
         raise FileImportError("Fichier vide.")
     if import_mode == ImportMode.payload and format_ not in PAYLOAD_FORMATS:
@@ -658,7 +701,7 @@ def create_import_from_bytes(
         name=name or source_file_name, imported_by=current_user_id, source_file_name=source_file_name,
         file_size=len(file_bytes), format=FileImportFormat(format_), format_options=format_options,
         target_source_id=target_source.id, archive_source_id=archive_source.id,
-        status=FileImportStatus.draft, import_mode=import_mode,
+        status=FileImportStatus.draft, import_mode=import_mode, source_location=source_location,
     )
     db.add(fi)
     db.commit()
@@ -673,6 +716,7 @@ def create_import_from_bytes(
         fi.status = FileImportStatus.error
         fi.last_error = f"Archivage impossible : {exc}"
         db.commit()
+        record_reimport_event(db, fi, ReimportOutcome.error, error=fi.last_error)
         raise ArchiveError(fi.last_error) from exc
 
     if import_mode == ImportMode.payload:
@@ -693,7 +737,76 @@ def create_import_from_bytes(
         fi.status = FileImportStatus.error
         fi.last_error = f"Analyse du schéma impossible : {exc}"
         db.commit()
+        record_reimport_event(db, fi, ReimportOutcome.error, error=fi.last_error)
         raise
+
+    db.refresh(fi)
+    return fi
+
+
+def apply_reimport(db, background_tasks, fi: FileImport, file_name: str, file_bytes: bytes, source_location: dict) -> FileImport:
+    """Réimport par nœud bronze — tail partagé de POST /{id}/reimport (local) et POST /{id}/
+    reimport-from-object-store : tout ce qui suit "on a les octets du nouveau fichier" —
+    archive, contrôle de dérive (mode typed seulement — payload est agnostique à la forme,
+    §3.5), et déclenche le (ré)import. Miroir du rôle de create_import_from_bytes, pour une
+    ligne FileImport EXISTANTE plutôt qu'une toute nouvelle."""
+    archive_source = db.get(DataSource, fi.archive_source_id)
+    if archive_source is None:
+        raise FileImportError("Source d'archive introuvable.")
+
+    try:
+        archive_path = archive_raw(archive_source, fi.id, file_name, file_bytes)
+    except Exception as exc:
+        record_reimport_event(db, fi, ReimportOutcome.error, error=f"Archivage impossible : {exc}")
+        raise ArchiveError(f"Archivage impossible : {exc}") from exc
+
+    fi.source_file_name = file_name
+    fi.file_size = len(file_bytes)
+    fi.checksum = compute_checksum(file_bytes)
+    fi.archive_path = archive_path
+    fi.uploaded_at = datetime.now(timezone.utc)
+    fi.source_location = source_location
+    db.commit()
+
+    if fi.import_mode == ImportMode.payload:
+        # §3.5 — payload is shape-agnostic (an added/removed key just lands in the JSONB):
+        # no drift check, no modal, straight re-load under the same write_mode/target_table.
+        run_import_payload(fi.id)
+        db.refresh(fi)
+        if fi.status == FileImportStatus.error:
+            raise FileImportError(fi.last_error or "Import échoué.")
+        return fi
+
+    try:
+        new_mapping = infer_column_mapping(fi.format.value, file_bytes, fi.format_options or {})
+    except Exception as exc:
+        fi.status = FileImportStatus.error
+        fi.last_error = f"Lecture du fichier impossible : {exc}"
+        db.commit()
+        record_reimport_event(db, fi, ReimportOutcome.error, error=fi.last_error)
+        raise FileImportError(fi.last_error) from exc
+
+    existing_source_names = {c["source_name"] for c in fi.column_mapping}
+    new_source_names = {c["source_name"] for c in new_mapping}
+    same_shape = new_source_names == existing_source_names
+
+    if same_shape:
+        fi.status = FileImportStatus.importing
+        db.commit()
+        background_tasks.add_task(run_import, fi.id)
+    else:
+        added = new_source_names - existing_source_names
+        removed = existing_source_names - new_source_names
+        parts = []
+        if added:
+            parts.append(f"colonne(s) apparue(s) : {', '.join(sorted(added))}")
+        if removed:
+            parts.append(f"colonne(s) disparue(s) : {', '.join(sorted(removed))}")
+        drift_message = " ; ".join(parts) or "forme différente du contrat de mapping existant."
+        fi.column_mapping = new_mapping
+        fi.status = FileImportStatus.awaiting_validation
+        db.commit()
+        record_reimport_event(db, fi, ReimportOutcome.drift_rejected, error=drift_message)
 
     db.refresh(fi)
     return fi
@@ -714,6 +827,7 @@ def run_import_payload(file_import_id: int) -> None:
             fi.status = FileImportStatus.error
             fi.last_error = str(exc)[:2000]
             db.commit()
+            record_reimport_event(db, fi, ReimportOutcome.error, error=fi.last_error)
     finally:
         db.close()
 
@@ -761,6 +875,7 @@ def _do_run_import_payload(db, fi: FileImport) -> None:
     fi.cast_errors = {}
     fi.imported_at = datetime.now(timezone.utc)
     db.commit()
+    record_reimport_event(db, fi, ReimportOutcome.imported, row_count=row_count)
 
 
 def run_import(file_import_id: int) -> None:
@@ -778,6 +893,7 @@ def run_import(file_import_id: int) -> None:
             fi.status = FileImportStatus.error
             fi.last_error = str(exc)[:2000]
             db.commit()
+            record_reimport_event(db, fi, ReimportOutcome.error, error=fi.last_error)
     finally:
         db.close()
 
@@ -830,6 +946,7 @@ def _do_run_import(db, fi: FileImport) -> None:
     fi.imported_at = datetime.now(timezone.utc)
     fi.contract_hash = canonical_contract(fi.column_mapping)
     db.commit()
+    record_reimport_event(db, fi, ReimportOutcome.imported, row_count=row_count, cast_errors=cast_errors)
 
 
 def watch_reimport(db, fi: FileImport, file_name: str, file_bytes: bytes) -> dict:

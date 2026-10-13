@@ -1,11 +1,12 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Modal } from "../../components/ui/Modal.jsx";
 import { Button } from "../../components/ui/Button.jsx";
 import { Badge } from "../../components/ui/Badge.jsx";
 import { Icon } from "../../components/icons.jsx";
 import { useToast } from "../../context/ToastContext.jsx";
-import * as importsApi from "../../api/imports.js";
+import ReimportModal from "../imports/ReimportModal.jsx";
+import SchemaValidationModal from "../imports/SchemaValidationModal.jsx";
 import DataPreviewPanel from "./DataPreviewPanel.jsx";
 
 const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "Oracle", minio: "MinIO" };
@@ -13,31 +14,24 @@ const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "O
 export default function OriginPanel({ origin, project, previewDatasetId, onClose, readOnly = false }) {
   const { t } = useTranslation();
   const showToast = useToast();
-  const fileInputRef = useRef(null);
-  const [busy, setBusy] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [reimporting, setReimporting] = useState(false);
+  const [validating, setValidating] = useState(null);
 
   const isFileImport = origin.provenance?.type === "file_import";
 
-  const handleReimportFile = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    setBusy(true);
-    try {
-      const updated = await importsApi.reimport(origin.provenance.import_id, file);
-      showToast(updated.status === "awaiting_validation" ? t("imports.reimportReopenModal") : t("imports.reimportSuccess"));
-    } catch (err) {
-      showToast(err.message || t("imports.reimportFailed"));
-    } finally {
-      setBusy(false);
+  const handleReimported = (updated) => {
+    setReimporting(false);
+    if (updated.status === "awaiting_validation") {
+      setValidating(updated);
+    } else {
+      showToast(t("imports.reimportSuccess"));
     }
   };
 
   return (
+    <>
     <Modal large title={origin.name} description={t("medallion.origin.description")} onClose={onClose}>
-      <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" style={{ display: "none" }} onChange={handleReimportFile} />
-
       <div className="field">
         <label className="field-label">{t("medallion.origin.sourceType")}</label>
         <Badge tone="neutral">{SOURCE_TYPE_LABEL[origin.source_type] || origin.source_type}</Badge>
@@ -80,11 +74,24 @@ export default function OriginPanel({ origin, project, previewDatasetId, onClose
 
       {isFileImport && !readOnly && (
         <div className="modal-actions">
-          <Button type="button" disabled={busy} onClick={() => fileInputRef.current?.click()}>
-            {Icon.upload()} {busy ? t("imports.reimporting") : t("imports.reimport")}
+          <Button type="button" onClick={() => setReimporting(true)}>
+            {Icon.upload()} {t("imports.reimport")}
           </Button>
         </div>
       )}
     </Modal>
+
+    {reimporting && (
+      <ReimportModal importId={origin.provenance.import_id} onClose={() => setReimporting(false)} onReimported={handleReimported} />
+    )}
+
+    {validating && (
+      <SchemaValidationModal
+        fileImport={validating}
+        onClose={() => setValidating(null)}
+        onValidated={() => { setValidating(null); showToast(t("imports.modal.running")); }}
+      />
+    )}
+    </>
   );
 }

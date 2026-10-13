@@ -28,6 +28,11 @@ export const reimport = (id, file) => {
   return apiUpload(`${base}/${id}/reimport`, formData);
 };
 
+// Réimport par nœud bronze — pendant S3/MinIO de reimport() ci-dessus.
+export const reimportFromObjectStore = (id, { source_id, bucket, key }) =>
+  apiFetch(`${base}/${id}/reimport-from-object-store`, { method: "POST", body: { source_id, bucket, key } });
+export const getReimportHistory = (id) => apiFetch(`${base}/${id}/reimport-history`);
+
 export const getXmlCandidates = (file) => {
   const formData = new FormData();
   formData.append("file", file);

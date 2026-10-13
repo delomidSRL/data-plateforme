@@ -54,6 +54,34 @@ class FileImportOut(BaseModel):
     status: str
     last_error: str | None = None
     import_mode: str = "typed"
+    # Réimport par nœud bronze — où le DERNIER (ré)import a pris son fichier, pour pré-remplir
+    # le préfixe/dossier au prochain réimport ("toujours reprendre l'emplacement du dernier
+    # fichier importé"). {"transport": "local", "file_name"} ou {"transport": "minio",
+    # "source_id", "bucket", "key"} — absent pour un import antérieur à cette fonctionnalité.
+    source_location: dict | None = None
+
+
+class ReimportFromObjectStoreRequest(BaseModel):
+    """Réimport par nœud bronze — pendant local de POST /{id}/reimport : un fichier déjà posé
+    dans un bucket S3/MinIO plutôt qu'un upload direct, même choix offert à la création."""
+    source_id: int
+    bucket: str
+    key: str
+
+
+class ReimportEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    occurred_at: datetime
+    trigger_source: str
+    source_location: dict
+    file_name: str
+    file_size: int | None = None
+    outcome: str
+    row_count: int | None = None
+    cast_errors: dict
+    error: str | None = None
 
 
 class ImportFromObjectStoreCreate(BaseModel):
