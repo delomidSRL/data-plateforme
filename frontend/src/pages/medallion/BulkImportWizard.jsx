@@ -64,28 +64,16 @@ function FileConfigStep({ item, onChange, project, pgSources, minioSources, defa
   const [pkCandidates, setPkCandidates] = useState([]);
   const [pkLoading, setPkLoading] = useState(false);
 
+  // Pre-fill both "name" and "target_table" from the file name — same slugified table-name-style
+  // value in typed and payload mode alike (payload's "name" doubles as the bronze table name,
+  // §ImportConfigFields), stays fully editable.
   useEffect(() => {
     if (isLocal && !item.targetSourceId && defaults?.targetSourceId) onChange({ targetSourceId: defaults.targetSourceId });
     if (isLocal && !item.archiveSourceId && defaults?.archiveSourceId) onChange({ archiveSourceId: defaults.archiveSourceId });
+    if (!item.name) onChange({ name: previewTableName(item.filename) });
     if (!item.targetTable) onChange({ targetTable: previewTableName(item.name.trim() || item.filename) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Pre-fill "name" from the file name — payload mode gets the slugified form (it doubles as
-  // the bronze table name, §ImportConfigFields); typed mode gets the raw file name (just a
-  // display label here, the real target_table field above is prefilled separately). Re-derives
-  // on mode toggle only while the field still holds the OTHER mode's auto-value, so a manual
-  // edit is never clobbered.
-  useEffect(() => {
-    const rawDefault = item.filename;
-    const slugDefault = previewTableName(item.filename);
-    if (isPayload) {
-      if (!item.name || item.name === rawDefault) onChange({ name: slugDefault });
-    } else if (!item.name || item.name === slugDefault) {
-      onChange({ name: rawDefault });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPayload]);
 
   useEffect(() => {
     if (item.format !== "xml" || !isLocal) { setXpathCandidates([]); return; }
@@ -287,8 +275,8 @@ export default function BulkImportWizard({ project, sources, onClose, onImported
     const isPayload = currentItem.importMode === "payload" && PAYLOAD_FORMATS.has(currentItem.format);
     if (currentItem.origin === "local" && (!currentItem.targetSourceId || !currentItem.archiveSourceId)) return false;
     if (currentItem.format === "xml" && !currentItem.recordXpath?.trim()) return false;
-    if (isPayload) { if (!IDENTIFIER_RE.test(currentItem.name.trim())) return false; }
-    else if (!IDENTIFIER_RE.test(currentItem.targetTable?.trim() || "")) return false;
+    if (!IDENTIFIER_RE.test(currentItem.name.trim())) return false;
+    if (!isPayload && !IDENTIFIER_RE.test(currentItem.targetTable?.trim() || "")) return false;
     return true;
   })();
 

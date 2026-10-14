@@ -40,7 +40,7 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
 
   const isPayload = importMode === "payload" && PAYLOAD_FORMATS.has(format);
   const valid = file && targetSourceId && archiveSourceId && (format !== "xml" || recordXpath.trim())
-    && (!isPayload || IDENTIFIER_RE.test(name.trim()));
+    && IDENTIFIER_RE.test(name.trim());
 
   const pickFile = (f) => {
     if (!f) return;
@@ -51,22 +51,14 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
     else if (/\.xml$/i.test(f.name)) { setFormat("xml"); setImportMode("typed"); }
   };
 
-  // Pre-fill "name" from the file as soon as one is picked — payload mode gets the slugified
-  // form (it doubles as the bronze table name, no later mapping step to ask for one); typed
-  // mode gets the raw file name (just a display label here, the real target_table is prefilled
-  // separately once the schema-validation step opens). Re-derives on mode toggle only while
-  // the field still holds the OTHER mode's auto-value, so a manual edit is never clobbered.
+  // Pre-fill "name" from the file as soon as one is picked — same slugified table-name-style
+  // value in both typed and payload mode (payload sends it straight through as the bronze
+  // table name; typed mode previews it the same way the schema-validation step's own
+  // target_table field will be prefilled), stays fully editable.
   useEffect(() => {
-    if (!file) return;
-    const rawDefault = file.name;
-    const slugDefault = previewTableName(file.name);
-    if (isPayload) {
-      if (!name || name === rawDefault) setName(slugDefault);
-    } else if (!name || name === slugDefault) {
-      setName(rawDefault);
-    }
+    if (file && !name) setName(previewTableName(file.name));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPayload, file]);
+  }, [file]);
 
   useEffect(() => {
     if (format !== "xml" || !file) {

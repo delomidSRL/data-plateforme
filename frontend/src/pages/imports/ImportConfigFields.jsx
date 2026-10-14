@@ -166,7 +166,13 @@ export default function ImportConfigFields({
 
       {!isPayload && (
         <Field label={t("imports.wizard.importName")}>
-          <Input value={name} onChange={(e) => onNameChange(e.target.value)} placeholder={fileLabel} />
+          <Input
+            value={name} onChange={(e) => onNameChange(e.target.value)} placeholder={fileLabel}
+            style={{ borderColor: name.trim() && !IDENTIFIER_RE.test(name.trim()) ? "var(--danger)" : undefined }}
+          />
+          {name.trim() && !IDENTIFIER_RE.test(name.trim()) && (
+            <div style={{ fontSize: 11.5, color: "var(--danger)", marginTop: 6 }}>{t("imports.wizard.tableNameInvalid")}</div>
+          )}
         </Field>
       )}
     </>
