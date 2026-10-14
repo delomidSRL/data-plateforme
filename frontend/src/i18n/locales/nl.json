@@ -302,6 +302,7 @@
       "sourceSystemPlaceholder": "bv. SAP, Salesforce, legacy ERP",
       "sourceSystemHelp": "Vanuit welke applicatie dit bestand werd geëxporteerd — informatief, ongewijzigd opgeslagen op elke rij, zonder beperking.",
       "bronzeTableName": "Naam van de bronze-tabel",
+      "tableNameInvalid": "Ongeldige tabelnaam: alleen kleine letters, cijfers en underscore (geen hoofdletters, spaties of accenten), mag niet met een cijfer beginnen.",
       "importing": "Importeren…",
       "importAction": "Importeren",
       "payloadImportedToast": "Bestand geïmporteerd als payload."

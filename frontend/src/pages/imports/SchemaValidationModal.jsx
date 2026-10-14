@@ -6,9 +6,9 @@ import { Button } from "../../components/ui/Button.jsx";
 import { Badge } from "../../components/ui/Badge.jsx";
 import { Icon } from "../../components/icons.jsx";
 import * as importsApi from "../../api/imports.js";
+import { previewTableName, IDENTIFIER_RE } from "./ImportConfigFields.jsx";
 
 const TYPES = ["text", "integer", "bigint", "numeric", "boolean", "date", "timestamp", "jsonb"];
-const IDENTIFIER_RE = /^[a-z_][a-z0-9_]{0,62}$/;
 const BOOL_TRUE = new Set(["true", "1", "oui", "vrai", "o", "yes", "y"]);
 const BOOL_FALSE = new Set(["false", "0", "non", "faux", "n", "no"]);
 
@@ -49,7 +49,7 @@ function previewCast(raw, type, dateFormat) {
 export default function SchemaValidationModal({ fileImport, onClose, onValidated }) {
   const { t } = useTranslation();
   const [columns, setColumns] = useState(fileImport.column_mapping.map((c) => ({ ...c })));
-  const [targetTable, setTargetTable] = useState(fileImport.target_table || "");
+  const [targetTable, setTargetTable] = useState(fileImport.target_table || previewTableName(fileImport.source_file_name || ""));
   const [writeMode, setWriteMode] = useState(fileImport.write_mode || "create");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -194,7 +194,13 @@ from {{ source('imports', '${targetTable || "..."}') }}`}
       <div style={{ display: "flex", gap: 12, alignItems: "flex-end", marginBottom: 8 }}>
         <div style={{ flex: 2 }}>
           <Field label={t("imports.modal.targetTable")}>
-            <Input id="import-target-table" value={targetTable} onChange={(e) => setTargetTable(e.target.value)} style={{ fontFamily: "var(--font-m)" }} />
+            <Input
+              id="import-target-table" value={targetTable} onChange={(e) => setTargetTable(e.target.value)}
+              style={{ fontFamily: "var(--font-m)", borderColor: targetTable && !tableValid ? "var(--danger)" : undefined }}
+            />
+            {targetTable && !tableValid && (
+              <div style={{ fontSize: 11.5, color: "var(--danger)", marginTop: 6 }}>{t("imports.wizard.tableNameInvalid")}</div>
+            )}
           </Field>
         </div>
         <div style={{ flex: 1 }}>

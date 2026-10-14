@@ -302,6 +302,7 @@
       "sourceSystemPlaceholder": "e.g. SAP, Salesforce, legacy ERP",
       "sourceSystemHelp": "Which application this file was exported from — informational, stored as-is on every row, no constraint.",
       "bronzeTableName": "Bronze table name",
+      "tableNameInvalid": "Invalid table name: lowercase letters, digits and underscore only (no uppercase, spaces or accents), can't start with a digit.",
       "importing": "Importing…",
       "importAction": "Import",
       "payloadImportedToast": "File imported as payload."

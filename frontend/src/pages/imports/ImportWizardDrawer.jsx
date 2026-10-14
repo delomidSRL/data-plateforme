@@ -6,7 +6,7 @@ import { Button } from "../../components/ui/Button.jsx";
 import { Icon } from "../../components/icons.jsx";
 import * as sourcesApi from "../../api/sources.js";
 import * as importsApi from "../../api/imports.js";
-import ImportConfigFields, { PAYLOAD_FORMATS } from "./ImportConfigFields.jsx";
+import ImportConfigFields, { PAYLOAD_FORMATS, previewTableName, IDENTIFIER_RE } from "./ImportConfigFields.jsx";
 
 export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
   const { t } = useTranslation();
@@ -38,8 +38,9 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
   const pgSources = sources.filter((s) => s.type === "postgresql");
   const minioSources = sources.filter((s) => s.type === "minio");
 
-  const valid = file && targetSourceId && archiveSourceId && (format !== "xml" || recordXpath.trim());
   const isPayload = importMode === "payload" && PAYLOAD_FORMATS.has(format);
+  const valid = file && targetSourceId && archiveSourceId && (format !== "xml" || recordXpath.trim())
+    && (!isPayload || IDENTIFIER_RE.test(name.trim()));
 
   const pickFile = (f) => {
     if (!f) return;
@@ -49,6 +50,14 @@ export default function ImportWizardDrawer({ onClose, onAnalyzed }) {
     else if (/\.(json|ndjson)$/i.test(f.name)) { setFormat("json"); setImportMode("typed"); }
     else if (/\.xml$/i.test(f.name)) { setFormat("xml"); setImportMode("typed"); }
   };
+
+  // Payload mode's "name" field doubles as the bronze table name (it has no later mapping
+  // step to ask for one) — pre-fill it from the file name as soon as that mode applies, same
+  // as typed mode's target_table gets pre-filled once the schema-validation step opens.
+  useEffect(() => {
+    if (isPayload && file && !name) setName(previewTableName(file.name));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPayload, file]);
 
   useEffect(() => {
     if (format !== "xml" || !file) {

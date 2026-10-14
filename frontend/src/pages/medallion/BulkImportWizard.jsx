@@ -8,7 +8,7 @@ import { Icon } from "../../components/icons.jsx";
 import * as sourcesApi from "../../api/sources.js";
 import * as importsApi from "../../api/imports.js";
 import * as medallionApi from "../../api/medallion.js";
-import ImportConfigFields, { PAYLOAD_FORMATS, previewTableName } from "../imports/ImportConfigFields.jsx";
+import ImportConfigFields, { PAYLOAD_FORMATS, previewTableName, IDENTIFIER_RE } from "../imports/ImportConfigFields.jsx";
 
 const IMPORTABLE_LOCAL_RE = /\.(csv|xlsx?|json|ndjson|xml)$/i;
 const IMPORTABLE_S3_RE = /\.(csv|xlsx?)$/i;
@@ -70,6 +70,14 @@ function FileConfigStep({ item, onChange, project, pgSources, minioSources, defa
     if (!item.targetTable) onChange({ targetTable: previewTableName(item.name.trim() || item.filename) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Payload mode's "name" field doubles as the bronze table name (§ImportConfigFields) — it
+  // can become payload only after the mount-time prefill above already ran (user switches
+  // mode mid-step), so it needs its own effect keyed on isPayload.
+  useEffect(() => {
+    if (isPayload && !item.name) onChange({ name: previewTableName(item.filename) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPayload]);
 
   useEffect(() => {
     if (item.format !== "xml" || !isLocal) { setXpathCandidates([]); return; }
@@ -143,7 +151,13 @@ function FileConfigStep({ item, onChange, project, pgSources, minioSources, defa
       {!isPayload && (
         <>
           <Field label={t("imports.modal.targetTable")}>
-            <Input value={item.targetTable} onChange={(e) => onChange({ targetTable: e.target.value })} style={{ fontFamily: "var(--font-m)" }} />
+            <Input
+              value={item.targetTable} onChange={(e) => onChange({ targetTable: e.target.value })}
+              style={{ fontFamily: "var(--font-m)", borderColor: item.targetTable && !IDENTIFIER_RE.test(item.targetTable.trim()) ? "var(--danger)" : undefined }}
+            />
+            {item.targetTable && !IDENTIFIER_RE.test(item.targetTable.trim()) && (
+              <div style={{ fontSize: 11.5, color: "var(--danger)", marginTop: 6 }}>{t("imports.wizard.tableNameInvalid")}</div>
+            )}
           </Field>
           <Field label={t("imports.modal.writeMode")}>
             <select className="input" value={item.writeMode} onChange={(e) => onChange({ writeMode: e.target.value })}>
@@ -265,7 +279,8 @@ export default function BulkImportWizard({ project, sources, onClose, onImported
     const isPayload = currentItem.importMode === "payload" && PAYLOAD_FORMATS.has(currentItem.format);
     if (currentItem.origin === "local" && (!currentItem.targetSourceId || !currentItem.archiveSourceId)) return false;
     if (currentItem.format === "xml" && !currentItem.recordXpath?.trim()) return false;
-    if (!isPayload && !currentItem.targetTable?.trim()) return false;
+    if (isPayload) { if (!IDENTIFIER_RE.test(currentItem.name.trim())) return false; }
+    else if (!IDENTIFIER_RE.test(currentItem.targetTable?.trim() || "")) return false;
     return true;
   })();
 

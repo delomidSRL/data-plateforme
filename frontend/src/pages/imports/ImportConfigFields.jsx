@@ -20,6 +20,10 @@ export const previewTableName = (n) => {
   return slug ? (/^[0-9]/.test(slug) ? `col_${slug}` : slug) : "col";
 };
 
+// Mirrors the backend's own identifier rule (file_import.py's IDENTIFIER_RE) — lowercase
+// letters, digits and underscore only, can't start with a digit.
+export const IDENTIFIER_RE = /^[a-z_][a-z0-9_]{0,62}$/;
+
 // Shared field block for "how should this one file be imported" — format, typed/payload
 // mode, and every format-specific option. Factored out of ImportWizardDrawer so the bulk
 // import wizard's per-file step renders *exactly* the same fields/logic instead of a
@@ -103,10 +107,18 @@ export default function ImportConfigFields({
             <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>{t("imports.wizard.sourceSystemHelp")}</div>
           </Field>
           <Field label={t("imports.wizard.bronzeTableName")}>
-            <Input value={name} onChange={(e) => onNameChange(e.target.value)} placeholder={previewTableName(fileLabel)} />
-            <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6, fontFamily: "var(--font-m)" }}>
-              {previewTableName(name.trim() || fileLabel)}
-            </div>
+            <Input
+              value={name} onChange={(e) => onNameChange(e.target.value)}
+              placeholder={previewTableName(fileLabel)}
+              style={{ borderColor: name.trim() && !IDENTIFIER_RE.test(name.trim()) ? "var(--danger)" : undefined }}
+            />
+            {name.trim() && !IDENTIFIER_RE.test(name.trim()) ? (
+              <div style={{ fontSize: 11.5, color: "var(--danger)", marginTop: 6 }}>{t("imports.wizard.tableNameInvalid")}</div>
+            ) : (
+              <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6, fontFamily: "var(--font-m)" }}>
+                {previewTableName(name.trim() || fileLabel)}
+              </div>
+            )}
           </Field>
         </>
       )}

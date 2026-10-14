@@ -15,6 +15,7 @@ import StructurationPanel from "./StructurationPanel.jsx";
 import StructurationPopup from "./StructurationPopup.jsx";
 import RunHistoryPanel from "./RunHistoryPanel.jsx";
 import SchemaValidationModal from "../imports/SchemaValidationModal.jsx";
+import { previewTableName, IDENTIFIER_RE } from "../imports/ImportConfigFields.jsx";
 import { BUILTIN_MACROS } from "./builtinMacros.js";
 
 const LAYER_ORDER = { bronze: 0, silver: 1, gold: 2 };
@@ -264,14 +265,14 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
   const [s3PkCandidates, setS3PkCandidates] = useState([]);
   const [s3PkLoading, setS3PkLoading] = useState(false);
 
-  // Client-side preview only — the backend re-derives this itself (schema_infer's own
-  // slugifier) at import time; mirrors ImportWizardDrawer's own previewTableName so both entry
-  // points show the exact same rule before commit.
-  const previewTableName = (n) => {
-    const ascii = (n || "").normalize("NFKD").replace(/[̀-ͯ]/g, "");
-    const slug = ascii.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-    return slug ? (/^[0-9]/.test(slug) ? `col_${slug}` : slug) : "col";
-  };
+  // Pre-fill the bronze table name from the object's own file name as soon as payload mode
+  // applies — mirrors ImportWizardDrawer's/BulkImportWizard's own prefill, stays editable.
+  useEffect(() => {
+    if (isS3Importable && s3ImportMode === "payload" && !s3BronzeTableName && sourceObject) {
+      setS3BronzeTableName(previewTableName(sourceObject.split("/").pop() || ""));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isS3Importable, s3ImportMode, sourceObject]);
 
   const s3FormatOptions = () => (s3ObjectFormat === "csv"
     ? { ...(s3Delimiter ? { delimiter: s3Delimiter } : {}), ...(s3Encoding ? { encoding: s3Encoding } : {}) }
@@ -790,17 +791,26 @@ export default function DatasetPanel({ project, datasets, dataset, defaultLayer,
                         {t("imports.wizard.bronzeTableName")}
                       </div>
                       <input
-                        className="input" style={{ marginBottom: 4 }} value={s3BronzeTableName}
+                        className="input" style={{ marginBottom: 4, borderColor: s3BronzeTableName.trim() && !IDENTIFIER_RE.test(s3BronzeTableName.trim()) ? "var(--danger)" : undefined }}
+                        value={s3BronzeTableName}
                         onChange={(e) => setS3BronzeTableName(e.target.value)}
                         placeholder={previewTableName(sourceObject.split("/").pop() || "")}
                       />
-                      <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginBottom: 10, fontFamily: "var(--font-m)" }}>
-                        {previewTableName(s3BronzeTableName.trim() || sourceObject.split("/").pop() || "")}
-                      </div>
+                      {s3BronzeTableName.trim() && !IDENTIFIER_RE.test(s3BronzeTableName.trim()) ? (
+                        <div style={{ fontSize: 11.5, color: "var(--danger)", marginBottom: 10 }}>{t("imports.wizard.tableNameInvalid")}</div>
+                      ) : (
+                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginBottom: 10, fontFamily: "var(--font-m)" }}>
+                          {previewTableName(s3BronzeTableName.trim() || sourceObject.split("/").pop() || "")}
+                        </div>
+                      )}
                     </>
                   )}
 
-                  <Button type="button" variant="ghost" className="inline" disabled={s3Processing} onClick={processS3File}>
+                  <Button
+                    type="button" variant="ghost" className="inline"
+                    disabled={s3Processing || (s3ImportMode === "payload" && !IDENTIFIER_RE.test(s3BronzeTableName.trim()))}
+                    onClick={processS3File}
+                  >
                     {s3Processing ? t("medallion.panel.s3ImportProcessing") : t("medallion.panel.s3ImportAction")}
                   </Button>
                 </div>
