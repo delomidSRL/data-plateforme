@@ -71,11 +71,19 @@ function FileConfigStep({ item, onChange, project, pgSources, minioSources, defa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Payload mode's "name" field doubles as the bronze table name (§ImportConfigFields) — it
-  // can become payload only after the mount-time prefill above already ran (user switches
-  // mode mid-step), so it needs its own effect keyed on isPayload.
+  // Pre-fill "name" from the file name — payload mode gets the slugified form (it doubles as
+  // the bronze table name, §ImportConfigFields); typed mode gets the raw file name (just a
+  // display label here, the real target_table field above is prefilled separately). Re-derives
+  // on mode toggle only while the field still holds the OTHER mode's auto-value, so a manual
+  // edit is never clobbered.
   useEffect(() => {
-    if (isPayload && !item.name) onChange({ name: previewTableName(item.filename) });
+    const rawDefault = item.filename;
+    const slugDefault = previewTableName(item.filename);
+    if (isPayload) {
+      if (!item.name || item.name === rawDefault) onChange({ name: slugDefault });
+    } else if (!item.name || item.name === slugDefault) {
+      onChange({ name: rawDefault });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPayload]);
 
