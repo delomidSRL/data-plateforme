@@ -1,14 +1,14 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import get_current_user
 from app.api.deps_medallion import get_owned_project, get_project_binding, get_readable_project
-from app.db.session import get_db
+from app.db.session import get_db, SessionLocal
 from app.models.airflow_instance import AirflowInstance, AirflowInstanceOrigin
 from app.models.data_source import DataSource, DataSourceType
 from app.models.dbt_macro import DbtMacro
@@ -166,7 +166,7 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
 
 
 @router.post("/", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
-def create_project(payload: ProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def create_project(payload: ProjectCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     for source_id in (payload.object_store_source_id, payload.warehouse_source_id):
         if db.get(DataSource, source_id) is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Source introuvable.")
@@ -199,7 +199,45 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db), curren
     db.add(home_binding)
     db.commit()
     db.refresh(project)
+
+    # UX ask — le dossier/projet dbt + le DAG doivent exister sur le disque dès la création,
+    # pas seulement après un premier "Build & déployer" explicite. Réutilise build_project()
+    # directement (jamais _build_binding — son garde-fou "ajoutez au moins un dataset" ne
+    # s'applique qu'au bouton manuel) avec une liste de datasets vide : un projet tout juste
+    # créé n'en a par définition aucun ; un squelette dbt quasi vide + un DAG sans tâche réelle
+    # est tout ce qu'il y a à déployer à ce stade. En tâche de fond pour que la création reste
+    # instantanée — un VM Airflow injoignable ne doit jamais bloquer/faire échouer la création.
+    background_tasks.add_task(_auto_scaffold_project, project.id, home_binding.id)
+
     return project
+
+
+async def _auto_scaffold_project(project_id: int, binding_id: int) -> None:
+    db = SessionLocal()
+    try:
+        project = db.get(MedallionProject, project_id)
+        binding = db.get(ProjectEnvironmentBinding, binding_id)
+        if project is None or binding is None:
+            return
+        warehouse = db.get(DataSource, binding.warehouse_source_id)
+        object_store = db.get(DataSource, binding.object_store_source_id)
+        if warehouse is None or object_store is None:
+            return
+        target = airflow_instances.resolve_deploy_target(db, db.get(AirflowInstance, binding.airflow_instance_id), project.dbt_project_name)
+        report = await build_project(db, project, binding, [], warehouse, object_store, target)
+        binding.dag_id = report["dag_id"]
+        binding.dag_file_path = report["dag_path"]
+        binding.status = ProjectStatus.deployed
+        db.commit()
+    except Exception:
+        logger.exception("auto-scaffold failed for new project %s", project_id)
+        db.rollback()
+        binding = db.get(ProjectEnvironmentBinding, binding_id)
+        if binding is not None:
+            binding.status = ProjectStatus.error
+            db.commit()
+    finally:
+        db.close()
 
 
 @router.get("/{pid}", response_model=ProjectOut)
