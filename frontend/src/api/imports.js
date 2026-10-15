@@ -22,15 +22,18 @@ export const createImport = (file, { format, formatOptions = {}, targetSourceId,
   return apiUpload(`${base}/`, formData);
 };
 
-export const reimport = (id, file) => {
+export const reimport = (id, file, { forceAppend = false } = {}) => {
   const formData = new FormData();
   formData.append("file", file);
+  if (forceAppend) formData.append("force_append", "true");
   return apiUpload(`${base}/${id}/reimport`, formData);
 };
 
-// Réimport par nœud bronze — pendant S3/MinIO de reimport() ci-dessus.
-export const reimportFromObjectStore = (id, { source_id, bucket, key }) =>
-  apiFetch(`${base}/${id}/reimport-from-object-store`, { method: "POST", body: { source_id, bucket, key } });
+// Réimport par nœud bronze — pendant S3/MinIO de reimport() ci-dessus. forceAppend : popup de
+// pré-lancement (run-preflight) — un write_mode d'origine "create" échouerait toujours sur une
+// table déjà là, donc ce chemin-là force toujours Append côté serveur.
+export const reimportFromObjectStore = (id, { source_id, bucket, key, forceAppend = false }) =>
+  apiFetch(`${base}/${id}/reimport-from-object-store`, { method: "POST", body: { source_id, bucket, key, force_append: forceAppend } });
 export const getReimportHistory = (id) => apiFetch(`${base}/${id}/reimport-history`);
 
 export const getXmlCandidates = (file) => {

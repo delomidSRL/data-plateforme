@@ -29,6 +29,7 @@ import ScheduleField, { describeSchedule, isValidSchedule } from "./ScheduleFiel
 import ImportWizardDrawer from "../imports/ImportWizardDrawer.jsx";
 import SchemaValidationModal from "../imports/SchemaValidationModal.jsx";
 import BulkImportWizard from "./BulkImportWizard.jsx";
+import RunPreflightModal from "./RunPreflightModal.jsx";
 
 const STATUS_TONE = { draft: "neutral", built: "accent", deployed: "accent", paused: "neutral", error: "neutral" };
 
@@ -293,7 +294,7 @@ export default function ProjectDetail({ readOnly = false }) {
 
   const openScheduleEditor = () => { setScheduleDraft(project.schedule ?? null); setEditingSchedule(true); };
 
-  const saveSchedule = async () => {
+  const doSaveSchedule = async () => {
     setSavingSchedule(true);
     try {
       const updated = await medallionApi.updateProject(id, { schedule: scheduleDraft });
@@ -306,6 +307,11 @@ export default function ProjectDetail({ readOnly = false }) {
       setSavingSchedule(false);
     }
   };
+
+  // Popup de pré-lancement — avant d'activer un schedule, mêmes sources bronze (tout le
+  // projet) qu'un "Exécuter maintenant", pour les relire/réimporter avant que les
+  // déclenchements automatiques futurs ne partent sans personne devant l'écran.
+  const saveSchedule = () => setPreflight({ target: { items: [] }, onConfirm: doSaveSchedule });
 
   const onDatasetSaved = (ds) => {
     setDatasets((list) => {
@@ -354,7 +360,12 @@ export default function ProjectDetail({ readOnly = false }) {
     });
   };
 
-  const handleRunNode = async (datasetId, stage = null) => {
+  // Popup de pré-lancement — ouverte avant TOUT déclenchement (nœud, sélection, tout le
+  // projet, ou l'enregistrement d'un schedule) ; `preflight` porte la cible et ce qu'il faut
+  // faire une fois confirmée (doRunNode/doLaunchSelection/doSaveSchedule/runNow du parent).
+  const [preflight, setPreflight] = useState(null);
+
+  const doRunNode = async (datasetId, stage = null) => {
     // Optimistic: color the clicked node immediately rather than wait for the first poll —
     // same node-key convention the canvas itself already uses (String(id) / silver-<stage>-<id>).
     const nodeKey = stage ? `silver-${stage}-${datasetId}` : String(datasetId);
@@ -367,6 +378,10 @@ export default function ProjectDetail({ readOnly = false }) {
       setNodeRunStatus((prev) => ({ ...prev, [nodeKey]: { status: "failed", error: err.message || t("medallion.run.triggerFailed") } }));
       showToast(err.message || t("medallion.run.triggerFailed"));
     }
+  };
+
+  const handleRunNode = (datasetId, stage = null) => {
+    setPreflight({ target: { items: [{ dataset_id: datasetId, stage }] }, onConfirm: () => doRunNode(datasetId, stage) });
   };
 
   // UX ask — "Lancer la sélection" : plusieurs pipelines (chacune bronze + sa propre chaîne
@@ -391,15 +406,12 @@ export default function ProjectDetail({ readOnly = false }) {
     setRunSelection(new Map());
   };
 
-  const launchSelection = async () => {
-    if (runSelection.size === 0) return;
-    const entries = [...runSelection.entries()];
+  const doLaunchSelection = async (items) => {
     setNodeRunStatus((prev) => {
       const next = { ...prev };
-      for (const [key] of entries) next[key] = { status: "running", error: null };
+      for (const it of items) next[it.stage ? `silver-${it.stage}-${it.dataset_id}` : String(it.dataset_id)] = { status: "running", error: null };
       return next;
     });
-    const items = entries.map(([, v]) => ({ dataset_id: v.datasetId, stage: v.stage }));
     try {
       const run = await medallionApi.runSelection(id, items);
       exitSelectionMode();
@@ -408,6 +420,12 @@ export default function ProjectDetail({ readOnly = false }) {
     } catch (err) {
       showToast(err.message || t("medallion.run.triggerFailed"));
     }
+  };
+
+  const launchSelection = () => {
+    if (runSelection.size === 0) return;
+    const items = [...runSelection.values()].map((v) => ({ dataset_id: v.datasetId, stage: v.stage }));
+    setPreflight({ target: { items }, onConfirm: () => doLaunchSelection(items) });
   };
 
   // UX ask — the "02 typed" node's "+": straight into authoring 03_standardized_<name> as a
@@ -795,6 +813,15 @@ export default function ProjectDetail({ readOnly = false }) {
           fileImport={importValidating}
           onClose={() => setImportValidating(null)}
           onValidated={handleImportValidated}
+        />
+      )}
+
+      {!readOnly && preflight && (
+        <RunPreflightModal
+          project={project}
+          target={preflight.target}
+          onClose={() => setPreflight(null)}
+          onConfirm={() => { const { onConfirm } = preflight; setPreflight(null); onConfirm(); }}
         />
       )}
 

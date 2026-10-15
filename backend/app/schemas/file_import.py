@@ -67,6 +67,10 @@ class ReimportFromObjectStoreRequest(BaseModel):
     source_id: int
     bucket: str
     key: str
+    # Popup de pré-lancement (run-preflight) — un réimport déclenché depuis cette popup doit
+    # alimenter la table existante, jamais tenter de la recréer (write_mode d'origine souvent
+    # "create", qui échouerait toujours sur une table déjà là) ; ignoré partout ailleurs.
+    force_append: bool = False
 
 
 class ReimportEventOut(BaseModel):

@@ -929,6 +929,23 @@
       "selectionCount": "{{count}} pipeline(s) sélectionnée(s)",
       "selectionLaunch": "Lancer la sélection"
     },
+    "preflight": {
+      "title": "Avant de lancer",
+      "description": "Chaque source bronze dont dépend ce lancement, dans l'ordre. Un import fichier peut être réimporté ici (toujours ajouté aux données existantes).",
+      "loadFailed": "Impossible de charger les sources de ce lancement.",
+      "noSources": "Aucune source bronze pour ce lancement.",
+      "badgeLocal": "Local",
+      "badgeS3": "S3 / MinIO",
+      "badgeTable": "Table DB",
+      "badgeObjectStore": "Objet S3",
+      "appendNote": "Le nouveau fichier sera ajouté aux données existantes (mode Ajout), pas recréé.",
+      "stepDone": "Réimporté",
+      "driftRejected": "La structure du fichier a changé — utilisez le bouton Réimporter habituel pour revoir le mapping des colonnes.",
+      "reimportFailed": "Réimport impossible.",
+      "blockedByError": "Une des sources n'a pas pu être réimportée — corrigez-la ou annulez sa modification avant de relancer.",
+      "launching": "Lancement…",
+      "confirmLaunch": "Confirmer et lancer"
+    },
     "threeColumns": "3 colonnes",
     "generatedPreview": "Aperçu généré",
     "mlNode": "Calcul ML — {{name}}",

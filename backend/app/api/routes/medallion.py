@@ -53,6 +53,7 @@ from app.schemas.medallion import (
     LineageEdge,
     LineageGraph,
     LineageNode,
+    PreflightSourceOut,
     PreviewResult,
     PublicationStatusOut,
     DashboardStatusOut,
@@ -72,6 +73,8 @@ from app.schemas.medallion import (
     RunNodeStatusEntry,
     RunNodeStatusOut,
     RunOut,
+    RunPreflightOut,
+    RunPreflightRequest,
     RunSelectionRequest,
     RunTriggerRequest,
     SqlValidationOut,
@@ -524,6 +527,70 @@ async def run_selection(payload: RunSelectionRequest, db: Session = Depends(get_
         scopes.append(run_scope.compute_run_scope(datasets, dataset, item.stage, structured_bronze_ids))
 
     return await _trigger_scoped_run(db, project, run_scope.merge_scopes(scopes))
+
+
+def _describe_bronze_sources(db: Session, bronze: list[MedallionDataset]) -> list[PreflightSourceOut]:
+    """Popup de pré-lancement — pour chaque dataset bronze impliqué, détermine son origine
+    (import fichier / table native / objet S3 direct) avec de quoi l'afficher. Même jointure
+    que build_lineage_graph (provenance des nœuds d'origine), gardée séparée ici : une étape
+    par dataset bronze, pas un nœud d'origine dédupliqué entre plusieurs bronze qui partagent
+    la même table source."""
+    source_ids = {d.source_id for d in bronze if d.source_id}
+    sources_by_id = {s.id: s for s in db.query(DataSource).filter(DataSource.id.in_(source_ids)).all()} if source_ids else {}
+
+    imports_by_key: dict[tuple[int, str, str], FileImport] = {}
+    if source_ids:
+        completed = (
+            db.query(FileImport)
+            .filter(FileImport.target_source_id.in_(source_ids), FileImport.status == FileImportStatus.imported)
+            .all()
+        )
+        imports_by_key = {(fi.target_source_id, fi.target_schema, fi.target_table): fi for fi in completed}
+
+    out: list[PreflightSourceOut] = []
+    for d in bronze:
+        source = sources_by_id.get(d.source_id) if d.source_id else None
+        fi = None
+        if source and source.type == DataSourceType.postgresql and d.source_object and "." in d.source_object:
+            schema_name, table_name = d.source_object.split(".", 1)
+            fi = imports_by_key.get((d.source_id, schema_name, table_name))
+
+        if fi is not None:
+            out.append(PreflightSourceOut(
+                dataset_id=d.id, dataset_name=d.name, origin_type="file_import",
+                import_id=fi.id, import_name=fi.name, file_name=fi.source_file_name,
+                source_location=fi.source_location, write_mode=fi.write_mode.value,
+            ))
+        elif source and source.type == DataSourceType.postgresql:
+            out.append(PreflightSourceOut(
+                dataset_id=d.id, dataset_name=d.name, origin_type="db_table",
+                source_name=source.name, source_type=source.type.value, source_object=d.source_object,
+            ))
+        else:
+            out.append(PreflightSourceOut(
+                dataset_id=d.id, dataset_name=d.name, origin_type="object_store",
+                source_name=source.name if source else None, source_type=source.type.value if source else None,
+                source_object=d.source_object,
+            ))
+    return out
+
+
+@router.post("/{pid}/run-preflight", response_model=RunPreflightOut)
+def run_preflight(payload: RunPreflightRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_owned_project)):
+    """Popup de pré-lancement — avant un RUN (nœud, sélection, tout le projet) ou l'activation
+    d'un schedule : liste en lecture seule les sources bronze dont ce run dépend, pour que
+    l'utilisateur puisse les relire (et, pour un import fichier, le réimporter) avant de
+    confirmer. `items` vide = tout le projet, même convention que RunSelectionRequest sauf que
+    vide n'est pas une erreur ici."""
+    datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
+    by_id = {d.id: d for d in datasets}
+    for item in payload.items:
+        if item.dataset_id not in by_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Dataset {item.dataset_id} introuvable.")
+
+    target_ids = [item.dataset_id for item in payload.items] or None
+    bronze = run_scope.bronze_closure(datasets, target_ids)
+    return RunPreflightOut(sources=_describe_bronze_sources(db, bronze))
 
 
 _RUNNING_TASK_STATES = {"scheduled", "queued", "running", "up_for_retry", "up_for_reschedule", "restarting", "deferred"}

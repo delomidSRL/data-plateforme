@@ -145,6 +145,22 @@ def compute_run_scope(
     )
 
 
+def bronze_closure(datasets: list[MedallionDataset], target_ids: list[int] | None) -> list[MedallionDataset]:
+    """Popup de pré-lancement (run-preflight) — les sources bronze dont dépend réellement un
+    run donné : `target_ids` vide/None = tout le projet (run complet/schedule), sinon l'union
+    des fermetures amont de chaque cible (même notion que compute_run_scope/merge_scopes, mais
+    on ne veut ici que les datasets bronze eux-mêmes, pas le `conf` Airflow)."""
+    if not target_ids:
+        return [d for d in datasets if d.layer == MedallionLayer.bronze]
+    by_id = {d.id: d for d in datasets}
+    seen: dict[int, MedallionDataset] = {}
+    for tid in target_ids:
+        for d in _upstream_closure(by_id, tid):
+            if d.layer == MedallionLayer.bronze:
+                seen[d.id] = d
+    return list(seen.values())
+
+
 def merge_scopes(scopes: list[RunScope]) -> RunScope:
     """Plusieurs pipelines choisies à la fois (sélection multiple sur le canvas) — un seul
     dagRun borné à l'UNION de leurs chaînes amont respectives, pas un run par pipeline.

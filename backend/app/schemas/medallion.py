@@ -470,6 +470,36 @@ class RunSelectionRequest(BaseModel):
     items: list[RunSelectionItem] = Field(min_length=1)
 
 
+class RunPreflightRequest(BaseModel):
+    """Popup de pré-lancement — mêmes `items` que RunSelectionRequest, mais vide = tout le
+    projet (run complet / schedule), pas une erreur de validation : seul le dernier mile
+    (déclencher le run) a besoin d'au moins une cible explicite."""
+    items: list[RunSelectionItem] = Field(default_factory=list)
+
+
+class PreflightSourceOut(BaseModel):
+    """Une étape de la popup de pré-lancement — une source bronze dont dépend le run, avec de
+    quoi l'afficher ET, si c'est un import fichier, de quoi proposer un réimport inline avant
+    de lancer."""
+    dataset_id: int
+    dataset_name: str
+    origin_type: Literal["file_import", "db_table", "object_store"]
+    # origin_type == "file_import"
+    import_id: int | None = None
+    import_name: str | None = None
+    file_name: str | None = None
+    source_location: dict | None = None
+    write_mode: str | None = None
+    # origin_type in {"db_table", "object_store"}
+    source_name: str | None = None
+    source_type: str | None = None
+    source_object: str | None = None
+
+
+class RunPreflightOut(BaseModel):
+    sources: list[PreflightSourceOut]
+
+
 class RunNodeStatusEntry(BaseModel):
     status: Literal["pending", "running", "success", "failed"]
     error: str | None = None

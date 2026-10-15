@@ -5,6 +5,7 @@ import { useToast } from "../../context/ToastContext.jsx";
 import { Badge } from "../../components/ui/Badge.jsx";
 import { Button } from "../../components/ui/Button.jsx";
 import { Icon } from "../../components/icons.jsx";
+import RunPreflightModal from "./RunPreflightModal.jsx";
 
 const STATE_TONE = { queued: "neutral", running: "accent", success: "accent", failed: "neutral" };
 
@@ -42,7 +43,10 @@ export default function RunsTab({ project, readOnly = false }) {
 
   useEffect(() => { load(); }, [project.id]);
 
-  const runNow = async (backfill) => {
+  const [preflight, setPreflight] = useState(false);
+  const [pendingBackfill, setPendingBackfill] = useState(false);
+
+  const doRunNow = async (backfill) => {
     setRunning(true);
     try {
       const payload = backfill ? { backfill_from: from, backfill_to: to } : {};
@@ -56,6 +60,8 @@ export default function RunsTab({ project, readOnly = false }) {
       setRunning(false);
     }
   };
+
+  const runNow = (backfill) => { setPendingBackfill(backfill); setPreflight(true); };
 
   return (
     <>
@@ -114,6 +120,15 @@ export default function RunsTab({ project, readOnly = false }) {
           </tbody>
         </table>
       </div>
+
+      {preflight && (
+        <RunPreflightModal
+          project={project}
+          target={{ items: [] }}
+          onClose={() => setPreflight(false)}
+          onConfirm={() => { setPreflight(false); doRunNow(pendingBackfill); }}
+        />
+      )}
     </>
   );
 }

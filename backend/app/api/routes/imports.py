@@ -193,6 +193,7 @@ async def reimport(
     import_id: int,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    force_append: bool = Form(False),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
@@ -204,6 +205,7 @@ async def reimport(
         return file_import_service.apply_reimport(
             db, background_tasks, fi, file.filename, file_bytes,
             source_location={"transport": "local", "file_name": file.filename},
+            force_write_mode=FileImportWriteMode.append if force_append else None,
         )
     except file_import_service.ArchiveError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
@@ -239,6 +241,7 @@ async def reimport_from_object_store(
         return file_import_service.apply_reimport(
             db, background_tasks, fi, file_name, file_bytes,
             source_location={"transport": "minio", "source_id": source.id, "bucket": payload.bucket, "key": payload.key},
+            force_write_mode=FileImportWriteMode.append if payload.force_append else None,
         )
     except file_import_service.ArchiveError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))

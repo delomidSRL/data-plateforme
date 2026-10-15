@@ -744,12 +744,21 @@ def create_import_from_bytes(
     return fi
 
 
-def apply_reimport(db, background_tasks, fi: FileImport, file_name: str, file_bytes: bytes, source_location: dict) -> FileImport:
+def apply_reimport(
+    db, background_tasks, fi: FileImport, file_name: str, file_bytes: bytes, source_location: dict,
+    force_write_mode: FileImportWriteMode | None = None,
+) -> FileImport:
     """Réimport par nœud bronze — tail partagé de POST /{id}/reimport (local) et POST /{id}/
     reimport-from-object-store : tout ce qui suit "on a les octets du nouveau fichier" —
     archive, contrôle de dérive (mode typed seulement — payload est agnostique à la forme,
     §3.5), et déclenche le (ré)import. Miroir du rôle de create_import_from_bytes, pour une
-    ligne FileImport EXISTANTE plutôt qu'une toute nouvelle."""
+    ligne FileImport EXISTANTE plutôt qu'une toute nouvelle.
+
+    `force_write_mode` (popup de pré-lancement, run-preflight) — écrase durablement
+    fi.write_mode avant de (ré)charger : un import créé une seule fois avec write_mode="create"
+    échouerait sur TOUT réimport suivant (la table existe déjà) ; une fois rafraîchi en Append
+    depuis cette popup, les réimports suivants (y compris via le bouton Réimporter normal)
+    restent cohérents avec la table réellement en place."""
     archive_source = db.get(DataSource, fi.archive_source_id)
     if archive_source is None:
         raise FileImportError("Source d'archive introuvable.")
@@ -766,6 +775,8 @@ def apply_reimport(db, background_tasks, fi: FileImport, file_name: str, file_by
     fi.archive_path = archive_path
     fi.uploaded_at = datetime.now(timezone.utc)
     fi.source_location = source_location
+    if force_write_mode is not None:
+        fi.write_mode = force_write_mode
     db.commit()
 
     if fi.import_mode == ImportMode.payload:

@@ -929,6 +929,23 @@
       "selectionCount": "{{count}} pipeline(s) geselecteerd",
       "selectionLaunch": "Selectie starten"
     },
+    "preflight": {
+      "title": "Voor het starten",
+      "description": "Elke bronze-bron waarvan deze run afhangt, in volgorde. Een bestandsimport kan hier opnieuw geïmporteerd worden (altijd toegevoegd aan de bestaande gegevens).",
+      "loadFailed": "Kan de bronnen van deze run niet laden.",
+      "noSources": "Geen bronze-bron voor deze run.",
+      "badgeLocal": "Lokaal",
+      "badgeS3": "S3 / MinIO",
+      "badgeTable": "DB-tabel",
+      "badgeObjectStore": "S3-object",
+      "appendNote": "Het nieuwe bestand wordt toegevoegd aan de bestaande gegevens (Append-modus), niet opnieuw aangemaakt.",
+      "stepDone": "Opnieuw geïmporteerd",
+      "driftRejected": "De structuur van het bestand is gewijzigd — gebruik de normale knop Opnieuw importeren om de kolomtoewijzing te herzien.",
+      "reimportFailed": "Opnieuw importeren mislukt.",
+      "blockedByError": "Een van de bronnen kon niet opnieuw geïmporteerd worden — corrigeer deze of annuleer de wijziging voordat u opnieuw start.",
+      "launching": "Starten…",
+      "confirmLaunch": "Bevestigen en starten"
+    },
     "threeColumns": "3 kolommen",
     "generatedPreview": "Gegenereerd voorbeeld",
     "mlNode": "ML-node — {{name}}",

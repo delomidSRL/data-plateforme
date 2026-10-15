@@ -60,6 +60,9 @@ export const getRunNodeStatus = (pid, runId) => apiFetch(`${base}/${pid}/runs/${
 export const getDatasetRunHistory = (pid, did, stage) => apiFetch(`${base}/${pid}/datasets/${did}/run-history${stage ? `?stage=${stage}` : ""}`);
 // Sélection multiple sur le canvas ("Lancer la sélection") — items: [{dataset_id, stage}, ...].
 export const runSelection = (pid, items) => apiFetch(`${base}/${pid}/run-selection`, { method: "POST", body: { items } });
+// Popup de pré-lancement — mêmes items que runSelection, mais [] = tout le projet (run
+// complet/schedule), pas une erreur ; renvoie les sources bronze dont ce run dépend.
+export const getRunPreflight = (pid, items = []) => apiFetch(`${base}/${pid}/run-preflight`, { method: "POST", body: { items } });
 
 export const listVersions = (pid) => apiFetch(`${base}/${pid}/versions`);
 export const getVersion = (pid, vid) => apiFetch(`${base}/${pid}/versions/${vid}`);

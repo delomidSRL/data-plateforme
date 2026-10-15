@@ -929,6 +929,23 @@
       "selectionCount": "{{count}} pipeline(s) selected",
       "selectionLaunch": "Launch selection"
     },
+    "preflight": {
+      "title": "Before launching",
+      "description": "Every bronze source this run depends on, in order. A file import can be reimported here (always appended to the existing data).",
+      "loadFailed": "Could not load this run's sources.",
+      "noSources": "No bronze source for this run.",
+      "badgeLocal": "Local",
+      "badgeS3": "S3 / MinIO",
+      "badgeTable": "DB table",
+      "badgeObjectStore": "S3 object",
+      "appendNote": "The new file will be appended to the existing data (Append mode), not recreated.",
+      "stepDone": "Reimported",
+      "driftRejected": "The file's structure changed — use the regular Reimport button to review the column mapping.",
+      "reimportFailed": "Reimport failed.",
+      "blockedByError": "One of the sources could not be reimported — fix it or cancel its edit before launching again.",
+      "launching": "Launching…",
+      "confirmLaunch": "Confirm and launch"
+    },
     "threeColumns": "3 columns",
     "generatedPreview": "Generated preview",
     "mlNode": "ML node — {{name}}",
