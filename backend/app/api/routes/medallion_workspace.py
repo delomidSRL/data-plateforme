@@ -43,7 +43,7 @@ from app.schemas.medallion import (
     WorkspaceTreeOut,
     WorkspaceWriteOut,
 )
-from app.services import dag_render, dbt_runner, impact, jinja_guard, workspace, workspace_merge, workspace_sync
+from app.services import dag_render, dbt_runner, impact, jinja_guard, workspace, workspace_merge, workspace_remote, workspace_sync
 
 router = APIRouter(prefix="/api/medallion/projects", tags=["medallion-workspace"])
 
@@ -257,6 +257,7 @@ def put_workspace_file(
     ))
     db.commit()
     db.refresh(row)
+    workspace_remote.push_file(db, project, row.path, row.content)
 
     sync_result = _sync_and_settle(db, project)
     db.refresh(row)
@@ -288,6 +289,7 @@ def post_workspace_file(
     ))
     db.commit()
     db.refresh(row)
+    workspace_remote.push_file(db, project, row.path, row.content)
 
     sync_result = _sync_and_settle(db, project)
     db.refresh(row)
@@ -323,6 +325,7 @@ def move_workspace_file(
     ))
     db.commit()
     db.refresh(row)
+    workspace_remote.move_file(db, project, old_path, row.path, row.content)
 
     sync_result = _sync_and_settle(db, project)
     db.refresh(row)
@@ -352,6 +355,7 @@ def delete_workspace_file(
             "dataset_id": linked_dataset.id, "dataset_name": linked_dataset.name,
         })
 
+    deleted_path = row.path
     db.add(ProjectFileAudit(
         project_id=project.id, path=row.path, action=ProjectFileAuditAction.delete,
         actor_id=current_user.id, content_hash_before=row.content_hash, content_hash_after=None,
@@ -361,6 +365,7 @@ def delete_workspace_file(
     db.delete(row)
     project.has_pending_changes = True
     db.commit()
+    workspace_remote.delete_file(db, project, deleted_path)
 
     sync_result = _sync_and_settle(db, project)
     return WorkspaceSyncOut(ok=sync_result.ok, errors=[SyncErrorOut(**e.as_dict()) for e in sync_result.errors])

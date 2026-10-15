@@ -9,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.routes import ai, airflow, airflow_instances, auth, dashboard, dbt_macros, dq_flag_registry, file_watch, imports, medallion, medallion_admin, medallion_agent, medallion_folders, medallion_workspace, ml_templates, quality, servers, sources, stacks, superset_instances, users
 from app.core.config import get_settings
 from app.services import file_watch as file_watch_service
+from app.services import workspace_remote
 
 settings = get_settings()
 
@@ -28,15 +29,28 @@ async def _watch_loop() -> None:
         await asyncio.sleep(settings.watch_tick_seconds)
 
 
+async def _code_sync_loop() -> None:
+    """Code tab <-> dossier dbt physique, sens disque -> plateforme (voir workspace_remote.py)
+    — même pattern que _watch_loop ci-dessus, verrou/tick distincts."""
+    while True:
+        try:
+            await run_in_threadpool(workspace_remote.poll_all_projects)
+        except Exception:
+            logger.warning("code sync loop: unhandled error in poll_all_projects", exc_info=True)
+        await asyncio.sleep(settings.code_sync_tick_seconds)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI):
-    task = asyncio.create_task(_watch_loop())
+    tasks = [asyncio.create_task(_watch_loop()), asyncio.create_task(_code_sync_loop())]
     try:
         yield
     finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 app = FastAPI(title="Data Plateforme API", version="0.1.0", lifespan=lifespan)

@@ -131,6 +131,12 @@ class Settings(BaseSettings):
     dbt_runner_timeout_s: int = 60
     dbt_packages_cache_dir: str = "./.dbt_packages_cache"
 
+    # "atterrir directement dans le dossier / inversement" — le sondage périodique qui rapatrie
+    # les éditions faites directement sur le dossier dbt physique (voir services/
+    # workspace_remote.py). Même mécanisme de lock que le file watcher ci-dessus, clé distincte.
+    code_sync_tick_seconds: int = 20
+    code_sync_lock_key: int = 727002
+
     @field_validator("smtp_host", "smtp_user", "smtp_from", mode="before")
     @classmethod
     def _strip_whitespace(cls, v: str) -> str:

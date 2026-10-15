@@ -31,6 +31,9 @@ class ConflictTrigger(str, enum.Enum):
     quality = "quality"
     gold_spec = "gold_spec"
     restore = "restore"
+    # Édition directe du dossier dbt physique (hors onglet Code) détectée par le sondage
+    # périodique — voir services/workspace_remote.py.
+    remote_sync = "remote_sync"
 
 
 class ProjectFileConflict(Base):
