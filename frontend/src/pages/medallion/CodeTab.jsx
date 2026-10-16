@@ -159,6 +159,7 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
   const [showPreview, setShowPreview] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
   const [auditEntries, setAuditEntries] = useState([]);
+  const [forceCreating, setForceCreating] = useState(false);
 
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
@@ -181,6 +182,23 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
       loadTree();
       onSynced?.();
     });
+  };
+
+  // UX ask — projets créés avant l'auto-scaffold à la création (ou dont le premier build
+  // normal est bloqué par des erreurs de code) : amorce quand même le dossier dbt + le DAG sur
+  // le serveur, pour que le push/pull de cet onglet (workspace_remote.py) ait un dossier où
+  // atterrir. N'exige pas un code valide — voir /{pid}/build-force côté backend.
+  const forceCreate = async () => {
+    setForceCreating(true);
+    try {
+      await medallionApi.buildProjectForce(project.id);
+      showToast(t("medallion.code.forceCreateDone"));
+      onSynced?.();
+    } catch (err) {
+      showToast(err.message || t("medallion.code.forceCreateFailed"));
+    } finally {
+      setForceCreating(false);
+    }
   };
 
   const openFile = (path) => {
@@ -411,6 +429,15 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
 
   return (
     <div onClick={() => setContextMenu(null)}>
+      {canEdit && !project.dag_id && (
+        <div className="error-banner" style={{ marginBottom: 10, background: "rgba(229,114,0,.08)", borderColor: "rgba(229,114,0,.3)", color: "var(--ember-600)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>{Icon.warn()}<span>{t("medallion.code.neverCreated")}</span></span>
+          <Button className="inline" disabled={forceCreating} onClick={forceCreate}>
+            {forceCreating ? t("medallion.code.forceCreating") : t("medallion.code.forceCreateAction")}
+          </Button>
+        </div>
+      )}
+
       {project.workspace_parse_status === "error" && (
         <div className="error-banner" style={{ marginBottom: 10 }}>
           {Icon.warn()}

@@ -224,7 +224,7 @@ async def _auto_scaffold_project(project_id: int, binding_id: int) -> None:
         if warehouse is None or object_store is None:
             return
         target = airflow_instances.resolve_deploy_target(db, db.get(AirflowInstance, binding.airflow_instance_id), project.dbt_project_name)
-        report = await build_project(db, project, binding, [], warehouse, object_store, target)
+        report = await build_project(db, project, binding, [], warehouse, object_store, target, force=True)
         binding.dag_id = report["dag_id"]
         binding.dag_file_path = report["dag_path"]
         binding.status = ProjectStatus.deployed
@@ -1182,17 +1182,27 @@ def _resolve_binding_deploy_target(db: Session, project: MedallionProject, bindi
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
-async def _build_binding(db: Session, project: MedallionProject, binding: ProjectEnvironmentBinding, current_user: User, confirm_impact: bool = False) -> BuildReport:
+async def _build_binding(
+    db: Session, project: MedallionProject, binding: ProjectEnvironmentBinding, current_user: User,
+    confirm_impact: bool = False, force: bool = False,
+) -> BuildReport:
     """Module 17 §4.1 — the generalized build, shared by the home-alias route and the
     explicit-environment one. Everything infra-shaped (warehouse/object store/Airflow
     instance/schedule) is read from `binding`, never from `project` directly — the only way
-    this correctly builds a NON-home binding too, once one exists (Étape 3's promotion)."""
+    this correctly builds a NON-home binding too, once one exists (Étape 3's promotion).
+
+    `force` — onglet Code's "Créer le projet sur le disque" (voir /{pid}/build-force) : un
+    projet créé avant l'auto-scaffold à la création (ou dont le tout premier build normal est
+    bloqué par des erreurs de code) n'a jamais eu de dossier physique du tout. Ce bouton doit
+    pouvoir amorcer ce dossier même si le code ne compile pas encore — seul le fait d'avoir au
+    moins un dataset et l'absence d'erreurs de parse sont concernés ; les conflits en attente
+    restent bloquants (divergence humaine réelle, sans rapport avec "le code a des erreurs")."""
     datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
-    if not datasets:
+    if not datasets and not force:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ajoutez au moins un dataset avant de déployer.")
     # Module 19 §4.2 — a workspace left in "parse en erreur" by the last code edit blocks
     # every build (any binding), until a fix through the Code tab clears it.
-    if project.workspace_parse_status == WorkspaceParseStatus.error:
+    if project.workspace_parse_status == WorkspaceParseStatus.error and not force:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le code du projet contient des erreurs (onglet Code) — corrigez-les avant de déployer.")
     # Module 19 §5.6 — a proposal/conflict left over from a previous build blocks every
     # later one too, without even attempting to regenerate.
@@ -1215,7 +1225,7 @@ async def _build_binding(db: Session, project: MedallionProject, binding: Projec
     target = _resolve_binding_deploy_target(db, project, binding)
 
     try:
-        report = await build_project(db, project, binding, datasets, warehouse, object_store, target)
+        report = await build_project(db, project, binding, datasets, warehouse, object_store, target, force=force)
     except workspace_merge.WorkspaceConflictsPending as exc:
         # This regeneration itself just created (or left standing) an active conflict — the
         # proposal is already persisted (see medallion_deploy's own commit-on-exception
@@ -1271,6 +1281,15 @@ async def build_project_endpoint(payload: BuildRequest | None = None, db: Sessio
 async def build_binding_endpoint(env: str, payload: BuildRequest | None = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user), project: MedallionProject = Depends(get_owned_project)):
     binding = get_project_binding(project.id, env, db, project)
     return await _build_binding(db, project, binding, current_user, (payload or BuildRequest()).confirm_impact)
+
+
+@router.post("/{pid}/build-force", response_model=BuildReport)
+async def build_project_force(db: Session = Depends(get_db), current_user: User = Depends(get_current_user), project: MedallionProject = Depends(get_owned_project)):
+    """Onglet Code — "Créer le projet sur le disque" : amorce le dossier dbt + le DAG du
+    binding home pour un projet jamais physiquement déployé (créé avant l'auto-scaffold à la
+    création, ou bloqué depuis par des erreurs de code) — même chemin que le build normal,
+    juste sans le garde-fou "le code doit d'abord compiler" (voir _build_binding)."""
+    return await _build_binding(db, project, project.home_binding, current_user, confirm_impact=True, force=True)
 
 
 @router.get("/{pid}/bindings", response_model=list[BindingOut])

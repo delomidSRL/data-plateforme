@@ -125,12 +125,19 @@ async def build_project(
     warehouse: DataSource,
     object_store: DataSource,
     target: DeployTarget,
+    force: bool = False,
 ) -> dict:
     """Module 17 §4.1/§4.2 — generalized to operate on an explicit binding (home/dev, or any
     other environment) rather than reading straight off the project: `binding.schedule`/
     `.environment` drive the dag_id suffix and the deployment's activation decision, never
     `project.schedule` (which is always the HOME binding via the model's read shim — wrong
-    for building any other binding)."""
+    for building any other binding).
+
+    `force` — onglet Code's "Créer le projet sur le disque" : dépose quand même les fichiers
+    (profiles.yml/DAG/connexions compris) même si le workspace ne compile pas — le but est
+    juste que le dossier existe sur le disque, pas un run dbt réussi (qui échouera de toute
+    façon sur le modèle en erreur, normalement). workspace_parse_status/errors restent mis à
+    jour comme d'habitude, seul le blocage saute."""
     base_url, admin_user, admin_password = target.airflow.base_url, target.airflow.username, target.airflow.password
     environment = binding.environment.value
 
@@ -173,7 +180,7 @@ async def build_project(
     sync_result = workspace_sync.sync(db, project)
     project.workspace_parse_status = WorkspaceParseStatus.ok if sync_result.ok else WorkspaceParseStatus.error
     project.workspace_parse_errors = None if sync_result.ok else [e.as_dict() for e in sync_result.errors]
-    if not sync_result.ok:
+    if not sync_result.ok and not force:
         raise workspace_sync.WorkspaceParseFailed(sync_result.errors)
 
     deploy_files = workspace.export_tree(db, project)
