@@ -1178,6 +1178,8 @@
       "forceCreating": "Aanmaken…",
       "forceCreateDone": "Project aangemaakt op schijf.",
       "forceCreateFailed": "Aanmaken mislukt.",
+      "forceCreateRawAction": "Forceren zonder controle",
+      "forceCreateRawConfirm": "Zet het project precies zoals het nu is op de schijf, zonder enige controle (dataset, code, openstaande conflicten). Niets gaat verloren — een bestand in conflict behoudt zijn huidige versie. Doorgaan?",
       "devBadge": "DEV",
       "compile": "Compileren",
       "compiling": "Compileren…",

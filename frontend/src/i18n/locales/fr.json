@@ -1178,6 +1178,8 @@
       "forceCreating": "Création…",
       "forceCreateDone": "Projet créé sur le disque.",
       "forceCreateFailed": "Création impossible.",
+      "forceCreateRawAction": "Forcer la création (sans vérification)",
+      "forceCreateRawConfirm": "Dépose le projet tel qu'il est sur le disque, sans aucune vérification (dataset, code, conflits en attente). Rien n'est perdu — un fichier en conflit garde sa version actuelle. Continuer ?",
       "devBadge": "DEV",
       "compile": "Compiler",
       "compiling": "Compilation…",

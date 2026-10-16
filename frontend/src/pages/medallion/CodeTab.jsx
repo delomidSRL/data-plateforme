@@ -160,6 +160,7 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
   const [showAudit, setShowAudit] = useState(false);
   const [auditEntries, setAuditEntries] = useState([]);
   const [forceCreating, setForceCreating] = useState(false);
+  const [forceCreatingRaw, setForceCreatingRaw] = useState(false);
 
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
@@ -198,6 +199,24 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
       showToast(err.message || t("medallion.code.forceCreateFailed"));
     } finally {
       setForceCreating(false);
+    }
+  };
+
+  // UX ask — échappatoire totale : dépose le projet tel qu'il est sur le disque sans AUCUNE
+  // vérification (ni dataset, ni code valide, ni conflits en attente). Rien n'est perdu pour
+  // autant : un fichier en conflit garde sa version actuelle côté plateforme, jamais écrasée
+  // (apply_generated() ne touche jamais "ours") — seuls les blocages sautent.
+  const forceCreateRaw = async () => {
+    if (!window.confirm(t("medallion.code.forceCreateRawConfirm"))) return;
+    setForceCreatingRaw(true);
+    try {
+      await medallionApi.buildProjectForceRaw(project.id);
+      showToast(t("medallion.code.forceCreateDone"));
+      onSynced?.();
+    } catch (err) {
+      showToast(err.message || t("medallion.code.forceCreateFailed"));
+    } finally {
+      setForceCreatingRaw(false);
     }
   };
 
@@ -435,6 +454,14 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
           <Button className="inline" disabled={forceCreating} onClick={forceCreate}>
             {forceCreating ? t("medallion.code.forceCreating") : t("medallion.code.forceCreateAction")}
           </Button>
+        </div>
+      )}
+
+      {canEdit && (
+        <div style={{ marginBottom: 10, textAlign: "right" }}>
+          <button type="button" className="link" style={{ fontSize: 11.5, color: "var(--text-muted)" }} disabled={forceCreatingRaw} onClick={forceCreateRaw}>
+            {forceCreatingRaw ? t("medallion.code.forceCreating") : t("medallion.code.forceCreateRawAction")}
+          </button>
         </div>
       )}
 

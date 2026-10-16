@@ -126,6 +126,7 @@ async def build_project(
     object_store: DataSource,
     target: DeployTarget,
     force: bool = False,
+    skip_conflicts: bool = False,
 ) -> dict:
     """Module 17 §4.1/§4.2 — generalized to operate on an explicit binding (home/dev, or any
     other environment) rather than reading straight off the project: `binding.schedule`/
@@ -137,7 +138,12 @@ async def build_project(
     (profiles.yml/DAG/connexions compris) même si le workspace ne compile pas — le but est
     juste que le dossier existe sur le disque, pas un run dbt réussi (qui échouera de toute
     façon sur le modèle en erreur, normalement). workspace_parse_status/errors restent mis à
-    jour comme d'habitude, seul le blocage saute."""
+    jour comme d'habitude, seul le blocage saute.
+
+    `skip_conflicts` — "Forcer (sans vérification)" : ignore aussi un conflit que CETTE
+    régénération vient de créer/laisser actif, juste en dessous. Toujours sans danger pour le
+    contenu déposé — apply_generated() ne touche jamais `row.content` d'un fichier en conflit,
+    seul le blocage saute."""
     base_url, admin_user, admin_password = target.airflow.base_url, target.airflow.username, target.airflow.password
     environment = binding.environment.value
 
@@ -169,7 +175,7 @@ async def build_project(
     # this deploy outright (§5.6) — nothing below runs, but the proposal/conflict itself is
     # still persisted by the caller's own commit, ready for the "À arbitrer" view.
     workspace_merge.apply_generated(db, project, dbt_files, generator="dbt_project", trigger=ConflictTrigger.canvas, datasets=datasets)
-    active = workspace_merge.list_active_conflicts(db, project.id)
+    active = [] if skip_conflicts else workspace_merge.list_active_conflicts(db, project.id)
     if active:
         raise workspace_merge.WorkspaceConflictsPending([c.path for c in active])
 

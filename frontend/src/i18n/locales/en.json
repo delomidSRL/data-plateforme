@@ -1178,6 +1178,8 @@
       "forceCreating": "Creating…",
       "forceCreateDone": "Project created on disk.",
       "forceCreateFailed": "Could not create it.",
+      "forceCreateRawAction": "Force create (no checks)",
+      "forceCreateRawConfirm": "Deposits the project on disk exactly as it is, with no checks at all (dataset, code, pending conflicts). Nothing is lost — a conflicted file keeps its current version. Continue?",
       "devBadge": "DEV",
       "compile": "Compile",
       "compiling": "Compiling…",

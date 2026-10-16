@@ -46,6 +46,9 @@ export const buildProject = (pid, confirmImpact = false) => apiFetch(`${base}/${
 // Onglet Code — "Créer le projet sur le disque" : amorce le dossier dbt + le DAG d'un projet
 // jamais physiquement déployé, même si le code a des erreurs de parse.
 export const buildProjectForce = (pid) => apiFetch(`${base}/${pid}/build-force`, { method: "POST" });
+// Onglet Code — "Forcer (sans vérification)" : même chose, en ignorant aussi les conflits en
+// attente (un fichier en conflit garde sa version actuelle, rien n'est écrasé).
+export const buildProjectForceRaw = (pid) => apiFetch(`${base}/${pid}/build-force-raw`, { method: "POST" });
 export const getWorkspaceImpact = (pid) => apiFetch(`${base}/${pid}/workspace/impact`);
 export const getFileAudit = (pid, path) => apiFetch(`${base}/${pid}/workspace/file/audit?path=${encodeURIComponent(path)}`);
 export const getDeployStatus = (pid) => apiFetch(`${base}/${pid}/deploy-status`);
