@@ -8,12 +8,14 @@ import io
 import json
 import logging
 import sys
+import time
 from datetime import date, datetime, timezone
 
 import pandas as pd
 from airflow.exceptions import AirflowSkipException
 from airflow.hooks.base import BaseHook
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 
 # Airflow pins SQLAlchemy 1.4.x, which has no built-in "oracledb" dialect (that was
 # added in SQLAlchemy 2.0) — only the older "cx_Oracle" one. python-oracledb ships an
@@ -31,7 +33,16 @@ oracledb.version = "8.3.0"
 logger = logging.getLogger(__name__)
 
 CONTROL_TABLE = "_dataplateforme_control"
-DEFAULT_CHUNKSIZE = 50000
+# Seen for real on a client network: a single ~50k-row chunk's INSERT (one large executemany,
+# many MB on the wire over TLS) died with "SSL error: sslv3 alert bad record mac" — classic
+# symptom of a flaky path (VPN/NAT/MTU mismatch) corrupting a large TLS record, something our
+# own dev stack's network never hit. A smaller chunk doesn't fix a broken network, but it
+# shrinks each individual write enough that the odds of hitting it drop sharply, and
+# _write_chunk_with_retry below covers the rest: a transient corruption on one attempt very
+# rarely repeats on the next.
+DEFAULT_CHUNKSIZE = 5000
+_WRITE_RETRIES = 3
+_WRITE_RETRY_DELAY_S = 5
 
 _DIALECT_MAP = {
     "postgres": "postgresql+psycopg2",
@@ -175,6 +186,26 @@ def _write_chunk(warehouse_engine, schema: str, table: str, chunk, replace: bool
         conn.execute(text(f'INSERT INTO {schema}.{table} ({col_list}) VALUES ({placeholders})'), records)
 
 
+def _write_chunk_with_retry(warehouse_engine, schema: str, table: str, chunk, replace: bool) -> None:
+    """A transient network/TLS corruption (e.g. "SSL error: sslv3 alert bad record mac" on a
+    large executemany, seen for real on a client's network) very rarely repeats on an
+    immediate retry — _write_chunk's whole transaction is self-contained (DROP/CREATE/ALTER
+    are idempotent, the INSERT never partially commits since nothing commits until the `with
+    ... .begin()` block exits), so simply re-running it from scratch is safe."""
+    for attempt in range(1, _WRITE_RETRIES + 1):
+        try:
+            _write_chunk(warehouse_engine, schema, table, chunk, replace)
+            return
+        except OperationalError:
+            if attempt == _WRITE_RETRIES:
+                raise
+            logger.warning(
+                "Chunk write to %s.%s failed (attempt %s/%s), retrying in %ss…",
+                schema, table, attempt, _WRITE_RETRIES, _WRITE_RETRY_DELAY_S, exc_info=True,
+            )
+            time.sleep(_WRITE_RETRY_DELAY_S)
+
+
 def ingest_bronze(
     source_conn_id: str,
     source_object: str,
@@ -287,7 +318,7 @@ def _ingest_from_object_store(source_conn_id: str, source_object: str, warehouse
         object_name = f"bronze/{bronze_table}/dt={run_date}/part-{i:05d}.parquet"
         minio.put_object(bronze_bucket, object_name, out_buffer, length=out_buffer.getbuffer().nbytes)
 
-        _write_chunk(warehouse_engine, "bronze", bronze_table, chunk, replace=replace_on_first_chunk)
+        _write_chunk_with_retry(warehouse_engine, "bronze", bronze_table, chunk, replace=replace_on_first_chunk)
         replace_on_first_chunk = False
         total_rows += len(chunk)
         logger.info("Ingéré %s : %s lignes (total %s)", key, len(chunk), total_rows)
@@ -356,7 +387,7 @@ def _ingest_from_sql(
             object_name = f"bronze/{bronze_table}/dt={run_date}/part-{i:05d}.parquet"
             minio.put_object(bronze_bucket, object_name, buffer, length=buffer.getbuffer().nbytes)
 
-            _write_chunk(warehouse_engine, "bronze", bronze_table, chunk, replace=replace_on_first_chunk)
+            _write_chunk_with_retry(warehouse_engine, "bronze", bronze_table, chunk, replace=replace_on_first_chunk)
             replace_on_first_chunk = False
 
             if incremental_key and incremental_key in chunk.columns:
