@@ -9,6 +9,7 @@ import * as supersetApi from "../../api/superset.js";
 import { Badge } from "../../components/ui/Badge.jsx";
 import { Icon } from "../../components/icons.jsx";
 import NewProjectWizard from "./NewProjectWizard.jsx";
+import ImportProjectWizard from "./ImportProjectWizard.jsx";
 import FolderNameModal from "./FolderNameModal.jsx";
 import DeleteFolderModal from "./DeleteFolderModal.jsx";
 import MoveProjectModal from "./MoveProjectModal.jsx";
@@ -89,6 +90,7 @@ export default function ProjectsList() {
   const [supersetInstances, setSupersetInstances] = useState([]);
   const [loading, setLoading] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [importWizardOpen, setImportWizardOpen] = useState(false);
 
   // Module 15 §4.1 — expand/collapse state is client-only (no backend persistence in v1);
   // keyed by folder id, "root" for "Sans dossier". Defaults to expanded (undefined -> true)
@@ -166,6 +168,7 @@ export default function ProjectsList() {
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           <button className="btn-ghost" onClick={() => setFolderModal({})}>{Icon.plus()}{t("medallion.folders.new")}</button>
+          <button className="btn-ghost" onClick={() => setImportWizardOpen(true)}>{Icon.upload()}{t("medallion.importWizard.entryButton")}</button>
           <button className="add-btn" onClick={() => setWizardOpen(true)}>{Icon.plus()}{t("medallion.newProject")}</button>
         </div>
       </div>
@@ -214,6 +217,16 @@ export default function ProjectsList() {
           instances={instances}
           supersetInstances={supersetInstances}
           onClose={() => setWizardOpen(false)}
+          onCreated={(p) => { navigate(`/medallion/${p.id}`); }}
+        />
+      )}
+
+      {importWizardOpen && (
+        <ImportProjectWizard
+          sources={sources}
+          instances={instances}
+          supersetInstances={supersetInstances}
+          onClose={() => setImportWizardOpen(false)}
           onCreated={(p) => { navigate(`/medallion/${p.id}`); }}
         />
       )}

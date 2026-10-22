@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ReactFlow, Background, Controls, Panel, Handle, Position } from "@xyflow/react";
+import { ReactFlow, ReactFlowProvider, useReactFlow, Background, Controls, Panel, Handle, Position } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import dagre from "dagre";
 import { StatusDot } from "../../components/ui/Badge.jsx";
 import { RunButton, RunErrorBanner, RUN_STATUS_COLOR } from "./RunButton.jsx";
 
-const ORIGIN_X = -320;
-const LAYER_X = { bronze: 40, silver: 760, gold: 1100 };
 const LAYER_COLOR = { bronze: "#a9702f", silver: "#5b7a94", gold: "#c98a1c" };
 const TEST_COLOR = { passed: "#2f9e6e", failed: "#c53d3d", none: "#c7cdd3" };
 const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "Oracle", minio: "MinIO" };
@@ -15,7 +14,29 @@ const SOURCE_TYPE_LABEL = { postgresql: "PostgreSQL", mysql: "MySQL", oracle: "O
 // (standardized/annotated/validated/quarantine) are dropped from the canvas, not the
 // platform: still fully configurable from the bronze dataset's own "Structuration" tab
 // (DatasetPanel, unconditional full view) — this only trims what shows up here.
-const PREVIEW_X = { unpacked: 220, typed: 460 };
+
+// A fixed per-layer column broke down once a project had 100+ gold datasets (every node
+// stacked in one column at arbitrary insertion order, edges crossing at random — unreadable
+// regardless of spacing). dagre lays out the real dependency DAG instead: rank (x, since
+// rankdir LR) comes from each node's actual longest-path depth — bronze/silver/gold still
+// end up left-to-right because every real edge only ever points to an equal-or-higher layer
+// (validate_lineage), but a deep gold-to-gold chain (canonical -> field -> master) now
+// spreads across several ranks instead of colliding into one, and the median heuristic
+// orders each rank to minimize edge crossings instead of leaving insertion order.
+const NODE_WIDTH = 220;
+const NODE_HEIGHT = 92;
+function layoutWithDagre(flowNodes, flowEdges) {
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: "LR", nodesep: 28, ranksep: 90, marginx: 24, marginy: 24 });
+  g.setDefaultEdgeLabel(() => ({}));
+  for (const n of flowNodes) g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+  for (const e of flowEdges) g.setEdge(e.source, e.target);
+  dagre.layout(g);
+  return flowNodes.map((n) => {
+    const pos = g.node(n.id);
+    return pos ? { ...n, position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 } } : n;
+  });
+}
 // Real, registered custom-SQL datasets in the 01->05 chain (never synchronously previewed,
 // unlike 01_unpacked/02_typed) — share one tooltip/badge treatment, distinct from the
 // "instant preview" one those two get.
@@ -223,6 +244,21 @@ function DatasetNode({ data }) {
 
 const nodeTypes = { dataset: DatasetNode, origin: OriginNode };
 
+// `fitView` on <ReactFlow> only ever applies once, at mount — with the lineage graph (and so
+// the node count) typically arriving a render or two after that (an async fetch), the initial
+// fit locks onto whatever was there first and never re-centers once the real, dagre-laid-out
+// graph lands. Re-fitting imperatively whenever the node count changes (including 0 -> N on
+// first load) keeps the whole graph framed without the user having to find the right zoom by hand.
+function FitViewOnChange({ nodeCount }) {
+  const { fitView } = useReactFlow();
+  useEffect(() => {
+    if (nodeCount === 0) return;
+    const id = requestAnimationFrame(() => fitView({ padding: 0.15, duration: 200 }));
+    return () => cancelAnimationFrame(id);
+  }, [nodeCount, fitView]);
+  return null;
+}
+
 // UX ask — the auto-layout (fixed columns per layer) gets cramped once a project has more
 // than a couple of datasets per layer; dragging a node now sticks (previously any re-render —
 // e.g. just selecting a different node — recomputed every position from scratch and snapped
@@ -299,11 +335,11 @@ export default function LineageCanvas({
     for (const n of rawNodes) if (n.node_type !== "origin") byLayer[n.layer]?.push(n);
 
     const flowNodes = [];
-    origins.forEach((n, i) => {
+    origins.forEach((n) => {
       flowNodes.push({
         id: String(n.id),
         type: "origin",
-        position: { x: ORIGIN_X, y: 20 + i * 100 },
+        position: { x: 0, y: 0 },
         data: {
           name: n.name, sourceTypeLabel: SOURCE_TYPE_LABEL[n.source_type] || n.source_type,
           provenance: n.provenance, rowsWord: t("medallion.rowsWord"),
@@ -316,11 +352,11 @@ export default function LineageCanvas({
       });
     });
     for (const layer of ["bronze", "silver", "gold"]) {
-      byLayer[layer].forEach((n, i) => {
+      byLayer[layer].forEach((n) => {
         flowNodes.push({
           id: String(n.id),
           type: "dataset",
-          position: { x: LAYER_X[layer], y: 20 + i * 100 },
+          position: { x: 0, y: 0 },
           data: {
             layer: n.layer, name: n.name, lastRowCount: n.last_row_count, testStatus: n.last_test_status,
             transformType: n.transform_type, mlObjectiveLabel: ML_OBJECTIVE_LABEL[n.ml_objective] || "ML",
@@ -376,14 +412,12 @@ export default function LineageCanvas({
     for (const n of byLayer.bronze) {
       if (!n.structured) continue;
       structuredBronzeById[n.id] = n;
-      const bronzeNode = flowNodes.find((fn) => fn.id === String(n.id));
-      const y = bronzeNode.position.y;
       const silverUnpackedId = `silver-unpacked-${n.id}`;
       const silverTypedId = `silver-typed-${n.id}`;
       flowNodes.push({
         id: silverUnpackedId,
         type: "dataset",
-        position: { x: PREVIEW_X.unpacked, y },
+        position: { x: 0, y: 0 },
         data: {
           layer: "silver", name: `01_unpacked_${n.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
           previewStageLabel: "unpacked", isInstantPreview: true,
@@ -398,7 +432,7 @@ export default function LineageCanvas({
       flowNodes.push({
         id: silverTypedId,
         type: "dataset",
-        position: { x: PREVIEW_X.typed, y },
+        position: { x: 0, y: 0 },
         data: {
           layer: "silver", name: `02_typed_${n.name}`, lastRowCount: null, testsLabel: t("medallion.tests"),
           previewStageLabel: "typed", isInstantPreview: true,
@@ -424,27 +458,35 @@ export default function LineageCanvas({
       });
     });
 
-    // Manually-dragged positions win over the computed layout, applied as a final pass so
+    // dagre computes every node's position from the real dependency DAG (see layoutWithDagre's
+    // own comment); manually-dragged positions still win over it, applied as a final pass so
     // every node-pushing branch above stays oblivious to it.
-    const positionedNodes = flowNodes.map((n) => (positionOverrides[n.id] ? { ...n, position: positionOverrides[n.id] } : n));
+    const laidOutNodes = layoutWithDagre(flowNodes, flowEdges);
+    const positionedNodes = laidOutNodes.map((n) => (positionOverrides[n.id] ? { ...n, position: positionOverrides[n.id] } : n));
     return { nodes: positionedNodes, edges: flowEdges };
   }, [rawNodes, rawEdges, selectedId, onOpenStructuration, onOpenSilverPreview, onCreateStandardized, onCreateAnnotated, onCreateValidated, onCreateQuarantine, onRunNode, qualityByDataset, publishedByDataset, dashboardByDataset, sqlByDataset, runStatuses, selectionMode, runSelection, onToggleSelect, publishedLabel, dashboardLabel, codeModifiedLabel, i18n.language, t, positionOverrides]);
 
   const hasCustomLayout = Object.keys(positionOverrides).length > 0;
 
   return (
-    <div style={{ height: 480, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>
-      <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView proOptions={{ hideAttribution: true }} onNodeDragStop={handleNodeDragStop}>
-        <Background color="var(--border)" gap={18} />
-        <Controls showInteractive={false} />
-        {hasCustomLayout && (
-          <Panel position="top-right">
-            <button type="button" className="btn-ghost" style={{ padding: "5px 10px", fontSize: 11.5, background: "var(--surface)" }} onClick={resetLayout}>
-              {t("medallion.canvasResetLayout")}
-            </button>
-          </Panel>
-        )}
-      </ReactFlow>
+    <div style={{ height: "calc(100vh - 360px)", minHeight: 480, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>
+      <ReactFlowProvider>
+        <ReactFlow
+          nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView minZoom={0.05}
+          proOptions={{ hideAttribution: true }} onNodeDragStop={handleNodeDragStop}
+        >
+          <Background color="var(--border)" gap={18} />
+          <Controls showInteractive={false} />
+          <FitViewOnChange nodeCount={nodes.length} />
+          {hasCustomLayout && (
+            <Panel position="top-right">
+              <button type="button" className="btn-ghost" style={{ padding: "5px 10px", fontSize: 11.5, background: "var(--surface)" }} onClick={resetLayout}>
+                {t("medallion.canvasResetLayout")}
+              </button>
+            </Panel>
+          )}
+        </ReactFlow>
+      </ReactFlowProvider>
     </div>
   );
 }

@@ -32,6 +32,7 @@ from app.models.medallion import (
     WorkspaceParseStatus,
 )
 from app.models.user import User
+from app.schemas.project_portability import ProjectExportBundle, ProjectImportCommit
 from app.models.dashboard_spec import DashboardSpec
 from app.models.pipeline_plan import PipelinePlan
 from app.models.superset_instance import SupersetInstance
@@ -100,7 +101,7 @@ from app.schemas.payload_structuration import (
     StructurationUpdate,
 )
 from app.schemas.file_import import ColumnsOut, FileImportOut, ImportFromObjectStoreCreate, ObjectStoreColumnsRequest
-from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, file_import as file_import_service, gold_export, gold_profile, impact, indicator_suggest, payload_structure, preview, promotion, run_progress, run_scope, schedule, superset_publish, version_diff, version_restore, version_snapshot, workspace, workspace_merge, workspace_sync
+from app.services import ai_client, airflow_api, airflow_instances, dag_render, dbt_macros, dbt_project, file_import as file_import_service, gold_export, gold_profile, impact, indicator_suggest, payload_structure, preview, project_portability, promotion, run_progress, run_scope, schedule, superset_publish, version_diff, version_restore, version_snapshot, workspace, workspace_merge, workspace_sync
 from app.services.ai_config import get_ai_config
 from app.services.superset_instances import get_superset_config
 from app.services.medallion_crud import create_dataset_internal, validate_lineage
@@ -210,6 +211,30 @@ def create_project(payload: ProjectCreate, background_tasks: BackgroundTasks, db
     background_tasks.add_task(_auto_scaffold_project, project.id, home_binding.id)
 
     return project
+
+
+@router.get("/{pid}/export", response_model=ProjectExportBundle)
+def export_project(db: Session = Depends(get_db), project: MedallionProject = Depends(get_owned_project)):
+    """Portability — serializes the whole project (every dataset's SQL/lineage, its
+    structuration contracts, and only the custom dq-flags/macros it actually references — see
+    project_portability.build_export_bundle) into one deployment-independent bundle. Never the
+    data itself: a bronze dataset's real rows stay behind, re-created on the target deployment
+    by re-uploading the same source file (the matching UI flow's own bronze_hints)."""
+    return project_portability.build_export_bundle(db, project)
+
+
+@router.post("/import", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
+def import_project(
+    payload: ProjectImportCommit, background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Portability's other half — see export_project. Every bronze entity in the bundle must
+    already have a real, `imported` FileImport on this deployment (same target_source_id,
+    same target_table the bundle's own bronze_hints name) before this call: the normal
+    POST /api/imports/ flow, run once per hint, is what the import wizard's own
+    "re-upload each source file" step actually does — this endpoint never uploads or touches
+    file bytes itself, only the medallion metadata built on top of them."""
+    return project_portability.commit_import(db, payload, create_project, current_user, background_tasks)
 
 
 async def _auto_scaffold_project(project_id: int, binding_id: int) -> None:

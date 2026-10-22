@@ -4,6 +4,12 @@ const base = "/api/medallion/projects";
 
 export const listProjects = () => apiFetch(`${base}/`);
 export const createProject = (payload) => apiFetch(`${base}/`, { method: "POST", body: payload });
+// Portability — move a whole project (every dataset's SQL/lineage, its structuration
+// contracts, and only the custom dq-flags/macros it references) to another deployment of
+// this same platform. Never the data itself — see importProject's own bronze_hints re-upload
+// step, driven client-side via api/imports.js's createImport, same as the normal import flow.
+export const exportProject = (pid) => apiDownload(`${base}/${pid}/export`);
+export const importProject = (payload) => apiFetch(`${base}/import`, { method: "POST", body: payload });
 export const getProject = (pid) => apiFetch(`${base}/${pid}`);
 export const updateProject = (pid, payload) => apiFetch(`${base}/${pid}`, { method: "PUT", body: payload });
 export const deleteProject = (pid) => apiFetch(`${base}/${pid}`, { method: "DELETE" });

@@ -7,6 +7,7 @@ import * as qualityApi from "../../api/quality.js";
 import * as serversApi from "../../api/servers.js";
 import * as promotionApi from "../../api/promotion.js";
 import { useToast } from "../../context/ToastContext.jsx";
+import { saveBlob } from "../../utils/download.js";
 import { Badge } from "../../components/ui/Badge.jsx";
 import { Button } from "../../components/ui/Button.jsx";
 import { Icon } from "../../components/icons.jsx";
@@ -59,6 +60,7 @@ export default function ProjectDetail({ readOnly = false }) {
   const [codeInitialDatasetId, setCodeInitialDatasetId] = useState(null); // Module 19 — "Voir le code" from a node
   const [previewData, setPreviewData] = useState(null);
   const [previewing, setPreviewing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [building, setBuilding] = useState(false);
   const [buildImpact, setBuildImpact] = useState(null); // Module 19 §7.3 — pending impact review before a build
   const [buildStep, setBuildStep] = useState(0);
@@ -228,6 +230,19 @@ export default function ProjectDetail({ readOnly = false }) {
       showToast(err.message || t("medallion.previewFailed"));
     } finally {
       setPreviewing(false);
+    }
+  };
+
+  const handleExportProject = async () => {
+    setExporting(true);
+    try {
+      const blob = await medallionApi.exportProject(id);
+      saveBlob(blob, `${project.dbt_project_name}.medallion.json`);
+      showToast(t("medallion.exportProject.started"));
+    } catch (err) {
+      showToast(err.message || t("medallion.exportProject.failed"));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -606,6 +621,9 @@ export default function ProjectDetail({ readOnly = false }) {
             <Button variant="ghost" className="inline" onClick={() => setBulkImportOpen(true)}>{Icon.upload()} {t("medallion.bulkImport.entryButton")}</Button>
             <Button variant="ghost" className="inline" disabled={previewing} onClick={handlePreview}>{previewing ? t("medallion.previewing") : t("medallion.preview")}</Button>
             <Button className="inline" disabled={building} onClick={() => handleBuild()}>{building ? t("medallion.deploying") : t("medallion.buildAndDeploy")}</Button>
+            <Button variant="ghost" className="inline" disabled={exporting} onClick={handleExportProject}>
+              {Icon.download()} {exporting ? t("medallion.exportProject.exporting") : t("medallion.exportProject.button")}
+            </Button>
             <Button
               variant="ghost" className="inline"
               onClick={() => (selectionMode ? exitSelectionMode() : setSelectionMode(true))}
