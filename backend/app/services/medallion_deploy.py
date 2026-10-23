@@ -55,11 +55,19 @@ def _deploy_files_via_ssh(target: DeployTarget, dbt_dir: str, plugins_dir: str, 
         ssh.run_command(client, f"rm -rf {posixpath.join(dbt_dir, 'tests')}")
         ssh.run_command(client, f"rm -f {posixpath.join(dbt_dir, 'packages.yml')}")
 
+        # Unchecked, a failed mkdir here (permissions, a path component that isn't a
+        # directory, ...) used to continue straight into the SFTP writes below, which then
+        # failed with a bare FileNotFoundError on a directory that was never created —
+        # confirmed for real on a first-ever "promote" to a prod Airflow server that had
+        # never been deployed to before, surfaced to the user as just "[Errno 2] No such
+        # file" with no indication of which path or why.
         dirs = {posixpath.dirname(posixpath.join(dbt_dir, rel)) for rel in dbt_files}
         dirs.add(dbt_dir)
+        dirs.add(plugins_dir)
         for d in dirs:
-            ssh.run_command(client, f"mkdir -p {d}")
-        ssh.run_command(client, f"mkdir -p {plugins_dir}")
+            result = ssh.run_command(client, f"mkdir -p {d}")
+            if not result.ok:
+                raise ssh.SSHError(f"Impossible de créer {d} sur le serveur distant (droits insuffisants pour l'utilisateur SSH ?) : {result.stderr}")
 
         sftp = client.open_sftp()
         try:

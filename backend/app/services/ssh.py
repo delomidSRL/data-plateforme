@@ -90,7 +90,9 @@ def test_connection(hostname: str, port: int, username: str, auth_method: str, s
 
 def write_remote_file(hostname: str, port: int, username: str, auth_method: str, secret: str, remote_path: str, content: str) -> None:
     with ssh_session(hostname, port, username, auth_method, secret) as client:
-        run_command(client, f"mkdir -p $(dirname {remote_path})")
+        mkdir_result = run_command(client, f"mkdir -p $(dirname {remote_path})")
+        if not mkdir_result.ok:
+            raise SSHError(f"Impossible de créer le dossier parent de {remote_path} sur le serveur distant (droits insuffisants pour l'utilisateur SSH ?) : {mkdir_result.stderr}")
         sftp = client.open_sftp()
         try:
             with sftp.file(remote_path, "w") as f:
