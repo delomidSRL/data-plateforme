@@ -37,7 +37,16 @@ def deploy_stack(db: Session, stack: InfraStack, server: Server) -> dict:
     needs_airflow_build = bool(airflow_conf.get("enabled")) and airflow_conf.get("dbt_enabled", True)
 
     with ssh.ssh_session(server.hostname, server.ssh_port, server.ssh_user, server.auth_method.value, secret) as client:
-        ssh.run_command(client, f"mkdir -p {proj_dir}/dags {proj_dir}/logs {proj_dir}/config {proj_dir}/plugins {proj_dir}/dbt {proj_dir}/superset {proj_dir}/jupyter {proj_dir}/notebooks")
+        mkdir_result = ssh.run_command(client, f"mkdir -p {proj_dir}/dags {proj_dir}/logs {proj_dir}/config {proj_dir}/plugins {proj_dir}/dbt {proj_dir}/superset {proj_dir}/jupyter {proj_dir}/notebooks")
+        if not mkdir_result.ok:
+            # Left unchecked, this silently continues into the SFTP writes a few lines down,
+            # which then fail with a bare FileNotFoundError on a directory that was never
+            # created — confusing on a fresh server where the SSH user often lacks write
+            # access to /opt until it's chowned/created for them once, up front.
+            stack.status = StackStatus.error
+            stack.last_error = f"Impossible de créer {proj_dir} sur le serveur distant (droits insuffisants pour l'utilisateur SSH sur /opt ?) : {mkdir_result.stderr}"
+            db.commit()
+            raise RuntimeError(stack.last_error)
         if jupyter_conf.get("enabled"):
             # Files land on disk owned by the SSH user, but the Jupyter container runs as
             # its own fixed uid (jovyan) which rarely matches — see the identical dbt/

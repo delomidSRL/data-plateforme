@@ -28,26 +28,37 @@ def ssh_session(hostname: str, port: int, username: str, auth_method: str, secre
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        if auth_method == "key":
-            key_file = io.StringIO(secret)
-            pkey = None
-            for loader in (paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey):
-                try:
-                    key_file.seek(0)
-                    pkey = loader.from_private_key(key_file)
-                    break
-                except paramiko.SSHException:
-                    continue
-            if pkey is None:
-                raise SSHError("Clé privée SSH invalide ou format non supporté.")
-            client.connect(hostname=hostname, port=port, username=username, pkey=pkey, timeout=CONNECT_TIMEOUT, banner_timeout=CONNECT_TIMEOUT, auth_timeout=CONNECT_TIMEOUT)
-        else:
-            client.connect(hostname=hostname, port=port, username=username, password=secret, timeout=CONNECT_TIMEOUT, banner_timeout=CONNECT_TIMEOUT, auth_timeout=CONNECT_TIMEOUT)
+        # Only the connect phase gets wrapped as a *connection* failure — once connected,
+        # an error from the caller's own use of `client` (an SFTP write hitting a remote
+        # directory that doesn't exist, a permissions issue, ...) is a completely different
+        # problem and must never be reported as "Connexion SSH impossible" (confirmed bug:
+        # deploy_stack's `mkdir -p` result goes unchecked, so a permission-denied there left
+        # the later `sftp.file(...)` calls failing with a plain FileNotFoundError, which this
+        # same broad `except OSError` used to swallow and relabel as a bogus connection error
+        # even though the SSH connection itself — and the separate "tester" action, which
+        # never touches SFTP — had worked fine all along).
+        try:
+            if auth_method == "key":
+                key_file = io.StringIO(secret)
+                pkey = None
+                for loader in (paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey):
+                    try:
+                        key_file.seek(0)
+                        pkey = loader.from_private_key(key_file)
+                        break
+                    except paramiko.SSHException:
+                        continue
+                if pkey is None:
+                    raise SSHError("Clé privée SSH invalide ou format non supporté.")
+                client.connect(hostname=hostname, port=port, username=username, pkey=pkey, timeout=CONNECT_TIMEOUT, banner_timeout=CONNECT_TIMEOUT, auth_timeout=CONNECT_TIMEOUT)
+            else:
+                client.connect(hostname=hostname, port=port, username=username, password=secret, timeout=CONNECT_TIMEOUT, banner_timeout=CONNECT_TIMEOUT, auth_timeout=CONNECT_TIMEOUT)
+        except paramiko.AuthenticationException:
+            raise SSHError("Authentification SSH refusée : vérifiez l'utilisateur et les identifiants.")
+        except (paramiko.SSHException, OSError, EOFError) as exc:
+            raise SSHError(f"Connexion SSH impossible : {exc}")
+
         yield client
-    except paramiko.AuthenticationException:
-        raise SSHError("Authentification SSH refusée : vérifiez l'utilisateur et les identifiants.")
-    except (paramiko.SSHException, OSError, EOFError) as exc:
-        raise SSHError(f"Connexion SSH impossible : {exc}")
     finally:
         client.close()
 

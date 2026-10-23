@@ -1,5 +1,16 @@
   minio:
-    image: minio/minio:latest
+    # MinIO stopped publishing minio/minio to Docker Hub (and quay.io/minio/minio now
+    # refuses anonymous pulls too) as of September 2026 -- both return "pull access
+    # denied" / 401 even for a plain `docker pull`, confirmed for real, not an auth/login
+    # problem on any one server. Chainguard's actively-maintained free mirror is the
+    # closest drop-in replacement: same `minio`/`mc` binaries, same entrypoint behavior
+    # for the `command:` below. It defaults to a non-root UID (65532) that this platform
+    # hit "FATAL Unable to initialize backend: file access denied" under even against a
+    # freshly-chowned volume -- `user: "0:0"` sidesteps that cleanly (confirmed working
+    # end-to-end: starts, formats the volume, `mc ready local` and /minio/health/live
+    # both pass) rather than chasing the exact nonroot write path involved.
+    image: cgr.dev/chainguard/minio:latest
+    user: "0:0"
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
