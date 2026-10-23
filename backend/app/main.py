@@ -2,8 +2,9 @@ import asyncio
 import contextlib
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.api.routes import ai, airflow, airflow_instances, auth, dashboard, dbt_macros, dq_flag_registry, file_watch, imports, medallion, medallion_admin, medallion_agent, medallion_folders, medallion_workspace, ml_templates, quality, servers, sources, stacks, superset_instances, users
@@ -54,6 +55,28 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Data Plateforme API", version="0.1.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _catch_unhandled_exceptions(request: Request, call_next):
+    """Must be registered BEFORE add_middleware(CORSMiddleware) below so it ends up the
+    *inner* layer (CORSMiddleware wraps outside it, last-added = outermost) — a plain
+    `@app.exception_handler(Exception)` looks like the obvious fix but is a documented
+    Starlette gap (github.com/encode/starlette issue #1175, reproduced here too):
+    CORSMiddleware's header-injecting `send` wrapper is simply never invoked for a response
+    built that way, only for ones that flow through an ordinary middleware `call_next`. A
+    route exception that isn't already an HTTPException (e.g. promotion.promote()'s SSH/
+    Airflow calls, which can raise ssh.SSHError/airflow_api.AirflowAPIError past the route's
+    own `except PromotionError`) used to propagate with no CORS headers on the resulting
+    500 at all — the browser then reports a misleading "CORS policy" / net::ERR_FAILED,
+    hiding the real error and its actual cause entirely (confirmed: a genuine promote()
+    failure surfaced to a user as a pure CORS error, nothing in the real stack trace)."""
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": f"Erreur interne inattendue : {exc}"})
+
 
 app.add_middleware(
     CORSMiddleware,
