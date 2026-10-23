@@ -251,7 +251,7 @@ async def execute_plan(db: Session, project: MedallionProject, plan_row: Pipelin
 
         run = db.get(MedallionRun, state["run_id"])
         target = _resolve_target(db, project)
-        run = await run_status.refresh_run_state(db, project, run, target)
+        run = await run_status.refresh_run_state(db, project, run, target, project.home_binding)
 
         if run.state in (RunState.queued, RunState.running):
             plan_row.status = PipelinePlanStatus.executing

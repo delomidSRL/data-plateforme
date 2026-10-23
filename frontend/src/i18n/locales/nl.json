@@ -1178,6 +1178,7 @@
       "confirmRestore": "v{{n}} herstellen",
       "restoreSuccess": "Versie {{n}} succesvol hersteld.",
       "restoreFailed": "Herstellen mislukt.",
+      "restoreProdDisabled": "Herstellen is niet beschikbaar voor de prod-omgeving.",
       "restoredBanner": "Pipeline hersteld vanaf v{{n}} — voer opnieuw uit wanneer u klaar bent."
     },
     "code": {
@@ -1218,6 +1219,7 @@
       "forceCreateRawAction": "Forceren zonder controle",
       "forceCreateRawConfirm": "Zet het project precies zoals het nu is op de schijf, zonder enige controle (dataset, code, openstaande conflicten). Niets gaat verloren — een bestand in conflict behoudt zijn huidige versie. Doorgaan?",
       "devBadge": "DEV",
+      "deployedProdBadge": "Uitgerold naar prod: v{{n}}",
       "compile": "Compileren",
       "compiling": "Compileren…",
       "compileOk": "Compilatie geslaagd.",

@@ -49,6 +49,9 @@ export const validateSql = (pid, sql) => apiFetch(`${base}/${pid}/validate-sql`,
 // Module 19 §7.3 — confirmImpact acknowledges the "Revue des changements de code" preview
 // (GET workspace/impact) when the build's own 409 surfaced one.
 export const buildProject = (pid, confirmImpact = false) => apiFetch(`${base}/${pid}/build`, { method: "POST", body: { confirm_impact: confirmImpact } });
+// Module 20 — env switcher: same build, targeted at a specific binding (env: "dev"|"prod")
+// instead of always home.
+export const buildBinding = (pid, env, confirmImpact = false) => apiFetch(`${base}/${pid}/bindings/${env}/build`, { method: "POST", body: { confirm_impact: confirmImpact } });
 // Onglet Code — "Créer le projet sur le disque" : amorce le dossier dbt + le DAG d'un projet
 // jamais physiquement déployé, même si le code a des erreurs de parse.
 export const buildProjectForce = (pid) => apiFetch(`${base}/${pid}/build-force`, { method: "POST" });
@@ -59,19 +62,28 @@ export const getWorkspaceImpact = (pid) => apiFetch(`${base}/${pid}/workspace/im
 export const getFileAudit = (pid, path) => apiFetch(`${base}/${pid}/workspace/file/audit?path=${encodeURIComponent(path)}`);
 export const getDeployStatus = (pid) => apiFetch(`${base}/${pid}/deploy-status`);
 export const runProject = (pid, payload = {}) => apiFetch(`${base}/${pid}/run`, { method: "POST", body: payload });
+// Module 20 — env switcher: same trigger, targeted at a specific binding.
+export const runBinding = (pid, env, payload = {}) => apiFetch(`${base}/${pid}/bindings/${env}/run`, { method: "POST", body: payload });
 export const pauseProject = (pid) => apiFetch(`${base}/${pid}/pause`, { method: "POST" });
 export const unpauseProject = (pid) => apiFetch(`${base}/${pid}/unpause`, { method: "POST" });
 
 export const getLineage = (pid) => apiFetch(`${base}/${pid}/lineage`);
+// Module 20 — env switcher: same lineage, with each node's stats resolved against a specific
+// binding instead of the dataset's own (home-only) last_row_count/last_test_status columns.
+// `env` omitted keeps today's exact response untouched.
+export const getLineageForEnv = (pid, env) => apiFetch(`${base}/${pid}/lineage${env ? `?env=${env}` : ""}`);
 export const listRuns = (pid) => apiFetch(`${base}/${pid}/runs`);
+export const listRunsForEnv = (pid, env) => apiFetch(`${base}/${pid}/runs${env ? `?env=${env}` : ""}`);
 export const getRun = (pid, runId) => apiFetch(`${base}/${pid}/runs/${runId}`);
 // Bouton RUN du canvas — `stage` ("unpacked"|"typed") cible une étape de structuration
 // synthétique du bronze `did` ; omis, `did` est le vrai dataset à construire.
 export const runDatasetNode = (pid, did, stage) => apiFetch(`${base}/${pid}/datasets/${did}/run`, { method: "POST", body: { stage: stage || null } });
+export const runDatasetNodeForBinding = (pid, env, did, stage) => apiFetch(`${base}/${pid}/bindings/${env}/datasets/${did}/run`, { method: "POST", body: { stage: stage || null } });
 export const getRunNodeStatus = (pid, runId) => apiFetch(`${base}/${pid}/runs/${runId}/node-status`);
 export const getDatasetRunHistory = (pid, did, stage) => apiFetch(`${base}/${pid}/datasets/${did}/run-history${stage ? `?stage=${stage}` : ""}`);
 // Sélection multiple sur le canvas ("Lancer la sélection") — items: [{dataset_id, stage}, ...].
 export const runSelection = (pid, items) => apiFetch(`${base}/${pid}/run-selection`, { method: "POST", body: { items } });
+export const runSelectionForBinding = (pid, env, items) => apiFetch(`${base}/${pid}/bindings/${env}/run-selection`, { method: "POST", body: { items } });
 // Popup de pré-lancement — mêmes items que runSelection, mais [] = tout le projet (run
 // complet/schedule), pas une erreur ; renvoie les sources bronze dont ce run dépend.
 export const getRunPreflight = (pid, items = []) => apiFetch(`${base}/${pid}/run-preflight`, { method: "POST", body: { items } });

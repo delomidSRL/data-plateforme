@@ -9,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.models.data_source import DataSource
 from app.models.medallion import MedallionDataset, MedallionProject, MedallionRun, RunState
+from app.models.project_environment_binding import ProjectEnvironmentBinding
 from app.services import airflow_api
 from app.services.airflow_instances import DeployTarget
 from app.services.medallion_stats import refresh_dataset_stats
@@ -20,11 +21,27 @@ from app.services import quality_intrinsic
 logger = logging.getLogger("app.medallion")
 
 
-async def refresh_run_state(db: Session, project: MedallionProject, run: MedallionRun, target: DeployTarget) -> MedallionRun:
+def resolve_run_binding(db: Session, project: MedallionProject, run: MedallionRun) -> ProjectEnvironmentBinding:
+    """Every run predating the binding_id column (Module 20) is implicitly home/dev — the
+    only trigger that existed before the /bindings/{env}/run* routes."""
+    if run.binding_id is not None:
+        binding = db.get(ProjectEnvironmentBinding, run.binding_id)
+        if binding is not None:
+            return binding
+    return project.home_binding
+
+
+async def refresh_run_state(db: Session, project: MedallionProject, run: MedallionRun, target: DeployTarget, binding: ProjectEnvironmentBinding) -> MedallionRun:
+    """Module 20 — `binding` is the one this `run` actually belongs to (resolved by the
+    caller from `run.binding_id`, falling back to `project.home_binding` for every run that
+    predates that column) — every project.dag_id/project.warehouse_source_id below used to
+    be a shim that silently meant "home/dev", which was flat wrong for a prod run (it would
+    poll dev's DAG and refresh dev's stats instead). `target` must already be resolved for
+    this same binding by the caller."""
     if not (run.dag_run_id and run.state in (RunState.queued, RunState.running)):
         return run
     try:
-        remote = await airflow_api.get_dag_run(target.airflow.base_url, target.airflow.username, target.airflow.password, project.dag_id, run.dag_run_id)
+        remote = await airflow_api.get_dag_run(target.airflow.base_url, target.airflow.username, target.airflow.password, binding.dag_id, run.dag_run_id)
     except airflow_api.AirflowAPIError:
         return run
 
@@ -45,9 +62,9 @@ async def refresh_run_state(db: Session, project: MedallionProject, run: Medalli
     pid = project.id
     if just_finished:
         datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == pid).all()
-        warehouse = db.get(DataSource, project.warehouse_source_id)
+        warehouse = db.get(DataSource, binding.warehouse_source_id)
         try:
-            stats = await run_in_threadpool(refresh_dataset_stats, db, project, datasets, warehouse, target)
+            stats = await run_in_threadpool(refresh_dataset_stats, db, project, datasets, warehouse, target, binding)
             run.layer_stats = stats["layer_stats"]
             run.tests_summary = stats["tests_summary"]
             db.commit()
@@ -57,7 +74,7 @@ async def refresh_run_state(db: Session, project: MedallionProject, run: Medalli
     if just_reached_terminal_state:
         try:
             datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == pid).all()
-            warehouse = db.get(DataSource, project.warehouse_source_id)
+            warehouse = db.get(DataSource, binding.warehouse_source_id)
             await run_in_threadpool(collect_quality, db, project, datasets, warehouse, target, run.id, run.finished_at)
         except Exception:
             logger.warning("quality collection failed for run %s (project %s)", run.id, pid, exc_info=True)
@@ -66,7 +83,7 @@ async def refresh_run_state(db: Session, project: MedallionProject, run: Medalli
         # that just succeeded above.
         try:
             datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == pid).all()
-            warehouse = db.get(DataSource, project.warehouse_source_id)
+            warehouse = db.get(DataSource, binding.warehouse_source_id)
             metrics = await run_in_threadpool(quality_intrinsic.collect, db, project, datasets, warehouse, run)
             # §8.3 — same run, right after the metrics that feed it: a coherence alert always
             # reflects THIS run's own freshly-computed defect rates, never a stale prior one.

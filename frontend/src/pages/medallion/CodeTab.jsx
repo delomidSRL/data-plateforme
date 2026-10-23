@@ -134,10 +134,11 @@ function TreeNode({ node, depth, activePath, dirtyPaths, collapsed, onToggle, on
  * profiles.yml — enforced server-side, §4.5) and everything when `readOnly` (admin
  * supervision view, M9) or the project isn't owned by the viewer (same 403/404 the API
  * itself enforces — this prop just keeps the UI from offering an action that would fail). */
-export default function CodeTab({ project, readOnly = false, initialDatasetId, onConsumedInitialDataset, onSynced }) {
+export default function CodeTab({ project, readOnly = false, initialDatasetId, onConsumedInitialDataset, onSynced, prodBinding = null }) {
   const { t } = useTranslation();
   const showToast = useToast();
   const canEdit = !readOnly;
+  const [prodVersionNumber, setProdVersionNumber] = useState(null);
 
   const [tree, setTree] = useState(null);
   const [error, setError] = useState(null);
@@ -177,6 +178,21 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
+
+  // Module 20 — code content itself stays unified/shared across environments; this only
+  // resolves the version number for the read-only "deployed in prod" badge below.
+  useEffect(() => {
+    if (!prodBinding?.active_version_id) { setProdVersionNumber(null); return; }
+    let cancelled = false;
+    medallionApi.listVersions(project.id)
+      .then((versions) => {
+        if (cancelled) return;
+        const match = versions.find((v) => v.id === prodBinding.active_version_id);
+        setProdVersionNumber(match ? match.version_number : null);
+      })
+      .catch(() => { if (!cancelled) setProdVersionNumber(null); });
+    return () => { cancelled = true; };
+  }, [project.id, prodBinding?.active_version_id]);
 
   const handleConflictSettled = () => {
     loadConflicts().then(() => {
@@ -448,6 +464,14 @@ export default function CodeTab({ project, readOnly = false, initialDatasetId, o
 
   return (
     <div onClick={() => setContextMenu(null)}>
+      {prodBinding?.active_version_id != null && (
+        <div style={{ marginBottom: 10 }}>
+          <Badge tone="accent">
+            {t("medallion.code.deployedProdBadge", { n: prodVersionNumber ?? prodBinding.active_version_id })}
+          </Badge>
+        </div>
+      )}
+
       {canEdit && !project.dag_id && (
         <div className="error-banner" style={{ marginBottom: 10, background: "rgba(229,114,0,.08)", borderColor: "rgba(229,114,0,.3)", color: "var(--ember-600)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <span style={{ display: "flex", alignItems: "center", gap: 8 }}>{Icon.warn()}<span>{t("medallion.code.neverCreated")}</span></span>

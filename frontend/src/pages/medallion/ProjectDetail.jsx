@@ -92,11 +92,49 @@ export default function ProjectDetail({ readOnly = false }) {
     setStructurationTargetId(null);
     setStructurationStage(null);
     setStructurationGuided(false);
-    medallionApi.getLineage(id).then(setLineage);
+    fetchLineage().then(setLineage);
   };
   const [hasProdEnvironment, setHasProdEnvironment] = useState(false); // Module 17 §5.3.1
   const [hasProdBinding, setHasProdBinding] = useState(false);
   const [promotionOpen, setPromotionOpen] = useState(false);
+
+  // Module 20 — env switcher: which binding's canvas/runs/versions this page currently shows.
+  // Persisted per-viewer/per-project (never synced, safe to lose) — same localStorage-best-
+  // effort spirit as LineageCanvas.jsx's own canvas position overrides.
+  const [bindings, setBindings] = useState([]); // full ProjectEnvironmentBinding rows, not just the booleans above
+  const [selectedEnvironment, setSelectedEnvironment] = useState(() => {
+    try {
+      return localStorage.getItem(`medallion.env.${id}`) || "dev";
+    } catch {
+      return "dev";
+    }
+  });
+  const prodBinding = bindings.find((b) => b.environment === "prod") || null;
+  const devBinding = bindings.find((b) => b.is_home) || null;
+  const activeBinding = selectedEnvironment === "prod" ? prodBinding : devBinding;
+
+  const setEnvironment = (env) => {
+    setSelectedEnvironment(env);
+    try {
+      localStorage.setItem(`medallion.env.${id}`, env);
+    } catch {
+      // private window, quota exceeded, etc. — a lost preference is harmless
+    }
+  };
+
+  // A stale "prod" selection from a previous visit must never silently break anything once
+  // the prod binding it pointed at no longer exists (e.g. viewed before any promotion, or
+  // after some other project's prod binding was removed — localStorage is keyed by id but
+  // nothing stops a user from visiting a project that lost its binding since).
+  useEffect(() => {
+    if (selectedEnvironment === "prod" && !prodBinding && bindings.length > 0) setEnvironment("dev");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prodBinding, bindings.length]);
+
+  // Module 20 — every lineage re-fetch across this file goes through this one helper so the
+  // canvas always reflects whichever environment is currently selected, consistently (dataset
+  // edits, structuration saves, workspace syncs — not just the initial load()).
+  const fetchLineage = () => medallionApi.getLineageForEnv(id, selectedEnvironment === "prod" ? "prod" : undefined);
 
   const load = async () => {
     setLoading(true);
@@ -118,7 +156,7 @@ export default function ProjectDetail({ readOnly = false }) {
         const [p, ds, lg, src] = await Promise.all([
           medallionApi.getProject(id),
           medallionApi.listDatasets(id),
-          medallionApi.getLineage(id),
+          fetchLineage(),
           sourcesApi.listSources(),
         ]);
         setProject(p);
@@ -137,7 +175,7 @@ export default function ProjectDetail({ readOnly = false }) {
   const refreshWorkspaceState = async () => {
     if (readOnly) return;
     try {
-      const [p, ds, lg] = await Promise.all([medallionApi.getProject(id), medallionApi.listDatasets(id), medallionApi.getLineage(id)]);
+      const [p, ds, lg] = await Promise.all([medallionApi.getProject(id), medallionApi.listDatasets(id), fetchLineage()]);
       setProject(p);
       setDatasets(ds);
       setLineage(lg);
@@ -176,9 +214,10 @@ export default function ProjectDetail({ readOnly = false }) {
   // at all; whether THIS project already has a prod binding just changes the button's label.
   const loadPromotionEligibility = async () => {
     try {
-      const [servers, bindings] = await Promise.all([serversApi.listServers(), promotionApi.listBindings(id)]);
+      const [servers, fetchedBindings] = await Promise.all([serversApi.listServers(), promotionApi.listBindings(id)]);
       setHasProdEnvironment(servers.some((s) => s.environment === "prod"));
-      setHasProdBinding(bindings.some((b) => b.environment === "prod"));
+      setHasProdBinding(fetchedBindings.some((b) => b.environment === "prod"));
+      setBindings(fetchedBindings);
     } catch {
       // best-effort — never blocks the pipeline view
     }
@@ -186,6 +225,13 @@ export default function ProjectDetail({ readOnly = false }) {
 
   useEffect(() => { load(); loadQuality(); loadPublications(); loadDashboards(); loadPromotionEligibility(); }, [id]);
   useEffect(() => () => { if (deployWatchTimer.current) clearTimeout(deployWatchTimer.current); }, []);
+  // Switching Dev/Prod re-fetches just the canvas (row counts/test status differ per
+  // binding) — everything else on the page (datasets, quality, publications...) is already
+  // environment-agnostic (see ProjectEnvironmentBinding's own docstring) and stays as-is.
+  useEffect(() => {
+    if (!loading) fetchLineage().then(setLineage).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEnvironment]);
 
   // Depositing the DAG file over SFTP isn't the same as Airflow knowing about it — the
   // dag-processor only picks it up on its next scan (up to dag_dir_list_interval, 300s by
@@ -254,7 +300,9 @@ export default function ProjectDetail({ readOnly = false }) {
     try {
       await new Promise((r) => setTimeout(r, 400));
       setBuildStep(2);
-      const report = await medallionApi.buildProject(id, confirmImpact);
+      const report = selectedEnvironment === "prod"
+        ? await medallionApi.buildBinding(id, "prod", confirmImpact)
+        : await medallionApi.buildProject(id, confirmImpact);
       setBuildStep(3);
       await new Promise((r) => setTimeout(r, 400));
       setBuildStep(4);
@@ -334,7 +382,7 @@ export default function ProjectDetail({ readOnly = false }) {
       return exists ? list.map((d) => (d.id === ds.id ? ds : d)) : [...list, ds];
     });
     setPanel(null);
-    medallionApi.getLineage(id).then(setLineage);
+    fetchLineage().then(setLineage);
     showToast(t("medallion.datasetSaved"));
     medallionApi.getProject(id).then(setProject);
   };
@@ -342,7 +390,7 @@ export default function ProjectDetail({ readOnly = false }) {
   const onDatasetDeleted = (did) => {
     setDatasets((list) => list.filter((d) => d.id !== did));
     setPanel(null);
-    medallionApi.getLineage(id).then(setLineage);
+    fetchLineage().then(setLineage);
     showToast(t("medallion.datasetDeleted"));
     medallionApi.getProject(id).then(setProject);
   };
@@ -386,7 +434,9 @@ export default function ProjectDetail({ readOnly = false }) {
     const nodeKey = stage ? `silver-${stage}-${datasetId}` : String(datasetId);
     setNodeRunStatus((prev) => ({ ...prev, [nodeKey]: { status: "running", error: null } }));
     try {
-      const run = await medallionApi.runDatasetNode(id, datasetId, stage);
+      const run = selectedEnvironment === "prod"
+        ? await medallionApi.runDatasetNodeForBinding(id, "prod", datasetId, stage)
+        : await medallionApi.runDatasetNode(id, datasetId, stage);
       if (runPollTimer.current) clearTimeout(runPollTimer.current);
       pollNodeRunStatus(run.id);
     } catch (err) {
@@ -428,7 +478,9 @@ export default function ProjectDetail({ readOnly = false }) {
       return next;
     });
     try {
-      const run = await medallionApi.runSelection(id, items);
+      const run = selectedEnvironment === "prod"
+        ? await medallionApi.runSelectionForBinding(id, "prod", items)
+        : await medallionApi.runSelection(id, items);
       exitSelectionMode();
       if (runPollTimer.current) clearTimeout(runPollTimer.current);
       pollNodeRunStatus(run.id);
@@ -571,6 +623,16 @@ export default function ProjectDetail({ readOnly = false }) {
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {prodBinding && (
+            <div className="seg">
+              <button type="button" className={"seg-opt" + (selectedEnvironment === "dev" ? " selected" : "")} onClick={() => setEnvironment("dev")}>
+                <div className="seg-role">{t("servers.environmentDev")}</div>
+              </button>
+              <button type="button" className={"seg-opt" + (selectedEnvironment === "prod" ? " selected" : "")} onClick={() => setEnvironment("prod")}>
+                <div className="seg-role">{t("servers.environmentProd")}</div>
+              </button>
+            </div>
+          )}
           {project.has_pending_changes && <Badge tone="neutral">{t("medallion.toRedeploy")}</Badge>}
           <Badge tone={STATUS_TONE[project.status]}>{STATUS_LABEL[project.status]}</Badge>
           {!readOnly && project.status !== "draft" && (
@@ -744,11 +806,11 @@ export default function ProjectDetail({ readOnly = false }) {
         </>
       )}
 
-      {tab === "runs" && <RunsTab project={project} readOnly={readOnly} />}
+      {tab === "runs" && <RunsTab project={project} readOnly={readOnly} environment={selectedEnvironment} binding={activeBinding} />}
 
       {tab === "quality" && <QualityTab project={project} quality={quality} openAlerts={openAlerts} onReload={loadQuality} readOnly={readOnly} />}
       {tab === "versions" && (
-        <VersionsTab project={project} readOnly={readOnly} onRestored={(v) => { setRestoredBanner(v.is_restore_of_version_number); load(); }} />
+        <VersionsTab project={project} readOnly={readOnly} binding={activeBinding} onRestored={(v) => { setRestoredBanner(v.is_restore_of_version_number); load(); }} />
       )}
       {tab === "agent" && <AgentTab project={project} readOnly={readOnly} onExecutionUpdate={handleExecutionUpdate} />}
       {tab === "code" && (
@@ -757,6 +819,7 @@ export default function ProjectDetail({ readOnly = false }) {
             project={project} readOnly={readOnly} initialDatasetId={codeInitialDatasetId}
             onConsumedInitialDataset={() => setCodeInitialDatasetId(null)}
             onSynced={refreshWorkspaceState}
+            prodBinding={prodBinding}
           />
         </Suspense>
       )}
@@ -803,7 +866,7 @@ export default function ProjectDetail({ readOnly = false }) {
           onClose={() => { setPanel(null); loadPublications(); loadDashboards(); }}
           onSaved={onDatasetSaved}
           onDeleted={onDatasetDeleted}
-          onStructurationSaved={() => medallionApi.getLineage(id).then(setLineage)}
+          onStructurationSaved={() => fetchLineage().then(setLineage)}
           readOnly={readOnly}
           onViewCode={(datasetId) => { setPanel(null); setCodeInitialDatasetId(datasetId); setTab("code"); }}
         />

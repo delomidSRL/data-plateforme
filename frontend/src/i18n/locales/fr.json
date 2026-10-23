@@ -1178,6 +1178,7 @@
       "confirmRestore": "Restaurer v{{n}}",
       "restoreSuccess": "Version {{n}} restaurée avec succès.",
       "restoreFailed": "Restauration impossible.",
+      "restoreProdDisabled": "Restauration indisponible pour l'environnement prod.",
       "restoredBanner": "Pipeline restauré depuis v{{n}} — relancez quand vous êtes prêt."
     },
     "code": {
@@ -1218,6 +1219,7 @@
       "forceCreateRawAction": "Forcer la création (sans vérification)",
       "forceCreateRawConfirm": "Dépose le projet tel qu'il est sur le disque, sans aucune vérification (dataset, code, conflits en attente). Rien n'est perdu — un fichier en conflit garde sa version actuelle. Continuer ?",
       "devBadge": "DEV",
+      "deployedProdBadge": "Déployé en prod : v{{n}}",
       "compile": "Compiler",
       "compiling": "Compilation…",
       "compileOk": "Compilation réussie.",

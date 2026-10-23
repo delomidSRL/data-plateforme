@@ -271,10 +271,32 @@ class MedallionDataset(Base):
     # Module 19 §8 — see DatasetOrigin's own docstring.
     origin: Mapped[DatasetOrigin] = mapped_column(Enum(DatasetOrigin, name="medallion_dataset_origin"), default=DatasetOrigin.visual, nullable=False)
 
+    # Module 20 — env switcher: these three stay as the dev/home values (every pre-existing
+    # reader keeps working unchanged), but are no longer the only source of truth once a
+    # binding other than home has run — see MedallionDatasetBindingStats below, which is what
+    # the lineage/dataset reads now prefer once an `env` is specified.
     last_row_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_loaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_test_status: Mapped[TestStatus] = mapped_column(Enum(TestStatus, name="medallion_test_status"), default=TestStatus.none, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class MedallionDatasetBindingStats(Base):
+    """Module 20 — env switcher: per-(dataset, binding) version of MedallionDataset's own
+    last_row_count/last_loaded_at/last_test_status. A dataset's structure/SQL is the same
+    across environments (see ProjectEnvironmentBinding's own docstring), but its last-run
+    numbers genuinely aren't — dev and prod each run against their own warehouse. One row per
+    binding that has ever refreshed this dataset's stats (refresh_dataset_stats upserts)."""
+
+    __tablename__ = "medallion_dataset_binding_stats"
+    __table_args__ = (UniqueConstraint("dataset_id", "binding_id", name="uq_dataset_binding_stats"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("medallion_datasets.id", ondelete="CASCADE"), nullable=False)
+    binding_id: Mapped[int] = mapped_column(ForeignKey("project_environment_bindings.id", ondelete="CASCADE"), nullable=False)
+    last_row_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_loaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_test_status: Mapped[TestStatus] = mapped_column(Enum(TestStatus, name="medallion_test_status", create_type=False), default=TestStatus.none, nullable=False)
 
 
 class MedallionRun(Base):
@@ -282,6 +304,10 @@ class MedallionRun(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("medallion_projects.id", ondelete="CASCADE"), nullable=False)
+    # Module 20 — env switcher: which binding this run was triggered against. Nullable for
+    # back-compat with every run that predates this column (all implicitly home/dev, since
+    # /run was the only trigger that existed before the /bindings/{env}/run* routes).
+    binding_id: Mapped[int | None] = mapped_column(ForeignKey("project_environment_bindings.id", ondelete="CASCADE"), nullable=True)
     dag_run_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     state: Mapped[RunState] = mapped_column(Enum(RunState, name="medallion_run_state"), default=RunState.queued, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

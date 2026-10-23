@@ -441,6 +441,7 @@ class RunOut(BaseModel):
 
     id: int
     project_id: int
+    binding_id: int | None = None
     dag_run_id: str | None = None
     state: RunState
     started_at: datetime | None = None

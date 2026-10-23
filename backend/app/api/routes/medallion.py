@@ -21,6 +21,7 @@ from app.models.project_environment_binding import ProjectEnvironmentBinding
 from app.models.server import Environment, Server
 from app.models.medallion import (
     MedallionDataset,
+    MedallionDatasetBindingStats,
     MedallionFolder,
     MedallionLayer,
     MedallionProject,
@@ -28,6 +29,7 @@ from app.models.medallion import (
     MedallionVersion,
     ProjectStatus,
     RunState,
+    TestStatus,
     TransformType,
     WorkspaceParseStatus,
 )
@@ -515,28 +517,31 @@ def preview_structuration_silver_table(
     )
 
 
-async def _trigger_scoped_run(db: Session, project: MedallionProject, scope: run_scope.RunScope) -> MedallionRun:
+async def _trigger_scoped_run(db: Session, project: MedallionProject, scope: run_scope.RunScope, binding: ProjectEnvironmentBinding) -> MedallionRun:
     """Partagé par le bouton RUN d'un seul nœud et "Lancer la sélection" (plusieurs nœuds à
-    la fois, voir run_scope.merge_scopes) — tout ce qui suit le calcul du `RunScope` est
-    identique dans les deux cas : dépause le DAG si besoin, déclenche le dagRun borné via
-    `scope.conf()`, et pose le node_plan qui alimente le statut par nœud et l'historique."""
-    airflow_conf = _resolve_airflow_config(db, project)
+    la fois, voir run_scope.merge_scopes), pour dev comme pour un binding prod (Module 20) —
+    tout ce qui suit le calcul du `RunScope` est identique dans tous les cas : dépause le DAG
+    si besoin, déclenche le dagRun borné via `scope.conf()`, et pose le node_plan qui alimente
+    le statut par nœud et l'historique. Tout est résolu depuis `binding`, jamais `project`
+    directement — c'est ce qui permet de cibler un binding non-home."""
+    target = _resolve_binding_deploy_target(db, project, binding)
+    airflow_conf = target.airflow
     try:
-        dag = await airflow_api.get_dag(airflow_conf.base_url, airflow_conf.username, airflow_conf.password, project.dag_id)
+        dag = await airflow_api.get_dag(airflow_conf.base_url, airflow_conf.username, airflow_conf.password, binding.dag_id)
         if dag is not None and dag.get("is_paused"):
-            await airflow_api.set_dag_paused(airflow_conf.base_url, airflow_conf.username, airflow_conf.password, project.dag_id, False)
+            await airflow_api.set_dag_paused(airflow_conf.base_url, airflow_conf.username, airflow_conf.password, binding.dag_id, False)
     except airflow_api.AirflowAPIError:
         pass  # best-effort — if this fails, trigger_dag_run below surfaces its own clear error
 
     try:
         result = await airflow_api.trigger_dag_run(
-            airflow_conf.base_url, airflow_conf.username, airflow_conf.password, project.dag_id, conf=scope.conf(),
+            airflow_conf.base_url, airflow_conf.username, airflow_conf.password, binding.dag_id, conf=scope.conf(),
         )
     except airflow_api.AirflowAPIError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
     run = MedallionRun(
-        project_id=project.id, dag_run_id=result.get("dag_run_id"), state=RunState.queued, started_at=datetime.now(timezone.utc),
+        project_id=project.id, binding_id=binding.id, dag_run_id=result.get("dag_run_id"), state=RunState.queued, started_at=datetime.now(timezone.utc),
         node_plan={"target_key": scope.target_key, "nodes": scope.node_task_map, "models": scope.node_model_map},
     )
     db.add(run)
@@ -565,7 +570,23 @@ async def run_to_node(did: int, payload: RunNodeRequest, db: Session = Depends(g
 
     datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
     scope = run_scope.compute_run_scope(datasets, dataset, payload.stage, _structured_bronze_ids(db, datasets))
-    return await _trigger_scoped_run(db, project, scope)
+    return await _trigger_scoped_run(db, project, scope, project.home_binding)
+
+
+@router.post("/{pid}/bindings/{env}/datasets/{did}/run", response_model=RunOut, status_code=status.HTTP_201_CREATED)
+async def run_to_node_for_binding(env: str, did: int, payload: RunNodeRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_owned_project)):
+    """Module 20 — même chose que run_to_node ci-dessus, pour un binding explicite (dev ou
+    prod) au lieu du binding home implicite."""
+    binding = get_project_binding(project.id, env, db, project)
+    if not binding.dag_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Déployez cet environnement avant de l'exécuter.")
+    dataset = _get_dataset(db, project.id, did)
+    if payload.stage and dataset.layer != MedallionLayer.bronze:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="L'étape de structuration n'est disponible que pour un dataset bronze.")
+
+    datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
+    scope = run_scope.compute_run_scope(datasets, dataset, payload.stage, _structured_bronze_ids(db, datasets))
+    return await _trigger_scoped_run(db, project, scope, binding)
 
 
 @router.post("/{pid}/run-selection", response_model=RunOut, status_code=status.HTTP_201_CREATED)
@@ -589,7 +610,30 @@ async def run_selection(payload: RunSelectionRequest, db: Session = Depends(get_
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="L'étape de structuration n'est disponible que pour un dataset bronze.")
         scopes.append(run_scope.compute_run_scope(datasets, dataset, item.stage, structured_bronze_ids))
 
-    return await _trigger_scoped_run(db, project, run_scope.merge_scopes(scopes))
+    return await _trigger_scoped_run(db, project, run_scope.merge_scopes(scopes), project.home_binding)
+
+
+@router.post("/{pid}/bindings/{env}/run-selection", response_model=RunOut, status_code=status.HTTP_201_CREATED)
+async def run_selection_for_binding(env: str, payload: RunSelectionRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_owned_project)):
+    """Module 20 — même chose que run_selection ci-dessus, pour un binding explicite."""
+    binding = get_project_binding(project.id, env, db, project)
+    if not binding.dag_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Déployez cet environnement avant de l'exécuter.")
+
+    datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
+    by_id = {d.id: d for d in datasets}
+    structured_bronze_ids = _structured_bronze_ids(db, datasets)
+
+    scopes = []
+    for item in payload.items:
+        dataset = by_id.get(item.dataset_id)
+        if dataset is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Dataset {item.dataset_id} introuvable.")
+        if item.stage and dataset.layer != MedallionLayer.bronze:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="L'étape de structuration n'est disponible que pour un dataset bronze.")
+        scopes.append(run_scope.compute_run_scope(datasets, dataset, item.stage, structured_bronze_ids))
+
+    return await _trigger_scoped_run(db, project, run_scope.merge_scopes(scopes), binding)
 
 
 def _describe_bronze_sources(db: Session, bronze: list[MedallionDataset]) -> list[PreflightSourceOut]:
@@ -683,8 +727,9 @@ async def get_run_node_status(run_id: int, db: Session = Depends(get_db), projec
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run introuvable.")
 
-    target = _resolve_deploy_target(db, project)
-    run = await run_status.refresh_run_state(db, project, run, target)
+    binding = run_status.resolve_run_binding(db, project, run)
+    target = _resolve_binding_deploy_target(db, project, binding)
+    run = await run_status.refresh_run_state(db, project, run, target, binding)
 
     node_plan = run.node_plan or {}
     nodes_map = node_plan.get("nodes", {})
@@ -702,7 +747,7 @@ async def get_run_node_status(run_id: int, db: Session = Depends(get_db), projec
     result: dict[str, RunNodeStatusEntry] = {}
     if run.dag_run_id and nodes_map:
         try:
-            task_instances = await airflow_api.list_task_instances(target.airflow.base_url, target.airflow.username, target.airflow.password, project.dag_id, run.dag_run_id)
+            task_instances = await airflow_api.list_task_instances(target.airflow.base_url, target.airflow.username, target.airflow.password, binding.dag_id, run.dag_run_id)
         except airflow_api.AirflowAPIError:
             task_instances = []
         ti_by_task = {ti["task_id"]: ti for ti in task_instances}
@@ -750,7 +795,7 @@ async def get_run_node_status(run_id: int, db: Session = Depends(get_db), projec
                 try:
                     log_text = await airflow_api.get_task_log(
                         target.airflow.base_url, target.airflow.username, target.airflow.password,
-                        project.dag_id, run.dag_run_id, task_id, try_number=ti.get("try_number") or 1,
+                        binding.dag_id, run.dag_run_id, task_id, try_number=ti.get("try_number") or 1,
                     )
                     error = _extract_error_snippet(log_text)
                 except airflow_api.AirflowAPIError:
@@ -1514,12 +1559,16 @@ async def restore_version(vid: int, payload: RestoreRequest, db: Session = Depen
     return out
 
 
-@router.post("/{pid}/run", response_model=list[RunOut], status_code=status.HTTP_201_CREATED)
-async def run_project(payload: RunTriggerRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_owned_project)):
-    if not project.dag_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Déployez le projet avant de l'exécuter.")
+async def _trigger_run(db: Session, project: MedallionProject, binding: ProjectEnvironmentBinding, payload: RunTriggerRequest) -> list[MedallionRun]:
+    """Module 20 — generalized "Exécuter maintenant", shared by the home-alias route and the
+    explicit-environment one, same split as _build_binding. Everything infra-shaped is read
+    from `binding`, never `project` directly — the only way this correctly runs a NON-home
+    binding too."""
+    if not binding.dag_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Déployez cet environnement avant de l'exécuter.")
 
-    airflow_conf = _resolve_airflow_config(db, project)
+    target = _resolve_binding_deploy_target(db, project, binding)
+    airflow_conf = target.airflow
 
     # A DAG with no schedule stays paused after deploy by design (Module 3 correctif — a
     # manual project rests paused between runs). But Airflow's scheduler never executes ANY
@@ -1527,9 +1576,9 @@ async def run_project(payload: RunTriggerRequest, db: Session = Depends(get_db),
     # in "queued" forever with no visible error. "Exécuter maintenant" is exactly the case
     # where that pause must be lifted for the trigger to actually do anything.
     try:
-        dag = await airflow_api.get_dag(airflow_conf.base_url, airflow_conf.username, airflow_conf.password, project.dag_id)
+        dag = await airflow_api.get_dag(airflow_conf.base_url, airflow_conf.username, airflow_conf.password, binding.dag_id)
         if dag is not None and dag.get("is_paused"):
-            await airflow_api.set_dag_paused(airflow_conf.base_url, airflow_conf.username, airflow_conf.password, project.dag_id, False)
+            await airflow_api.set_dag_paused(airflow_conf.base_url, airflow_conf.username, airflow_conf.password, binding.dag_id, False)
     except airflow_api.AirflowAPIError:
         pass  # best-effort — if this fails, trigger_dag_run below will surface its own clear error
 
@@ -1552,12 +1601,12 @@ async def run_project(payload: RunTriggerRequest, db: Session = Depends(get_db),
     for d in dates:
         logical_date = datetime.combine(d, datetime.min.time(), tzinfo=timezone.utc) if d else None
         try:
-            result = await airflow_api.trigger_dag_run(airflow_conf.base_url, airflow_conf.username, airflow_conf.password, project.dag_id, logical_date)
+            result = await airflow_api.trigger_dag_run(airflow_conf.base_url, airflow_conf.username, airflow_conf.password, binding.dag_id, logical_date)
         except airflow_api.AirflowAPIError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
         run = MedallionRun(
-            project_id=project.id, dag_run_id=result.get("dag_run_id"), state=RunState.queued, started_at=datetime.now(timezone.utc),
+            project_id=project.id, binding_id=binding.id, dag_run_id=result.get("dag_run_id"), state=RunState.queued, started_at=datetime.now(timezone.utc),
             node_plan={"target_key": "full", **full_scope},
         )
         db.add(run)
@@ -1567,6 +1616,19 @@ async def run_project(payload: RunTriggerRequest, db: Session = Depends(get_db),
     for r in runs:
         db.refresh(r)
     return runs
+
+
+@router.post("/{pid}/run", response_model=list[RunOut], status_code=status.HTTP_201_CREATED)
+async def run_project(payload: RunTriggerRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_owned_project)):
+    """Alias mince sur le binding home (compat — tout appelant existant continue de
+    fonctionner sans rien savoir des bindings, §4.3 même logique que build_project_endpoint)."""
+    return await _trigger_run(db, project, project.home_binding, payload)
+
+
+@router.post("/{pid}/bindings/{env}/run", response_model=list[RunOut], status_code=status.HTTP_201_CREATED)
+async def run_binding_endpoint(env: str, payload: RunTriggerRequest, db: Session = Depends(get_db), project: MedallionProject = Depends(get_owned_project)):
+    binding = get_project_binding(project.id, env, db, project)
+    return await _trigger_run(db, project, binding, payload)
 
 
 @router.post("/{pid}/pause", status_code=status.HTTP_204_NO_CONTENT)
@@ -1595,10 +1657,16 @@ async def _set_paused(project: MedallionProject, is_paused: bool, db: Session):
 
 # ---------------- Lineage & Runs ----------------
 
-def build_lineage_graph(db: Session, datasets: list[MedallionDataset]) -> LineageGraph:
+def build_lineage_graph(db: Session, datasets: list[MedallionDataset], binding: ProjectEnvironmentBinding | None = None) -> LineageGraph:
     """Shared by the owner-facing route and the admin read-only detail view (Module 9) —
     the origin-node derivation is non-trivial enough that duplicating it would be a real
-    maintenance risk."""
+    maintenance risk.
+
+    Module 20 — `binding` omitted (every pre-existing caller) or the home binding keeps
+    today's exact behavior: each node's last-run stats come straight off the dataset's own
+    last_row_count/last_loaded_at/last_test_status columns. A non-home binding instead reads
+    MedallionDatasetBindingStats for that binding — a dataset never run there shows no stats
+    at all, rather than leaking whatever another environment's last run happened to be."""
     # Module 6 extension (payload & structuration) — cheap, control-plane-only, batched once
     # here rather than per-node; drives the canvas's synthetic structuration node (§ the
     # extension's own canvas-UX addition, not in the original spec text).
@@ -1606,15 +1674,33 @@ def build_lineage_graph(db: Session, datasets: list[MedallionDataset]) -> Lineag
     structured = payload_structure.bulk_structured(db, datasets)
     code_modified = workspace.bulk_code_modified(db, [d.id for d in datasets])
 
-    nodes = [
-        LineageNode(
+    stats_by_dataset_id: dict[int, MedallionDatasetBindingStats] = {}
+    use_binding_stats = binding is not None and not binding.is_home
+    if use_binding_stats:
+        rows = (
+            db.query(MedallionDatasetBindingStats)
+            .filter(MedallionDatasetBindingStats.binding_id == binding.id, MedallionDatasetBindingStats.dataset_id.in_([d.id for d in datasets]))
+            .all()
+        )
+        stats_by_dataset_id = {r.dataset_id: r for r in rows}
+
+    def _stats(d: MedallionDataset) -> tuple:
+        if not use_binding_stats:
+            return d.last_row_count, d.last_loaded_at, d.last_test_status
+        row = stats_by_dataset_id.get(d.id)
+        if row is None:
+            return None, None, TestStatus.none
+        return row.last_row_count, row.last_loaded_at, row.last_test_status
+
+    nodes = []
+    for d in datasets:
+        row_count, loaded_at, test_status = _stats(d)
+        nodes.append(LineageNode(
             id=d.id, name=d.name, node_type="dataset", layer=d.layer, transform_type=d.transform_type, ml_objective=d.ml_objective,
-            last_row_count=d.last_row_count, last_loaded_at=d.last_loaded_at, last_test_status=d.last_test_status,
+            last_row_count=row_count, last_loaded_at=loaded_at, last_test_status=test_status,
             payload_backed=payload_backed.get(d.id, False), structured=structured.get(d.id, False),
             code_modified=code_modified.get(d.id, False),
-        )
-        for d in datasets
-    ]
+        ))
     edges = [LineageEdge(source=u, target=d.id) for d in datasets for u in d.upstream_dataset_ids]
 
     # Every bronze dataset gets a derived "origin" node — never stored, just computed from
@@ -1675,14 +1761,21 @@ def build_lineage_graph(db: Session, datasets: list[MedallionDataset]) -> Lineag
 
 
 @router.get("/{pid}/lineage", response_model=LineageGraph)
-def get_lineage(db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+def get_lineage(env: str | None = None, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
     datasets = db.query(MedallionDataset).filter(MedallionDataset.project_id == project.id).all()
-    return build_lineage_graph(db, datasets)
+    binding = get_project_binding(project.id, env, db, project) if env is not None else None
+    return build_lineage_graph(db, datasets, binding)
 
 
 @router.get("/{pid}/runs", response_model=list[RunOut])
-def list_runs(db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
-    return db.query(MedallionRun).filter(MedallionRun.project_id == project.id).order_by(MedallionRun.created_at.desc()).all()
+def list_runs(env: str | None = None, db: Session = Depends(get_db), project: MedallionProject = Depends(get_readable_project)):
+    """Module 20 — `env` omitted keeps today's behavior (every run, dev and prod mixed) for
+    every pre-existing caller; passed explicitly, scopes to that one binding's runs."""
+    query = db.query(MedallionRun).filter(MedallionRun.project_id == project.id)
+    if env is not None:
+        binding = get_project_binding(project.id, env, db, project)
+        query = query.filter(MedallionRun.binding_id == binding.id)
+    return query.order_by(MedallionRun.created_at.desc()).all()
 
 
 @router.get("/{pid}/runs/{run_id}", response_model=RunOut)
@@ -1690,5 +1783,6 @@ async def get_run(run_id: int, db: Session = Depends(get_db), project: Medallion
     run = db.query(MedallionRun).filter(MedallionRun.id == run_id, MedallionRun.project_id == project.id).first()
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run introuvable.")
-    target = _resolve_deploy_target(db, project)
-    return await run_status.refresh_run_state(db, project, run, target)
+    binding = run_status.resolve_run_binding(db, project, run)
+    target = _resolve_binding_deploy_target(db, project, binding)
+    return await run_status.refresh_run_state(db, project, run, target, binding)

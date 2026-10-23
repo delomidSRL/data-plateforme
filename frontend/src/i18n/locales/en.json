@@ -1178,6 +1178,7 @@
       "confirmRestore": "Restore v{{n}}",
       "restoreSuccess": "Version {{n}} restored successfully.",
       "restoreFailed": "Restore failed.",
+      "restoreProdDisabled": "Restore is not available for the prod environment.",
       "restoredBanner": "Pipeline restored from v{{n}} — rerun when you're ready."
     },
     "code": {
@@ -1218,6 +1219,7 @@
       "forceCreateRawAction": "Force create (no checks)",
       "forceCreateRawConfirm": "Deposits the project on disk exactly as it is, with no checks at all (dataset, code, pending conflicts). Nothing is lost — a conflicted file keeps its current version. Continue?",
       "devBadge": "DEV",
+      "deployedProdBadge": "Deployed to prod: v{{n}}",
       "compile": "Compile",
       "compiling": "Compiling…",
       "compileOk": "Compiled successfully.",

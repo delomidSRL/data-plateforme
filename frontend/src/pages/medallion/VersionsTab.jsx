@@ -10,7 +10,7 @@ const monoBlock = {
   border: "1px solid var(--border)", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0,
 };
 
-export default function VersionsTab({ project, onRestored, readOnly = false }) {
+export default function VersionsTab({ project, onRestored, readOnly = false, binding = null }) {
   const { t, i18n } = useTranslation();
   const [versions, setVersions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -45,6 +45,14 @@ export default function VersionsTab({ project, onRestored, readOnly = false }) {
   };
 
   const hasDiffContent = diff && (diff.datasets_added.length || diff.datasets_removed.length || diff.sql_changed.length || diff.tests_changed.length);
+  // Fall back to the project's own (home) active_version_id only while `binding` itself
+  // hasn't resolved yet (still loading, or a readOnly caller that doesn't pass one) — once a
+  // binding IS provided, its own active_version_id is authoritative even when null (a prod
+  // binding that's never been built legitimately has nothing active yet; `?? project...`
+  // used to paper over that by silently showing dev's active version as "active" in prod).
+  const activeVersionId = binding ? binding.active_version_id : project.active_version_id;
+  // Restore always redeploys dev's dag_id/warehouse — not in scope for prod this iteration.
+  const restoreDisabledForEnv = binding != null && !binding.is_home;
 
   return (
     <>
@@ -65,7 +73,7 @@ export default function VersionsTab({ project, onRestored, readOnly = false }) {
               <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--text-muted)" }}>{t("medallion.versions.noVersions")}</td></tr>
             )}
             {versions.map((v) => {
-              const isActive = v.id === project.active_version_id;
+              const isActive = v.id === activeVersionId;
               return (
                 <Fragment key={v.id}>
                   <tr>
@@ -84,7 +92,16 @@ export default function VersionsTab({ project, onRestored, readOnly = false }) {
                           <Button variant="ghost" className="inline" onClick={() => toggleDiff(v)}>
                             {expanded === v.id ? t("medallion.versions.hideDiff") : t("medallion.versions.compare")}
                           </Button>
-                          {!readOnly && <Button className="inline" onClick={() => setRestoreTarget(v)}>{t("medallion.versions.restore")}</Button>}
+                          {!readOnly && (
+                            <Button
+                              className="inline"
+                              disabled={restoreDisabledForEnv}
+                              title={restoreDisabledForEnv ? t("medallion.versions.restoreProdDisabled") : undefined}
+                              onClick={() => setRestoreTarget(v)}
+                            >
+                              {t("medallion.versions.restore")}
+                            </Button>
+                          )}
                         </>
                       )}
                     </td>

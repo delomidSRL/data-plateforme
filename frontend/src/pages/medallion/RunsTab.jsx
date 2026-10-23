@@ -15,7 +15,7 @@ function duration(start, end) {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${s % 60}s`;
 }
 
-export default function RunsTab({ project, readOnly = false }) {
+export default function RunsTab({ project, readOnly = false, environment = "dev", binding = null }) {
   const { t, i18n } = useTranslation();
   const showToast = useToast();
   const [runs, setRuns] = useState([]);
@@ -26,11 +26,14 @@ export default function RunsTab({ project, readOnly = false }) {
   const [to, setTo] = useState("");
 
   const STATE_LABEL = t("medallion.runs.state", { returnObjects: true });
+  // `binding` resolves once bindings finish loading in the parent — fall back to the project's
+  // own (home) dag_id until then so dev's existing behavior never flickers/regresses.
+  const dagId = binding?.dag_id ?? project.dag_id;
 
   const load = async () => {
     setLoading(true);
     try {
-      const list = await medallionApi.listRuns(project.id);
+      const list = await medallionApi.listRunsForEnv(project.id, environment === "prod" ? "prod" : undefined);
       setRuns(list);
       const active = list.filter((r) => r.state === "queued" || r.state === "running");
       for (const r of active) {
@@ -41,7 +44,7 @@ export default function RunsTab({ project, readOnly = false }) {
     }
   };
 
-  useEffect(() => { load(); }, [project.id]);
+  useEffect(() => { load(); }, [project.id, environment]);
 
   const [preflight, setPreflight] = useState(false);
   const [pendingBackfill, setPendingBackfill] = useState(false);
@@ -50,7 +53,8 @@ export default function RunsTab({ project, readOnly = false }) {
     setRunning(true);
     try {
       const payload = backfill ? { backfill_from: from, backfill_to: to } : {};
-      await medallionApi.runProject(project.id, payload);
+      if (environment === "prod") await medallionApi.runBinding(project.id, "prod", payload);
+      else await medallionApi.runProject(project.id, payload);
       showToast(backfill ? t("medallion.runs.backfillTriggered") : t("medallion.runs.runTriggered"));
       setShowBackfill(false);
       await load();
@@ -68,12 +72,12 @@ export default function RunsTab({ project, readOnly = false }) {
       <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
         {!readOnly && (
           <>
-            <Button className="inline" disabled={running || !project.dag_id} onClick={() => runNow(false)}>{Icon.play()} {t("medallion.runs.runNow")}</Button>
-            <Button variant="ghost" className="inline" disabled={!project.dag_id} onClick={() => setShowBackfill((s) => !s)}>{t("medallion.runs.backfill")}</Button>
+            <Button className="inline" disabled={running || !dagId} onClick={() => runNow(false)}>{Icon.play()} {t("medallion.runs.runNow")}</Button>
+            <Button variant="ghost" className="inline" disabled={!dagId} onClick={() => setShowBackfill((s) => !s)}>{t("medallion.runs.backfill")}</Button>
           </>
         )}
         <Button variant="ghost" className="inline" onClick={load}>{Icon.refresh()} {t("common.refresh")}</Button>
-        {!readOnly && !project.dag_id && <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{t("medallion.runs.deployToRun")}</span>}
+        {!readOnly && !dagId && <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{t("medallion.runs.deployToRun")}</span>}
       </div>
 
       {!readOnly && showBackfill && (

@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.core.security import decrypt_secret
 from app.models.data_source import DataSource
-from app.models.medallion import MedallionDataset, MedallionLayer, MedallionProject, TestStatus, TransformType
+from app.models.medallion import MedallionDataset, MedallionDatasetBindingStats, MedallionLayer, MedallionProject, TestStatus, TransformType
+from app.models.project_environment_binding import ProjectEnvironmentBinding
 from app.services import ssh
 from app.services.airflow_instances import DeployTarget
 
@@ -84,10 +85,28 @@ def list_columns(warehouse: DataSource, ds: MedallionDataset) -> list[dict]:
         engine.dispose()
 
 
-def refresh_dataset_stats(db: Session, project: MedallionProject, datasets: list[MedallionDataset], warehouse: DataSource, target: DeployTarget) -> dict:
+def _binding_stats_row(db: Session, dataset_id: int, binding_id: int) -> MedallionDatasetBindingStats:
+    row = (
+        db.query(MedallionDatasetBindingStats)
+        .filter(MedallionDatasetBindingStats.dataset_id == dataset_id, MedallionDatasetBindingStats.binding_id == binding_id)
+        .first()
+    )
+    if row is None:
+        row = MedallionDatasetBindingStats(dataset_id=dataset_id, binding_id=binding_id)
+        db.add(row)
+    return row
+
+
+def refresh_dataset_stats(db: Session, project: MedallionProject, datasets: list[MedallionDataset], warehouse: DataSource, target: DeployTarget, binding: ProjectEnvironmentBinding) -> dict:
     """After a run, pulls row counts per dataset from the warehouse (queried directly over
     the network, same as Module 2's introspection) and overall dbt test status from the
-    last `dbt test` run_results.json (fetched via SSH, since that's a file on the server)."""
+    last `dbt test` run_results.json (fetched via SSH, since that's a file on the server).
+
+    Module 20 — written per (dataset, binding) into MedallionDatasetBindingStats rather than
+    onto MedallionDataset's own last_row_count/last_loaded_at/last_test_status columns: a
+    dataset's *structure* is shared across environments, but its last-run numbers genuinely
+    aren't (dev and prod each run against their own warehouse) — see build_lineage_graph's
+    env-aware read side, which is what actually displays these."""
     now = datetime.now(timezone.utc)
     layer_stats: dict[str, int] = {"bronze": 0, "silver": 0, "gold": 0}
 
@@ -107,8 +126,9 @@ def refresh_dataset_stats(db: Session, project: MedallionProject, datasets: list
                     count = conn.execute(text(f'SELECT count(*) FROM {schema}."{table}"')).scalar()
                 except Exception:
                     continue
-                ds.last_row_count = count
-                ds.last_loaded_at = now
+                stats_row = _binding_stats_row(db, ds.id, binding.id)
+                stats_row.last_row_count = count
+                stats_row.last_loaded_at = now
                 layer_stats[ds.layer.value] = layer_stats.get(ds.layer.value, 0) + count
     finally:
         engine.dispose()
@@ -137,7 +157,8 @@ def refresh_dataset_stats(db: Session, project: MedallionProject, datasets: list
 
     for ds in datasets:
         if ds.layer in (MedallionLayer.silver, MedallionLayer.gold) and ds.tests:
-            ds.last_test_status = overall_status
+            stats_row = _binding_stats_row(db, ds.id, binding.id)
+            stats_row.last_test_status = overall_status
 
     db.commit()
     return {"layer_stats": layer_stats, "tests_summary": tests_summary}
