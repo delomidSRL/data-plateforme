@@ -49,13 +49,18 @@ def deploy_stack(db: Session, stack: InfraStack, server: Server) -> dict:
             raise RuntimeError(stack.last_error)
         if airflow_conf.get("enabled"):
             # Same ownership bug as notebooks/dbt below, hitting Airflow's own runtime
-            # dirs this time: airflow-init's `chown -R {uid}:0 /opt/airflow` is meant to
-            # fix this, but isn't reliable against a bind mount pre-populated by the SSH
-            # user (confirmed: dag-processor crash-looped on prem prod trying to create a
-            # brand-new `logs/dag_processor/` subfolder it had never needed before —
-            # PermissionError, not owned/writable by its uid). dags/config get the same
-            # treatment pre-emptively — same shared-mount risk, just not yet observed.
-            ssh.run_command(client, f"chmod -R o+rwX {proj_dir}/logs {proj_dir}/dags {proj_dir}/config")
+            # dirs this time: airflow-init's `chown -R {uid}:0 /opt/airflow` (covering
+            # logs/dags/plugins/config/dbt — all five, see service_airflow.yml.j2) is
+            # meant to fix this, but isn't reliable against a bind mount pre-populated by
+            # the SSH user, and chown never resets these mode bits back even once it
+            # does run (confirmed twice on prod: dag-processor crash-looping trying to
+            # create logs/dag_processor/, then mkdir failing on dbt/<new_project>/ for a
+            # project's first-ever build — both PermissionError, parent dir owned by the
+            # Airflow uid with no "other" write bit). All five get it here, matching
+            # exactly what airflow-init itself touches — medallion_deploy.py's own
+            # chmod on dbt_dir/plugins_dir only ever reaches the per-project subfolder,
+            # never this parent, so it can't fix a brand-new project's first mkdir.
+            ssh.run_command(client, f"chmod -R o+rwX {proj_dir}/logs {proj_dir}/dags {proj_dir}/config {proj_dir}/plugins {proj_dir}/dbt")
         if jupyter_conf.get("enabled"):
             # Files land on disk owned by the SSH user, but the Jupyter container runs as
             # its own fixed uid (jovyan) which rarely matches — see the identical dbt/
