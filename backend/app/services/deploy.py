@@ -47,6 +47,15 @@ def deploy_stack(db: Session, stack: InfraStack, server: Server) -> dict:
             stack.last_error = f"Impossible de créer {proj_dir} sur le serveur distant (droits insuffisants pour l'utilisateur SSH sur /opt ?) : {mkdir_result.stderr}"
             db.commit()
             raise RuntimeError(stack.last_error)
+        if airflow_conf.get("enabled"):
+            # Same ownership bug as notebooks/dbt below, hitting Airflow's own runtime
+            # dirs this time: airflow-init's `chown -R {uid}:0 /opt/airflow` is meant to
+            # fix this, but isn't reliable against a bind mount pre-populated by the SSH
+            # user (confirmed: dag-processor crash-looped on prem prod trying to create a
+            # brand-new `logs/dag_processor/` subfolder it had never needed before —
+            # PermissionError, not owned/writable by its uid). dags/config get the same
+            # treatment pre-emptively — same shared-mount risk, just not yet observed.
+            ssh.run_command(client, f"chmod -R o+rwX {proj_dir}/logs {proj_dir}/dags {proj_dir}/config")
         if jupyter_conf.get("enabled"):
             # Files land on disk owned by the SSH user, but the Jupyter container runs as
             # its own fixed uid (jovyan) which rarely matches — see the identical dbt/
